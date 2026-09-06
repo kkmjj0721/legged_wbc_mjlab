@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legged-wbc-mjlab"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "mjlab==1.6.0",
+    "rsl-rl-lib==5.4.2",
+]
+
+[tool.uv.sources]
+rsl-rl-lib = { path = "rsl_rl", editable = true }
