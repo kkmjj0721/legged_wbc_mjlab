@@ -1,5 +1,5 @@
 <mujoco model="go2_piper">
-  <compiler angle="radian" meshdir="assets" autolimits="true" />
+  <compiler angle="radian" autolimits="true" />
 
   <option cone="elliptic" impratio="100" />
 
@@ -90,7 +90,7 @@
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     
-    <body name="base_link" pos="0 -10 0.5" euler="0 0.0  1.57" childclass="go2">
+    <body name="base_link" pos="0 0 0.32" euler="0 0.0  1.57" childclass="go2">
       <inertial pos="0.021112 0 -0.005366" quat="-0.000543471 0.713435 -0.00173769 0.700719"
         mass="6.921"
         diaginertia="0.107027 0.0980771 0.0244531" />
