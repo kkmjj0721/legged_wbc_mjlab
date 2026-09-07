@@ -162,7 +162,7 @@ GO2_PIPER_ARM_JOINT6 = BuiltinPositionActuatorCfg(
 # Keyframes.
 ##
 INIT_STATE = EntityCfg.InitialStateCfg(
-  pos = (0.0, 0.0, 0.32),
+  pos = (0.0, 0.0, 0.35),
   joint_pos = {
     # leg
     ".*thigh_joint": 0.9,

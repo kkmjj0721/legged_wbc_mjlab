@@ -1,6 +1,6 @@
 # Go2 Piper MDP 迁移与实现清单
 
-本文档只解决一件事：把 `/home/kk/LeggedManip_Lab/source/LeggedManip_Lab` 中 Go2 Piper 的 MDP 行为，按 `/home/kk/github/unitree_rl_mjlab` 的 mjlab 组织方式，迁移到当前项目 `/home/kk/legged_wbc_mjlab`。
+本文档只解决一件事：把 `/home/kk/LeggedManip_Lab/source/LeggedManip_Lab` 中 Go2 Piper 的 MDP 行为，按 `/home/kk/github/unitree_rl_mjlab` 的 mjlab 组织方式，迁移到当前项目 `/home/kk/legged_wbc_mjlab`。Deep-WBC 只作为 legacy 控制、观测和网络接口的对照来源，不改变当前 mjlab 的迁移边界。
 
 当前项目的 `src/tasks/wbc/go2_piper` 还是 MDP 骨架，本文不是“当前功能说明”，而是实现顺序和核对标准。文档中的来源行为来自已读源码；没有运行 `list_envs.py`、训练或播放，因此不把任何入口写成已验证可用。
 
@@ -68,14 +68,14 @@ src/tasks/wbc/go2_piper/
 
 | 文件 | 当前状态 |
 | --- | --- |
-| `wbc_env_cfg.py` | 空文件 |
+| `wbc_env_cfg.py` | 已有 mjlab import 骨架，但还没有 EnvCfg 和 manager 组合 |
 | `__init__.py` | 空文件 |
 | `mdp/__init__.py` | 空文件 |
 | `mdp/observations.py` | 空文件 |
 | `mdp/rewards.py` | 空文件 |
 | `mdp/curriculums.py` | 空文件 |
 | `mdp/cfg/command_cfg.py` | 空文件 |
-| `mdp/events.py` | 只有 `from __future__ import annotations` |
+| `mdp/events.py` | 当前只有 3 个空白行，没有 event 配置 |
 | `src/tasks/__init__.py` | 空文件 |
 | `scripts/train.py` | 空壳 |
 | `scripts/play.py` | 空壳 |
@@ -162,8 +162,8 @@ src/config/go2_piper/go2_piper_config.py
 实现 MDP 前必须先确认：
 
 - `joint1...joint6` 是否都在 entity 的 joint/actuator 匹配中；
-- `GO2_PIPER_ARM_JOINT5` 已定义，但 `GO2PIPER_ARTICULATION.actuators` 的已读内容只列到 joint4 和 joint6，先确认 joint5 是否遗漏；
-- 当前 foot regex `^[FR][LR]_foot_collision$` 是否能匹配 XML 中实际的足端 geom/body 名称；
+- `GO2_PIPER_ARM_JOINT5` 已定义，但 `GO2PIPER_ARTICULATION.actuators` 当前确实只列到 joint4 和 joint6；joint5 actuator 是当前动作接线的阻塞项，必须先处理；
+- 当前 foot regex `^[FR][LR]_foot_collision$` 在原始 XML 命名中没有直接匹配项；必须确认编译/重命名后的 geom 是否使用该名字，或者修正 regex 后再接 feet contact/collision MDP；
 - `base_link`、Piper 根 body、末端 body 在当前 mjlab EntityCfg 中分别如何查找；
 - action 维度是否确实为 12 个腿关节 + 6 个机械臂关节。
 
@@ -604,3 +604,112 @@ task id
 - ONNX 导出、真实部署以及 sim-to-real 行为。
 
 最终顺序只有一句话：先把名称和关节顺序钉死，再接 action；再接 command 的 shape/frame；然后接 actor/critic observation；最后接 reward、termination、event、curriculum，完成 EnvCfg 和 task 注册后才开始运行验证。
+
+## 14. Deep-WBC 参考：只借鉴数据流，不复制结构
+
+Deep-Whole-Body-Control 使用的是 legacy `legged_gym + rsl_rl`，不是当前 mjlab 的 manager-based API。它可以帮助我们核对 action、observation、command、teacher control 和 actor/critic 的数据流，但不能把 `WidowGo1RoughCfg`、legacy env class 或配置继承关系直接搬进 `wbc_env_cfg.py`。当前实现仍以 mjlab 1.6.0 的 manager、term 和 RL config API 为准。
+
+### 14.1 `WidowGo1RoughCfg` 的参考尺寸
+
+下面的数字是 Deep-WBC 的参考值，不是当前 Go2 Piper 必须照搬的 MDP 维度：
+
+| 项 | Deep-WBC 参考值 |
+| --- | --- |
+| action | 18 维 = 12 个腿部 action + 6 个机械臂 action |
+| `num_proprio` | `2+3+20+20+18+4+3+3+3 = 76` |
+| `history_len` | `10` |
+| `num_priv` | `5+1+18 = 24` |
+| `decimation` | `4` |
+| `action_delay` | `2` |
+| episode | `10s` |
+| observation scale | `ang_vel=1`、`dof_pos=1`、`dof_vel=0.05` |
+| observation/action clip | observation `100`，action `100` |
+
+`widowGo1.py::compute_observations` 的 proprio 拼接顺序是：
+
+```text
+body orientation 2
+base angular velocity 3
+joint position 20
+joint velocity 20
+previous action 18
+foot contact 4
+base command 3
+current EE goal 3
+EE orientation delta Euler 3
+```
+
+合计为 76 维。privileged 部分使用 mass、friction、motor-strength 参数，并加上 history；`num_priv=24` 是这个来源的参考计数。这里的 76/24 不能反推当前 Go2 Piper 的 actor/critic 维度，当前任务仍要按自己的 `observations.py` term、command frame 和 mjlab group API 重新核对。
+
+### 14.2 command、goal 和 curriculum
+
+- base command 每 `3s` 重采样；当前实现只采样 `lin_vel_x` 和 yaw rate，`lin_vel_y` 固定为 `0`，并将过小命令清零。
+- EE goal 使用球坐标 `l/p/y`。`traj_time` 在 `1-3s` 采样，`hold_time` 在 `0.5-2s` 采样，并使用 `10` 个 collision-check samples。
+- goal 生成时检查 collision bounds 和 underground limit；goal 在 start/target 之间插值，episode/reset 时重采样。
+- curriculum 同时扩展底盘速度范围、末端目标范围和 tracking reward scale。
+
+这些是 Deep-WBC 的 command/goal 行为。当前 Go2 Piper 的 `ee_pose` 仍按前文保持 7 维 pose 和 Flat/WBC frame；不能因为 Deep-WBC 使用球坐标，就直接把当前 command 改成 sphere command。
+
+### 14.3 action、delay 和低层控制边界
+
+Deep-WBC 的 `step` 先执行 action reorder、clip 和 delay，再按 `decimation` 调用 `_compute_torques`。PD 目标形式为：
+
+```text
+target = action_scale * action + default_joint_pos
+```
+
+腿部和机械臂使用不同的 stiffness、damping 和 action scale；配置还支持 adaptive arm gains 和 torque supervision。迁移时先把 action 顺序、18 维 shape、delay 和 decimation 作为接口约束记录下来，不要先假定当前 mjlab 已经有同样的 delay term。
+
+`get_arm_ee_control_torques` 使用 Jacobian、mass matrix 和 gravity compensation 计算 operational-space torque。这属于 teacher/low-level control boundary，不是 MDP 的 joint-position action 输出；当前 action manager 输出什么，仍由当前 mjlab action 配置决定。
+
+### 14.4 reward 如何借鉴
+
+保留“locomotion 与 manipulation 分开统计、分开调权”的思路。Deep-WBC 的 reward 覆盖 EE sphere/cart tracking、EE orientation、linear/yaw tracking、leg/arm energy、leg action、foot contact、survival 等项。
+
+当前 Go2 Piper 仍以来源项目的 Flat/WBC reward 为准。Deep-WBC 的 sphere/cart 目标和权重不能直接替换现有的 `position_command_b_error_exp` / `position_command_error_exp`：先保持 Flat/WBC 各自的 frame 和 reward function，再用单独实验验证新的目标表示。
+
+### 14.5 actor/critic 网络边界
+
+`rsl_rl/modules/actor_critic.py` 的结构包括 priv encoder、history encoder、shared actor backbone、独立的 leg control head 和 arm control head。参考配置为：
+
+| 项 | 参考值 |
+| --- | --- |
+| actor/critic hidden dims | `128` |
+| `priv_encoder_dims` | `[64, 20]` |
+| leg/arm head | `[128, 128]` |
+| `num_leg_actions` / `num_arm_actions` | `12` / `6` |
+
+actor 输出按 legs + arm 拼接；critic 输入 privileged/state，并输出 leg/arm value。这是 RL/network 层的设计，不是 MDP term。只有当前 mjlab 的 RL config/API 支持相同输入输出契约时，才按这个方向参考；不要为了复刻网络而把 priv encoder 或 control head 写进 `observations.py` 或 `rewards.py`。
+
+### 14.6 Deep-WBC 到当前 mjlab 的映射
+
+| Deep-WBC 来源 | 当前 mjlab 落点 | 迁移要求 |
+| --- | --- | --- |
+| `compute_observations` | `observations.py` actor/critic | 按当前 group API 重新声明 term、shape、history 和 privileged 输入 |
+| `_resample_commands` / `_resample_ee_goal` | `command_cfg.py` + command generator | 保留采样周期、frame、reset/插值边界；不复制 legacy class |
+| domain randomization / reset | `events.py` | 用当前 `EventTermCfg` 和 event manager 接口重写 |
+| `_reward_*` | `rewards.py` | 维持 Flat/WBC reward 语义，再单独评估 Deep-WBC 目标 |
+| `check_termination` | terminations | 映射到当前 termination manager，不把 legacy `done` 逻辑直接搬入 env class |
+| policy config | RL config | 仅在 actor/critic API 支持时参考 encoder 和分头 |
+| `_compute_torques` | action / low-level control boundary | 明确 PD、delay、decimation 和 teacher torque 的边界 |
+
+## 15. 当前第一阶段怎么做
+
+这是基于上述来源差异做出的工程建议，不是已经运行验证的结果。
+
+第一阶段保持当前 7-D `ee_pose` 和 Flat/WBC frame，不直接引入 Deep-WBC 的 sphere command。先按下面顺序闭环：
+
+1. 固定 actor/critic 的 term shape，确认 action 是 18 维，且 12 个腿部 action 在前、6 个机械臂 action 在后。
+2. 固定 command frame，完成 command 生成、observation 输入、reward 比较和 reset 时的 frame 一致性。
+3. 让 reset/step 闭环通过，确认 action reorder、clip、低层控制边界和 episode termination 的数据流。
+4. 在 shape、frame 和 reset/step 都可核对后，再增加 goal interpolation。
+5. 最后再评估 priv encoder、分腿/臂 actor heads 和 torque supervision；它们属于 RL/network 或 low-level control 扩展，不应提前混入 MDP term。
+
+当前 `src/tasks/wbc/go2_piper` 的其余空壳/未实现事实仍然有效：`wbc_env_cfg.py`、`observations.py`、`rewards.py`、`curriculums.py`、`command_cfg.py`、两个 `__init__.py` 仍未完成，task 注册和 train/play/list 入口也未验证。
+
+## 16. 参考来源
+
+- [Deep-Whole-Body-Control 仓库](https://github.com/MarkFzp/Deep-Whole-Body-Control)
+- [`widowGo1_config.py`](https://raw.githubusercontent.com/MarkFzp/Deep-Whole-Body-Control/main/legged_gym/legged_gym/envs/widowGo1/widowGo1_config.py)
+- [`widowGo1.py`](https://raw.githubusercontent.com/MarkFzp/Deep-Whole-Body-Control/main/legged_gym/legged_gym/envs/widowGo1/widowGo1.py)
+- [`actor_critic.py`](https://raw.githubusercontent.com/MarkFzp/Deep-Whole-Body-Control/main/rsl_rl/rsl_rl/modules/actor_critic.py)
