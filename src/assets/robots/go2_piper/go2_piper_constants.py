@@ -218,6 +218,7 @@ GO2PIPER_ARTICULATION = EntityArticulationInfoCfg(
     GO2_PIPER_ARM_JOINT2,
     GO2_PIPER_ARM_JOINT3,
     GO2_PIPER_ARM_JOINT4,
+    GO2_PIPER_ARM_JOINT5,
     GO2_PIPER_ARM_JOINT6,
   ),
   soft_joint_pos_limit_factor = 0.9,

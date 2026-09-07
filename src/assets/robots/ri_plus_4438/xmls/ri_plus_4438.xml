@@ -1,0 +1,221 @@
+<mujoco model="ri_plus_4438_bfm">
+  <compiler angle="radian" meshdir="../meshes/" autolimits="true" />
+  <option gravity="0 0 -9.81" iterations="50" solver="Newton" timestep="0.005" />
+  <asset>
+    <material name="visual_body" rgba="0.68 0.70 0.72 1" specular="0.25" shininess="0.35" />
+    <material name="collision_debug" rgba="0.95 0.65 0.12 0.25" specular="0" />
+    <mesh name="base_link_part_1" file="base_link_part_1.STL" />
+    <mesh name="base_link_part_2" file="base_link_part_2.STL" />
+    <mesh name="FL_hip" file="FL_hip.STL" />
+    <mesh name="FL_thigh" file="FL_thigh.STL" />
+    <mesh name="FL_calf" file="FL_calf.STL" />
+    <mesh name="FL_foot" file="FL_foot.STL" />
+    <mesh name="FR_hip" file="FR_hip.STL" />
+    <mesh name="FR_thigh" file="FR_thigh.STL" />
+    <mesh name="FR_calf" file="FR_calf.STL" />
+    <mesh name="FR_foot" file="FR_foot.STL" />
+    <mesh name="RL_hip" file="RL_hip.STL" />
+    <mesh name="RL_thigh" file="RL_thigh.STL" />
+    <mesh name="RL_calf" file="RL_calf.STL" />
+    <mesh name="RL_foot" file="RL_foot.STL" />
+    <mesh name="RR_hip" file="RR_hip.STL" />
+    <mesh name="RR_thigh" file="RR_thigh.STL" />
+    <mesh name="RR_calf" file="RR_calf.STL" />
+    <mesh name="RR_foot" file="RR_foot.STL" />
+    <mesh name="xlerobot_base_link" file="xlerobot_base_link.STL" />
+    <mesh name="shoulder_link" file="shoulder_link.STL" />
+    <mesh name="upper_arm_link" file="upper_arm_link.STL" />
+    <mesh name="forearm_link" file="forearm_link.STL" />
+    <mesh name="wrist1_link" file="wrist1_link.STL" />
+    <mesh name="wrist2_link" file="wrist2_link.STL" />
+    <mesh name="wrist3_link" file="wrist3_link.STL" />
+    <mesh name="gripper_finger_left" file="gripper_finger_left.STL" />
+    <mesh name="gripper_finger_right" file="gripper_finger_right.STL" />
+  </asset>
+  <worldbody>
+    <body name="base_link" pos="0 0 0.25">
+      <inertial pos="-0.00301327 0.00204115 -0.000635" mass="2.74343032" fullinertia="0.00588039 0.01284666 0.01600904 0.00048912 4.378e-05 -3.516e-05" />
+      <freejoint name="float_base" />
+      <geom type="mesh" mesh="base_link_part_1" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+      <geom type="mesh" mesh="base_link_part_2" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+      <geom name="base_collision" type="box" pos="0 -0.0011 0" size="0.10 0.065 0.045" group="3" material="collision_debug" />
+      <site name="imu" pos="0 0 0" size="0.005" />
+      <body name="FL_hip" pos="0.14165 0.037 0">
+        <inertial pos="-0.00266064 0.00153194 -0.00011724" mass="0.27079698" fullinertia="2.36e-05 3.433e-05 3.58e-05 -8.3e-07 1.5e-07 -3e-08" />
+        <joint name="FL_hip_joint" type="hinge" axis="1 0 0" range="-1.50 1.50" damping="0.02" frictionloss="0.06" armature="0.008234" />
+        <geom type="mesh" mesh="FL_hip" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+        <geom name="FL_hip_collision_1" type="mesh" mesh="FL_hip" group="3" material="collision_debug" />
+        <body name="FL_thigh" pos="0 0.0834 0">
+          <inertial pos="-0.00360471 -0.01763227 -0.02190343" mass="0.48086181" fullinertia="0.00103502 0.00094426 0.00024889 2.935e-05 -8.603e-05 0.00018729" />
+          <joint name="FL_thigh_joint" type="hinge" axis="0 1 0" range="-1.57 3.49" damping="0.02" frictionloss="0.06" armature="0.008234" />
+          <geom type="mesh" mesh="FL_thigh" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+          <geom name="FL_thigh_collision_1" type="mesh" mesh="FL_thigh" group="3" material="collision_debug" />
+          <body name="FL_calf" pos="0 0 -0.15">
+            <inertial pos="0.01005013 3.13e-06 -0.05890115" mass="0.06068055" fullinertia="0.00021231 0.00021592 5.96e-06 0.0 1.46e-05 -2e-08" />
+            <joint name="FL_calf_joint" type="hinge" axis="0 1 0" range="-2.53 -0.84" damping="0.02" frictionloss="0.06" armature="0.008234" />
+            <geom type="mesh" mesh="FL_calf" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+            <geom name="FL_calf_collision_1" type="mesh" mesh="FL_calf" group="3" material="collision_debug" />
+            <body name="FL_foot" pos="0 0 -0.15">
+              <inertial pos="-0.00396275 0.0 -0.00314463" mass="0.0049215" fullinertia="3.6e-07 4.6e-07 3.3e-07 0.0 7e-08 0.0" />
+              <geom type="mesh" mesh="FL_foot" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+              <geom name="FL_foot" type="sphere" size="0.02" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="FR_hip" pos="0.14165 -0.037 0">
+        <inertial pos="-0.00266064 -0.00153194 0.00011724" mass="0.27079698" fullinertia="2.36e-05 3.433e-05 3.58e-05 8.3e-07 -1.5e-07 -3e-08" />
+        <joint name="FR_hip_joint" type="hinge" axis="1 0 0" range="-1.50 1.50" damping="0.02" frictionloss="0.06" armature="0.008234" />
+        <geom type="mesh" mesh="FR_hip" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+        <geom name="FR_hip_collision_1" type="mesh" mesh="FR_hip" group="3" material="collision_debug" />
+        <body name="FR_thigh" pos="0 -0.0834 0">
+          <inertial pos="-0.00559051 0.01763224 -0.02107369" mass="0.48086142" fullinertia="0.00101933 0.00095262 0.00027294 -4.59e-05 -0.00016158 -0.00017843" />
+          <joint name="FR_thigh_joint" type="hinge" axis="0 1 0" range="-1.57 3.49" damping="0.02" frictionloss="0.06" armature="0.008234" />
+          <geom type="mesh" mesh="FR_thigh" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+          <geom name="FR_thigh_collision_1" type="mesh" mesh="FR_thigh" group="3" material="collision_debug" />
+          <body name="FR_calf" pos="0 0 -0.15">
+            <inertial pos="0.01005014 3.13e-06 -0.05890115" mass="0.06068055" fullinertia="0.00021231 0.00021592 5.96e-06 0.0 1.46e-05 -2e-08" />
+            <joint name="FR_calf_joint" type="hinge" axis="0 1 0" range="-2.53 -0.84" damping="0.02" frictionloss="0.06" armature="0.008234" />
+            <geom type="mesh" mesh="FR_calf" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+            <geom name="FR_calf_collision_1" type="mesh" mesh="FR_calf" group="3" material="collision_debug" />
+            <body name="FR_foot" pos="0 0 -0.15">
+              <inertial pos="-0.00396275 0.0 -0.00314464" mass="0.0049215" fullinertia="3.6e-07 4.6e-07 3.3e-07 0.0 7e-08 0.0" />
+              <geom type="mesh" mesh="FR_foot" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+              <geom name="FR_foot" type="sphere" size="0.02" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="RL_hip" pos="-0.14165 0.037 0">
+        <inertial pos="0.00266064 0.00153194 0.00011724" mass="0.27079698" fullinertia="2.36e-05 3.433e-05 3.58e-05 8.3e-07 1.5e-07 3e-08" />
+        <joint name="RL_hip_joint" type="hinge" axis="1 0 0" range="-1.50 1.50" damping="0.02" frictionloss="0.06" armature="0.008234" />
+        <geom type="mesh" mesh="RL_hip" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+        <geom name="RL_hip_collision_1" type="mesh" mesh="RL_hip" group="3" material="collision_debug" />
+        <body name="RL_thigh" pos="0 0.0834 0">
+          <inertial pos="-0.00555466 -0.01763227 -0.02101551" mass="0.48086181" fullinertia="0.00102307 0.00095399 0.00027057 4.602e-05 -0.00015399 0.00018026" />
+          <joint name="RL_thigh_joint" type="hinge" axis="0 1 0" range="-1.57 3.49" damping="0.02" frictionloss="0.06" armature="0.008234" />
+          <geom type="mesh" mesh="RL_thigh" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+          <geom name="RL_thigh_collision_1" type="mesh" mesh="RL_thigh" group="3" material="collision_debug" />
+          <body name="RL_calf" pos="0 0 -0.15">
+            <inertial pos="0.01005013 3.13e-06 -0.05890115" mass="0.06068055" fullinertia="0.00021231 0.00021592 5.96e-06 0.0 1.46e-05 -2e-08" />
+            <joint name="RL_calf_joint" type="hinge" axis="0 1 0" range="-2.53 -0.84" damping="0.02" frictionloss="0.06" armature="0.008234" />
+            <geom type="mesh" mesh="RL_calf" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+            <geom name="RL_calf_collision_1" type="mesh" mesh="RL_calf" group="3" material="collision_debug" />
+            <body name="RL_foot" pos="0 0 -0.15">
+              <inertial pos="-0.00396275 0.0 -0.00314463" mass="0.0049215" fullinertia="3.6e-07 4.6e-07 3.3e-07 0.0 7e-08 0.0" />
+              <geom type="mesh" mesh="RL_foot" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+              <geom name="RL_foot" type="sphere" size="0.02" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="RR_hip" pos="-0.14165 -0.037 0">
+        <inertial pos="0.00266064 -0.00153194 -0.00011724" mass="0.27079698" fullinertia="2.36e-05 3.433e-05 3.58e-05 -8.3e-07 -1.5e-07 3e-08" />
+        <joint name="RR_hip_joint" type="hinge" axis="1 0 0" range="-1.50 1.50" damping="0.02" frictionloss="0.06" armature="0.008234" />
+        <geom type="mesh" mesh="RR_hip" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+        <geom name="RR_hip_collision_1" type="mesh" mesh="RR_hip" group="3" material="collision_debug" />
+        <body name="RR_thigh" pos="0 -0.0834 0">
+          <inertial pos="-0.00521957 0.01761785 -0.02116423" mass="0.48086142" fullinertia="0.00102378 0.00095271 0.00026924 -4.288e-05 -0.00015179 -0.00018005" />
+          <joint name="RR_thigh_joint" type="hinge" axis="0 1 0" range="-1.57 3.49" damping="0.02" frictionloss="0.06" armature="0.008234" />
+          <geom type="mesh" mesh="RR_thigh" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+          <geom name="RR_thigh_collision_1" type="mesh" mesh="RR_thigh" group="3" material="collision_debug" />
+          <body name="RR_calf" pos="0 0 -0.15">
+            <inertial pos="0.01005013 3.13e-06 -0.05890115" mass="0.06068055" fullinertia="0.00021231 0.00021592 5.96e-06 0.0 1.46e-05 -2e-08" />
+            <joint name="RR_calf_joint" type="hinge" axis="0 1 0" range="-2.53 -0.84" damping="0.02" frictionloss="0.06" armature="0.008234" />
+            <geom type="mesh" mesh="RR_calf" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+            <geom name="RR_calf_collision_1" type="mesh" mesh="RR_calf" group="3" material="collision_debug" />
+            <body name="RR_foot" pos="0 0 -0.15">
+              <inertial pos="-0.00396275 0.0 -0.00314463" mass="0.0049215" fullinertia="3.6e-07 4.6e-07 3.3e-07 0.0 7e-08 0.0" />
+              <geom type="mesh" mesh="RR_foot" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+              <geom name="RR_foot" type="sphere" size="0.02" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="xlerobot_base_link" pos="0 0 0.051">
+        <inertial pos="-0.00423549 0.00051824 0.01705748" mass="0.47103475" fullinertia="0.00025362 0.00033656 0.00041884 -5.6e-07 -1.01e-06 7.1e-06" />
+        <geom type="mesh" mesh="xlerobot_base_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+        <geom name="xlerobot_base_link_collision_1" type="mesh" mesh="xlerobot_base_link" group="3" material="collision_debug" />
+        <body name="shoulder_link" pos="0 0 0.0449">
+          <inertial pos="0.00260064 0.00106396 0.01762566" mass="0.12453754" fullinertia="0.00011533 6.767e-05 0.00010801 -1.12e-06 -1.125e-05 -2.79e-06" />
+          <joint name="shoulder_link_joint" type="hinge" axis="0 0 1" range="-2.618 2.618" damping="0.02" frictionloss="0.06" armature="0.008234" />
+          <geom type="mesh" mesh="shoulder_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+          <geom name="shoulder_link_collision_1" type="mesh" mesh="shoulder_link" group="3" material="collision_debug" />
+          <body name="upper_arm_link" pos="0.013467 -5E-05 0.04">
+            <inertial pos="-0.05854192 -0.00458285 5.18e-06" mass="0.61260563" fullinertia="0.00012124 0.00195806 0.00201384 -3.5e-07 -7.1e-07 -3.8e-07" />
+            <joint name="upper_arm_link_joint" type="hinge" axis="0 1 0" range="0 3.526" damping="0.02" frictionloss="0.06" armature="0.008234" />
+            <geom type="mesh" mesh="upper_arm_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+            <geom name="upper_arm_link_collision_1" type="mesh" mesh="upper_arm_link" group="3" material="collision_debug" />
+            <body name="forearm_link" pos="-0.117 0 0">
+              <inertial pos="0.08098665 -0.00323754 0.04031467" mass="0.38751294" fullinertia="0.00019273 0.00064687 0.00066492 4.328e-05 -0.00013948 1.226e-05" />
+              <joint name="forearm_link_joint" type="hinge" axis="0 -1 0" range="-4.224 0" damping="0.02" frictionloss="0.06" armature="0.008234" />
+              <geom type="mesh" mesh="forearm_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+              <geom name="forearm_link_collision_1" type="mesh" mesh="forearm_link" group="3" material="collision_debug" />
+              <body name="wrist1_link" pos="0.1035 0 0.045">
+                <inertial pos="0.04463011 0.00061676 0.03660595" mass="0.19355351" fullinertia="0.00012865 0.00016982 0.00015558 6.14e-06 -6.151e-05 5.19e-06" />
+                <joint name="wrist1_link_joint" type="hinge" axis="0 1 0" range="-1.658 1.99" damping="0.02" frictionloss="0.06" armature="0.008234" />
+                <geom type="mesh" mesh="wrist1_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+                <geom name="wrist1_link_collision_1" type="mesh" mesh="wrist1_link" group="3" material="collision_debug" />
+                <body name="wrist2_link" pos="0.055 0 0.030878">
+                  <inertial pos="0.0032252 -8.812e-05 -0.02889903" mass="0.16857264" fullinertia="5.71e-05 5.749e-05 4.435e-05 -5e-08 2.56e-06 -2.1e-07" />
+                  <joint name="wrist2_link_joint" type="hinge" axis="0 0 1" range="-1.396 1.396" damping="0.02" frictionloss="0.06" armature="0.001976" />
+                  <geom type="mesh" mesh="wrist2_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+                  <geom name="wrist2_link_collision_1" type="mesh" mesh="wrist2_link" group="3" material="collision_debug" />
+                  <body name="wrist3_link" pos="0.0186 0 -0.033">
+                    <inertial pos="0.04099855 -8.9e-05 0.01150782" mass="0.31383978" fullinertia="0.00030892 0.00032809 0.0002097 -2.9e-07 -8.101e-05 2.89e-06" />
+                    <joint name="wrist3_link_joint" type="hinge" axis="1 0 0" range="-2.793 2.793" damping="0.02" frictionloss="0.06" armature="0.001976" />
+                    <geom type="mesh" mesh="wrist3_link" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+                    <geom name="wrist3_link_collision_1" type="mesh" mesh="wrist3_link" group="3" material="collision_debug" />
+                    <body name="gripper_finger_left" pos="0.06925 0 0">
+                      <inertial pos="0.01860227 0.05889209 -0.00134131" mass="0.06406078" fullinertia="1.275e-05 2.778e-05 2.573e-05 3.03e-06 -1.64e-06 1.4e-07" />
+                      <joint name="gripper_finger_left_joint" type="slide" axis="0 1 0" range="-0.042 0" damping="0.02" frictionloss="0.01" />
+                      <geom type="mesh" mesh="gripper_finger_left" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+                      <geom name="gripper_finger_left_collision_1" type="mesh" mesh="gripper_finger_left" group="3" material="collision_debug" />
+                    </body>
+                    <body name="gripper_finger_right" pos="0.06925 0 0">
+                      <inertial pos="0.01860227 -0.05889209 0.00134131" mass="0.06406078" fullinertia="1.275e-05 2.778e-05 2.573e-05 -3.03e-06 1.64e-06 1.4e-07" />
+                      <joint name="gripper_finger_right_joint" type="slide" axis="0 1 0" range="0 0.042" damping="0.02" frictionloss="0.01" />
+                      <geom type="mesh" mesh="gripper_finger_right" contype="0" conaffinity="0" group="1" density="0" material="visual_body" />
+                      <geom name="gripper_finger_right_collision_1" type="mesh" mesh="gripper_finger_right" group="3" material="collision_debug" />
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <default>
+    <geom friction="0.4 0.005 0.0001" margin="0.001" condim="3" />
+  </default>
+  <actuator>
+    <motor name="FL_hip_joint" joint="FL_hip_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="FL_thigh_joint" joint="FL_thigh_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="FL_calf_joint" joint="FL_calf_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="FR_hip_joint" joint="FR_hip_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="FR_thigh_joint" joint="FR_thigh_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="FR_calf_joint" joint="FR_calf_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="RL_hip_joint" joint="RL_hip_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="RL_thigh_joint" joint="RL_thigh_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="RL_calf_joint" joint="RL_calf_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="RR_hip_joint" joint="RR_hip_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="RR_thigh_joint" joint="RR_thigh_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="RR_calf_joint" joint="RR_calf_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="shoulder_link_joint" joint="shoulder_link_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="upper_arm_link_joint" joint="upper_arm_link_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="forearm_link_joint" joint="forearm_link_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="wrist1_link_joint" joint="wrist1_link_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="wrist2_link_joint" joint="wrist2_link_joint" gear="1" ctrllimited="true" ctrlrange="-3.7 3.7" />
+    <motor name="wrist3_link_joint" joint="wrist3_link_joint" gear="1" ctrllimited="true" ctrlrange="-3.7 3.7" />
+    <motor name="gripper_finger_left_joint" joint="gripper_finger_left_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+    <motor name="gripper_finger_right_joint" joint="gripper_finger_right_joint" gear="1" ctrllimited="true" ctrlrange="-10 10" />
+  </actuator>
+  <equality>
+    <joint name="gripper_finger_right_joint_mimic" joint1="gripper_finger_right_joint" joint2="gripper_finger_left_joint" polycoef="0 -1 0 0 0" />
+  </equality>
+  <keyframe>
+    <key name="home" qpos="0 0 0.25 1 0 0 0 0.0 0.9 -1.8 0.0 0.9 -1.8 0.0 0.9 -1.8 0.0 0.9 -1.8 0.0 1.0 -2.0 0.0 0.0 0.0 0.0 0.0" ctrl="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
+  </keyframe>
+</mujoco>

@@ -25,9 +25,9 @@ class Riplus4438PiperCfg( BaseConfig ):
         decimation = 4  # control frequency = sim frequency / decimation
         hip_reduction = 0.5
         effort_limit = {
-            "hip": 23.7, "thigh": 23.7, "calf": 45.43,
-            "shoulder_link_joint": 20.0, "upper_arm_link_joint": 20.0, "forearm_link_joint": 15.0, 
-            "wrist1_link_joint": 7.0, "wrist2_link_joint": 5.0, "wrist3_link_joint": 5.0,
+            "hip": 10.0, "thigh": 10.0, "calf": 10.0,
+            "shoulder_link_joint": 10.0, "upper_arm_link_joint": 10.0, "forearm_link_joint": 10.0, 
+            "wrist1_link_joint": 10.0, "wrist2_link_joint": 3.7, "wrist3_link_joint": 3.7,
         }
         armature = 0.01
         friction = 0.01
