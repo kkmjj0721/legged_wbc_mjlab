@@ -4,7 +4,7 @@
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot name="ri_plus_4438">
   <mujoco>
-    <compiler meshdir="../meshes/" balanceinertia="true" discardvisual="false" />
+    <compiler meshdir="../assets/" balanceinertia="true" discardvisual="false" />
   </mujoco>
 
   <link name="base_link">
@@ -16,7 +16,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/base_link.STL" />
+        <mesh filename="../assets/base_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.68 0.70 0.72 1" />
@@ -25,7 +25,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/base_link.STL" />
+        <mesh filename="../assets/base_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -38,7 +38,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_hip.STL" />
+        <mesh filename="../assets/FL_hip.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -47,7 +47,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_hip.STL" />
+        <mesh filename="../assets/FL_hip.STL" />
       </geometry>
     </collision>
   </link>
@@ -67,7 +67,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_thigh.STL" />
+        <mesh filename="../assets/FL_thigh.STL" />
       </geometry>
       <material name="">
         <color rgba="0.44 0.45 0.49 1" />
@@ -76,7 +76,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_thigh.STL" />
+        <mesh filename="../assets/FL_thigh.STL" />
       </geometry>
     </collision>
   </link>
@@ -96,7 +96,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_calf.STL" />
+        <mesh filename="../assets/FL_calf.STL" />
       </geometry>
       <material name="">
         <color rgba="0.62 0.64 0.67 1" />
@@ -105,7 +105,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_calf.STL" />
+        <mesh filename="../assets/FL_calf.STL" />
       </geometry>
     </collision>
   </link>
@@ -125,7 +125,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FL_foot.STL" />
+        <mesh filename="../assets/FL_foot.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -153,7 +153,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_hip.STL" />
+        <mesh filename="../assets/FR_hip.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -162,7 +162,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_hip.STL" />
+        <mesh filename="../assets/FR_hip.STL" />
       </geometry>
     </collision>
   </link>
@@ -182,7 +182,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_thigh.STL" />
+        <mesh filename="../assets/FR_thigh.STL" />
       </geometry>
       <material name="">
         <color rgba="0.44 0.45 0.49 1" />
@@ -191,7 +191,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_thigh.STL" />
+        <mesh filename="../assets/FR_thigh.STL" />
       </geometry>
     </collision>
   </link>
@@ -211,7 +211,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_calf.STL" />
+        <mesh filename="../assets/FR_calf.STL" />
       </geometry>
       <material name="">
         <color rgba="0.62 0.64 0.67 1" />
@@ -220,7 +220,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_calf.STL" />
+        <mesh filename="../assets/FR_calf.STL" />
       </geometry>
     </collision>
   </link>
@@ -240,7 +240,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/FR_foot.STL" />
+        <mesh filename="../assets/FR_foot.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -268,7 +268,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_hip.STL" />
+        <mesh filename="../assets/RL_hip.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -277,7 +277,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_hip.STL" />
+        <mesh filename="../assets/RL_hip.STL" />
       </geometry>
     </collision>
   </link>
@@ -297,7 +297,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_thigh.STL" />
+        <mesh filename="../assets/RL_thigh.STL" />
       </geometry>
       <material name="">
         <color rgba="0.44 0.45 0.49 1" />
@@ -306,7 +306,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_thigh.STL" />
+        <mesh filename="../assets/RL_thigh.STL" />
       </geometry>
     </collision>
   </link>
@@ -326,7 +326,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_calf.STL" />
+        <mesh filename="../assets/RL_calf.STL" />
       </geometry>
       <material name="">
         <color rgba="0.62 0.64 0.67 1" />
@@ -335,7 +335,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_calf.STL" />
+        <mesh filename="../assets/RL_calf.STL" />
       </geometry>
     </collision>
   </link>
@@ -355,7 +355,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RL_foot.STL" />
+        <mesh filename="../assets/RL_foot.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -383,7 +383,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_hip.STL" />
+        <mesh filename="../assets/RR_hip.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -392,7 +392,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_hip.STL" />
+        <mesh filename="../assets/RR_hip.STL" />
       </geometry>
     </collision>
   </link>
@@ -412,7 +412,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_thigh.STL" />
+        <mesh filename="../assets/RR_thigh.STL" />
       </geometry>
       <material name="">
         <color rgba="0.44 0.45 0.49 1" />
@@ -421,7 +421,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_thigh.STL" />
+        <mesh filename="../assets/RR_thigh.STL" />
       </geometry>
     </collision>
   </link>
@@ -441,7 +441,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_calf.STL" />
+        <mesh filename="../assets/RR_calf.STL" />
       </geometry>
       <material name="">
         <color rgba="0.62 0.64 0.67 1" />
@@ -450,7 +450,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_calf.STL" />
+        <mesh filename="../assets/RR_calf.STL" />
       </geometry>
     </collision>
   </link>
@@ -470,7 +470,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/RR_foot.STL" />
+        <mesh filename="../assets/RR_foot.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -498,7 +498,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/xlerobot_base_link.STL" />
+        <mesh filename="../assets/xlerobot_base_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.68 0.70 0.72 1" />
@@ -507,7 +507,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/xlerobot_base_link.STL" />
+        <mesh filename="../assets/xlerobot_base_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -526,7 +526,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/shoulder_link.STL" />
+        <mesh filename="../assets/shoulder_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -535,7 +535,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/shoulder_link.STL" />
+        <mesh filename="../assets/shoulder_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -555,7 +555,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/upper_arm_link.STL" />
+        <mesh filename="../assets/upper_arm_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.44 0.45 0.49 1" />
@@ -564,7 +564,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/upper_arm_link.STL" />
+        <mesh filename="../assets/upper_arm_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -584,7 +584,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/forearm_link.STL" />
+        <mesh filename="../assets/forearm_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.44 0.45 0.49 1" />
@@ -593,7 +593,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/forearm_link.STL" />
+        <mesh filename="../assets/forearm_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -613,7 +613,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/wrist1_link.STL" />
+        <mesh filename="../assets/wrist1_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -622,7 +622,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/wrist1_link.STL" />
+        <mesh filename="../assets/wrist1_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -642,7 +642,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/wrist2_link.STL" />
+        <mesh filename="../assets/wrist2_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.62 0.64 0.67 1" />
@@ -651,7 +651,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/wrist2_link.STL" />
+        <mesh filename="../assets/wrist2_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -671,7 +671,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/wrist3_link.STL" />
+        <mesh filename="../assets/wrist3_link.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -680,7 +680,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/wrist3_link.STL" />
+        <mesh filename="../assets/wrist3_link.STL" />
       </geometry>
     </collision>
   </link>
@@ -700,7 +700,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/gripper_finger_left.STL" />
+        <mesh filename="../assets/gripper_finger_left.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -709,7 +709,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/gripper_finger_left.STL" />
+        <mesh filename="../assets/gripper_finger_left.STL" />
       </geometry>
     </collision>
   </link>
@@ -730,7 +730,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/gripper_finger_right.STL" />
+        <mesh filename="../assets/gripper_finger_right.STL" />
       </geometry>
       <material name="">
         <color rgba="0.28 0.30 0.33 1" />
@@ -739,7 +739,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
-        <mesh filename="../meshes/gripper_finger_right.STL" />
+        <mesh filename="../assets/gripper_finger_right.STL" />
       </geometry>
     </collision>
   </link>
