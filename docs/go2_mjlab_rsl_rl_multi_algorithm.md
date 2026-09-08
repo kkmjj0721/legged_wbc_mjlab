@@ -6,16 +6,32 @@
 `src/assets/robots/go2`。目标是让 mjlab 只负责环境和机器人仿真，让外部
 `rsl_rl` 负责 PPO 以及后续算法，并且能在同一套 Go2 环境上切换算法。
 
+本次现实审查快照：2026-09-08 18:16（Asia/Shanghai），`HEAD=6b880b0`。
+环境版本为 `mjlab==1.6.0`、`rsl-rl-lib==5.4.2`、`torch==2.14.0`、
+`mujoco==3.11.0`、`tensordict==0.14.1`。工作树仍有未提交的 `rl_cfg.py`、
+`rl/runner.py`、缓存文件和一个未跟踪的 `rsl_rl/__init__.py` shim；因此本文把
+`HEAD` 状态、当前工作树状态和建议实现分开描述。后续编辑代码后，应重新运行第 5 节命令，不能沿用旧快照结论。
+
+当前快照的关键状态：
+
+| 检查 | 结果 |
+|---|---|
+| `src/tasks/locomotion/__init__.py` | 已由 `HEAD` 跟踪，空文件，任务自动发现有效 |
+| `rsl_rl/__init__.py` | 当前工作树未跟踪 shim；仓库根解析正常，不能视为已提交修复 |
+| `rl_cfg.py` | 当前实时文件可 `py_compile`，actor/critic/algorithm 使用显式 class path |
+| `VelocityOnPolicyRunner` | 可构造、可用 `runner.alg.get_policy()` 推理；保存时仍会访问不存在的 `logger.logger_type`（A.6.1 给出修正版） |
+| Go2 asset | 未自包含，`spec.assets == 0`，导出验收失败 |
+
 ## 1. 当前基线
 
 | 项目 | 当前事实 |
 |---|---|
 | mjlab | `pyproject.toml` 固定为 `mjlab==1.6.0` |
-| rsl_rl | 本地 `rsl_rl/`，以 editable 方式作为 `rsl-rl-lib==5.4.2` 安装 |
-| Go2 环境 | `Unitree-Go2-Flat`、`Unitree-Go2-Rough`，注册在 `src/tasks/locomotion/go2_ppo/config/__init__.py`；当前工作树新增了 `src/tasks/locomotion/__init__.py` 以便自动发现，但该文件尚未提交 |
+| rsl_rl | 本地 `rsl_rl/`，以 editable 方式作为 `rsl-rl-lib==5.4.2` 安装；当前工作树另有未跟踪根 shim |
+| Go2 环境 | `Unitree-Go2-Flat`、`Unitree-Go2-Rough`，注册在 `src/tasks/locomotion/go2_ppo/config/__init__.py`；`src/tasks/locomotion/__init__.py` 已跟踪为空包标记，当前自动发现有效 |
 | 环境配置 | `go_ppo_env_cfg.py` 提供共享配置，`config/env_cfgs.py` 做 Flat/Rough 和 train/play 覆盖 |
-| PPO 配置 | `config/rl_cfg.py` 使用 `RslRlOnPolicyRunnerCfg`、MLP actor/critic 和 `PPO` |
-| runner | `rl/runner.py` 继承 `MjlabOnPolicyRunner`，保存时导出 `policy.onnx` |
+| PPO 配置 | `config/rl_cfg.py` 使用 `RslRlOnPolicyRunnerCfg`、显式 `MLPModel`、显式 `PPO` path；当前 dirty 快照的 `experiment_name` 为 `go2_ppo` |
+| runner | 注册的是 `VelocityOnPolicyRunner`，继承 `MjlabOnPolicyRunner`；文件中还残留一段已注释的旧 runner 代码 |
 | 训练入口 | `scripts/train.py` 已有完整的环境构造、`RslRlVecEnvWrapper`、runner、resume 和日志流程 |
 | 播放/列举入口 | `scripts/play.py`、`scripts/list_envs.py` 当前为空文件，不能当作已完成能力 |
 | Go2 mesh | 16 个 `.obj` 文件均在 `src/assets/robots/go2/xmls/assets/` 中，MJCF 中有 16 个 mesh |
@@ -35,30 +51,26 @@ flowchart LR
 
 ## 2. 审查结果和阻断项
 
-### 2.1 任务自动发现曾经没有闭环（P0，当前工作树已有未提交修复）
+### 2.1 任务自动发现（历史阻断已修复）
 
 `src/tasks/__init__.py` 调用 `import_packages(__name__, ...)`，mjlab 的扫描器使用
 `pkgutil.iter_modules`，因此 `locomotion` 必须是可识别的包。初次审查时该目录没有
-`__init__.py`；当前工作树已经新增该文件，但它仍是未提交文件，必须纳入正式变更。
+`__init__.py`；当前 `HEAD` 已包含一个空的 `src/tasks/locomotion/__init__.py`，它只负责让目录成为可扫描包。
 
 实测结果：
 
 ```text
 import src.tasks
-list_tasks()                         # 当前工作树已有 __init__.py 时出现 Unitree-Go2-Flat/Rough
+list_tasks()                         # 当前 HEAD 出现 Unitree-Go2-Flat/Rough
 ```
 
-在缺少该文件的旧状态下，`scripts/train.py` 启动时只导入 `src.tasks`，任务注册表中没有 Go2；当前工作树的
-`python -m scripts.train Unitree-Go2-Flat --help` 已能列出 Go2 配置，说明这项修复在本地生效。
+在缺少该文件的历史状态下，`scripts/train.py` 启动时只导入 `src.tasks`，任务注册表中没有 Go2；当前
+`python -m scripts.train Unitree-Go2-Flat --help` 已能列出 Go2 配置。
 
-正式提交前仍需确认以下入口保持一致：
+后续新任务继续放在该包下即可；不要再依赖手工 `import
+src.tasks.locomotion.go2_ppo.config` 才能注册任务。
 
-1. 保留并提交 `src/tasks/locomotion/__init__.py`，让扫描器能进入该包；
-2. 或在 `src/tasks/__init__.py` 显式导入 `src.tasks.locomotion.go2_ppo.config`。
-
-推荐第一种，并为每个新的算法/机器人任务保持标准包结构。
-
-### 2.2 Python 包路径和外部 rsl_rl 被同名目录遮蔽（P0）
+### 2.2 Python 包路径和外部 rsl_rl 被同名目录遮蔽（历史阻断；当前有未跟踪 shim）
 
 当前仓库有两层目录：
 
@@ -67,7 +79,7 @@ rsl_rl/                 # vendored 项目根，没有顶层 rsl_rl/__init__.py
 └── rsl_rl/              # 真正的 Python 包
 ```
 
-从仓库根目录直接运行时，Python 可能把外层目录识别成 namespace package：
+在没有仓库根 shim 的历史状态，从仓库根目录运行时 Python 会把外层目录识别成 namespace package：
 
 ```text
 import rsl_rl
@@ -85,7 +97,8 @@ python scripts/train.py       -> ModuleNotFoundError: src
 python -m scripts.train       -> 能找到 src，但仍可能被外层 rsl_rl 遮蔽
 ```
 
-稳定方案：
+当前工作树新增了未跟踪的 `rsl_rl/__init__.py` shim，将 `__path__` 指向内层
+`rsl_rl/rsl_rl`；实测仓库根可以解析 `PPO`。这个 shim 还没有进入 `HEAD`，不应被当作完成的发布方案。稳定方案：
 
 1. 把本地 rsl_rl 项目移到 `_vendor/rsl_rl` 或仓库外，并从该真实包路径 editable 安装；
 2. 统一项目导入风格。要么全部使用已安装的 `assets/config/tasks`，要么在打包配置中明确安装 `src` 包并始终使用 `src.*`；
@@ -96,7 +109,7 @@ cd /home/sunteng/projects/legged_wbc_mjlab
 export PYTHONPATH="$PWD/rsl_rl:$PWD"
 ```
 
-这个顺序会让真正的 `rsl_rl/rsl_rl/__init__.py` 优先于外层 namespace。临时方案只用于验证，不应作为长期发布方式。
+这个顺序会让真正的 `rsl_rl/rsl_rl/__init__.py` 优先于外层 namespace。当前 shim 或该环境变量只用于过渡验证；长期应使用独立包布局或正式提交 shim。
 
 ### 2.3 Go2 asset 的“本地可编译、导出后丢失”问题（P0）
 
@@ -134,7 +147,7 @@ spec.assets == {}
 
 1. MJCF 使用 `meshdir="assets"`，mesh 的 `file` 使用裸文件名；
 2. `get_spec()` 读取 `GO2_XML.parent / "assets"` 下的文件，并填充 `spec.assets`；
-3. 在当前 mjlab 1.6.0 中先确认可用的 asset API。参考项目的
+3. 在当前 mjlab 1.6.0 中使用 `MjSpec.assets` API。参考项目的
    `mjlab.utils.os.update_assets` 来自不同版本，不能直接复制；当前环境中该函数不存在，应在项目侧写一个等价的小型加载函数，或使用当前 MuJoCo `MjSpec.assets` 接口；
 4. 用 `Scene.write(temp_dir)` 后，在没有仓库路径参与的情况下执行
    `mujoco.MjModel.from_xml_path(temp_dir / "scene.xml")`，这才是 asset 验收标准。
@@ -152,15 +165,26 @@ def get_spec() -> mujoco.MjSpec:
 
 最终 key 的形式必须和 MJCF 的 `file` 属性、`meshdir` 经过导出后的路径一致；不能只凭源码目录下 compile 成功来判断。
 
-### 2.4 Go2 配置存在版本和工作树漂移风险（P1）
+### 2.4 Go2 配置和 runner 的工作树漂移风险（P1）
 
-审查时 `src/config/go2/go2_config.py` 存在未提交工作树修改。该文件曾出现未闭合的类定义，导致所有 Go2 任务导入 `SyntaxError`；当前工作树版本已经可以通过 `py_compile`，但仍必须在提交前核对 `git diff`。
+历史审查时 `src/config/go2/go2_config.py` 曾出现未闭合的类定义，导致所有 Go2 任务导入
+`SyntaxError`；当前 `HEAD` 已可通过 `py_compile`，该文件当前没有待提交源码 diff。
 
-另外，初次审查时 `control.delay_update_period` 写成了 `10.0`，而
-`mjlab.actuator.ActuatorCfg` 的字段类型是 `int`；当前工作树已经改为整数 `10`，CPU
+另外，历史审查时 `control.delay_update_period` 写成了 `10.0`，而
+`mjlab.actuator.ActuatorCfg` 的字段类型是 `int`；当前 `HEAD` 已是整数 `10`，CPU
 环境 reset/step 已能通过。提交前仍应保留类型检查，避免回归。
 
 `go2_constants.py` 使用 `from config.go2.go2_config import Go2Cfg`，而同一仓库其他位置又使用 `src.config...`。这依赖运行时 `sys.path` 偶然包含仓库根和 `src`，必须统一。
+
+当前工作树的 `src/tasks/locomotion/go2_ppo/rl/runner.py` 还保留一段已注释的旧
+`CustomOnPolicyRunner` 示例；它假设 `self.alg.policy`、`act_inference` 和旧 normalizer
+字段，与 rsl_rl 5.4.2 不匹配，未被 task registry 使用。应删除这段 dead code，继续使用
+注册的 `VelocityOnPolicyRunner(MjlabOnPolicyRunner)`。
+
+`VelocityOnPolicyRunner.save()` 还有一个 mjlab 1.6/rsl_rl 5.4 兼容问题：它访问
+`self.logger.logger_type`，但当前 rsl_rl 5.4 的 `Logger` 没有这个属性。保存 checkpoint
+时应从 `self.cfg["logger"]` 判断 logger 类型，或暂时只调用基类 `save()`；否则训练到保存
+间隔时才会失败。
 
 ## 3. 推荐的多算法架构
 
@@ -285,7 +309,7 @@ my_project.algorithms.amp:AMP
 
 ```text
 logs/rsl_rl/
-└── go2_flat_ppo/
+└── go2_ppo/
     └── 2026-09-08_12-00-00/
         ├── params/env.yaml
         ├── params/agent.yaml
@@ -500,7 +524,8 @@ rsl-rl-lib = { path = "../rsl_rl_custom", editable = true }
 
 也可以用固定 Git revision 替代本地 editable 路径。开发自定义算法时用 editable；复现实验和 CI 时固定 commit。distribution 名称是 `rsl-rl-lib`，Python import 名称是 `rsl_rl`，两者不要混淆。
 
-当前仓库根目录下的 `rsl_rl/` 会形成 namespace shadow。迁到外部仓库后，项目根下不能继续留一个会被 Python 发现的同名外层目录。否则即使外部包已正确安装，`import rsl_rl` 仍可能先命中本地目录。
+当前仓库根目录下的 `rsl_rl/` 在没有 shim 时会形成 namespace shadow；当前工作树的未跟踪
+`rsl_rl/__init__.py` 已临时解决根目录解析，但它不在 `HEAD`。迁到外部仓库后，项目根下不能继续留一个会被 Python 发现的同名外层目录。否则即使外部包已正确安装，`import rsl_rl` 仍可能先命中本地目录。
 
 安装或同步后必须同时在仓库根和仓库外验证：
 
@@ -516,9 +541,10 @@ from rsl_rl.runners import OnPolicyRunner
 
 print("distribution:", version("rsl-rl-lib"))
 print("package:", rsl_rl.__file__)
-print("runner:", inspect.getfile(OnPolicyRunner))
+runner_file = inspect.getfile(OnPolicyRunner)
+print("runner:", runner_file)
 assert rsl_rl.__file__ is not None
-assert "/legged_wbc_mjlab/rsl_rl/" not in inspect.getfile(OnPolicyRunner)
+assert runner_file.endswith("/rsl_rl/runners/on_policy_runner.py")
 PY
 
 cd /tmp
@@ -526,7 +552,7 @@ cd /tmp
   'import rsl_rl; assert rsl_rl.__file__ is not None; print(rsl_rl.__file__)'
 ```
 
-如果外部仓库仍位于当前项目内部，最后一个断言应改为检查预期的绝对路径。核心标准是两个工作目录解析到同一个 `rsl_rl/__init__.py` 和同一个 runner 文件。
+如果外部仓库仍位于当前项目内部，断言应改为检查预期的绝对路径。核心标准是两个工作目录解析到同一个 `rsl_rl/__init__.py` 和同一个 runner 文件；当前嵌套布局的合法路径包含 `/rsl_rl/rsl_rl/`，不能简单断言“不包含 `/legged_wbc_mjlab/rsl_rl/`”。
 
 ### 3.11 当前 Go2 与外部 rsl_rl 的实际边界
 
@@ -625,10 +651,12 @@ export WARP_CACHE_PATH=/tmp/legged_wbc_mjlab-warp-cache
 ### 5.2 rsl_rl 和任务注册
 
 ```bash
+export PYTHONPATH="$PWD/rsl_rl:$PWD"
 .venv/bin/python - <<'PY'
 import inspect
 import rsl_rl
 from rsl_rl.utils import resolve_callable
+import mjlab.tasks  # noqa: F401
 from mjlab.tasks.registry import list_tasks
 import src.tasks
 
@@ -648,6 +676,7 @@ PY
 ### 5.3 asset 独立导出测试
 
 ```bash
+export PYTHONPATH="$PWD/rsl_rl:$PWD"
 .venv/bin/python - <<'PY'
 import tempfile
 import mujoco
@@ -710,7 +739,8 @@ export CUDA_VISIBLE_DEVICES=""
 ```
 
 该命令依赖包路径和任务注册修复。当前工作树已将 `delay_update_period` 改为整数，CPU
-环境 reset/step 和 runner 构造 smoke 已通过；如果在旧 commit 上执行，先修复
+环境 reset/step 和 runner 构造 smoke 已通过；但当前注册的 `VelocityOnPolicyRunner.save()`
+仍访问不存在的 `self.logger.logger_type`，因此一轮训练在 checkpoint 保存时会失败，必须先应用 A.6.1。若在旧 commit 上执行，先修复
 `10.0` 的类型错误。上面的命令显式关闭 CUDA，适合无 GPU 机器做 CPU smoke；有 GPU
 时去掉 `CUDA_VISIBLE_DEVICES=""` 并按实际设备选择。正式训练前再恢复环境数量和
 iteration。当前 `scripts/play.py` 为空，因此 checkpoint 播放不能列为已通过；应先实现与训练相同的 task 加载、play env、runner load 和 viewer 流程。
@@ -755,13 +785,59 @@ AMP、蒸馏等包含额外状态时，还要验证 discriminator、teacher、re
 
 ## 7. 已验证和未验证边界
 
-已验证：Go2 MJCF 在源码目录中可被 MuJoCo 解析和直接 compile；16 个 mesh 文件存在；当前工作树中 `src.tasks` 能自动发现 Flat/Rough task；CPU 单环境 Flat/Rough 的 reset/step 通过；`RslRlVecEnvWrapper`、`VelocityOnPolicyRunner`、外部 `PPO` 和 47/74 维 Flat actor/critic、234/261 维 Rough actor/critic observation 已完成一次构造与 inference smoke；`rsl_rl` 在显式修正 `PYTHONPATH` 后可以正常解析 `PPO`。`WARP_CACHE_PATH` 用于把 mjlab/MJWarp 的编译缓存放到可写目录。
+已验证：Go2 MJCF 在源码目录中可被 MuJoCo 解析和直接 compile；16 个 mesh 文件存在；当前 `HEAD` 中的空 `src/tasks/locomotion/__init__.py` 使 `src.tasks` 能自动发现 Flat/Rough task；CPU 单环境 Flat/Rough 的 reset/step 通过；在临时 shim 和当前 runner/config 快照下，`RslRlVecEnvWrapper`、`VelocityOnPolicyRunner` 和外部 `PPO` 可完成构造与 inference（正确推理入口是 `runner.alg.get_policy()`，Flat action 为 `(1,12)`，Rough action 为 `(1,12)`）；`rsl_rl` 在显式修正包路径后可以解析 `PPO`。`WARP_CACHE_PATH` 用于把 mjlab/MJWarp 的编译缓存放到可写目录。
 
-未验证：当前工作树下从零启动的完整 Go2 训练、播放入口、多 GPU 训练，以及未来算法的 checkpoint 兼容性。Go2 场景 asset 导出仍失败：`spec.assets` 为 0，`Scene.write()` 只生成 `scene.xml`，从临时目录重载时报 `Error opening file`；必须先修正 MJCF 路径和 `spec.assets` 注入。当前本机没有 CUDA，不能据此判定 GPU 训练状态。只有通过上述分阶段验收后，才能把这些能力标记为完成。
+未验证：当前工作树下从零启动的完整 Go2 训练、播放入口、多 GPU 训练，以及未来算法的 checkpoint 兼容性。当前实时 `rl_cfg.py` 已通过 `py_compile`，并使用单一的显式 `PPO` class path；`runner.py` 的旧 `CustomOnPolicyRunner` 已注释但仍应删除，注册的 `VelocityOnPolicyRunner.save()` 仍需应用 A.6.1 才能完成 checkpoint/ONNX 保存。Go2 场景 asset 导出仍失败：`spec.assets` 为 0，`Scene.write()` 只生成 `scene.xml`，从临时目录重载时报 `Error opening file`；必须先应用 A.3/A.4。当前本机没有 CUDA，不能据此判定 GPU 训练状态。只有通过上述分阶段验收后，才能把这些能力标记为完成。
 
 ## 附录 A：可直接应用的代码实现（本次只写入文档）
 
 本附录给出按照当前 `mjlab==1.6.0`、`rsl-rl-lib==5.4.2` 接口整理的代码。代码块是建议修改内容，本次请求只修改本文档，没有把任何代码写入项目源码。每个片段都标明了目标文件；应用时按顺序完成，并在每一步运行对应验收命令。
+
+### A.0 先确定外部 rsl_rl 的放置方式
+
+推荐把 rsl_rl 放在并列仓库，并将 `pyproject.toml` 改为真实相对路径：
+
+```toml
+[project]
+dependencies = [
+  "mjlab==1.6.0",
+  "rsl-rl-lib==5.4.2",
+]
+
+[tool.uv.sources]
+rsl-rl-lib = { path = "../rsl_rl_custom", editable = true }
+```
+
+如果暂时保留当前仓库内的双层目录 `rsl_rl/rsl_rl`，则需要正式提交下面的
+`rsl_rl/__init__.py`，避免仓库根把外层目录当成 namespace package：
+
+```python
+"""Checkout shim for the vendored rsl_rl package."""
+
+from pathlib import Path
+
+__path__ = [str(Path(__file__).resolve().parent / "rsl_rl")]
+```
+
+两种方案只选一种。当前工作树已有上面的 shim，但它尚未被 Git 跟踪。无论选择哪种，
+下面的检查必须在仓库根和 `/tmp` 得到同一个 runner 文件：
+
+```bash
+for workdir in "$PWD" /tmp; do
+  (
+    cd "$workdir"
+    /home/sunteng/projects/legged_wbc_mjlab/.venv/bin/python - <<'PY'
+import inspect
+import rsl_rl
+from rsl_rl.runners import OnPolicyRunner
+
+assert rsl_rl.__file__ is not None
+print(rsl_rl.__file__)
+print(inspect.getfile(OnPolicyRunner))
+PY
+  )
+done
+```
 
 ### A.1 让 `locomotion` 被任务扫描器发现
 
@@ -777,6 +853,8 @@ below this directory.
 
 文件可以保持只有这段包说明。不要在这里创建环境实例；注册动作放在各任务的
 `config/__init__.py`，否则导入顺序会影响 registry 状态。
+
+当前 `HEAD` 中该文件是空包标记，空文件同样有效；上面的 docstring 只是可读版本。
 
 验收：
 
@@ -797,7 +875,8 @@ PY
 目标文件：`src/assets/robots/go2/go2_constants.py`、
 `src/config/go2/go2_config.py`。
 
-如果项目采用 `src.*` 作为统一导入根，应用下面的差异：
+当前 `HEAD` 已经把 `delay_update_period` 设为整数 `10`。下面的 diff 是历史修复
+记录和回归检查，不要在已经是 `10` 的文件上重复应用：
 
 ```diff
 --- a/src/assets/robots/go2/go2_constants.py
@@ -831,6 +910,17 @@ PY
 
 如果该文件没有实际使用 `Go2Cfg`，更好的实现是直接删除这个无用 import，避免
 算法配置对机器人 legacy 配置产生隐式依赖。
+
+当前 `rl_cfg.py` 的 `Go2Cfg`/`go2cfg` 没有被使用，建议应用下面的最小清理：
+
+```diff
+--- a/src/tasks/locomotion/go2_ppo/config/rl_cfg.py
++++ b/src/tasks/locomotion/go2_ppo/config/rl_cfg.py
+@@
+-from config.go2.go2_config import Go2Cfg
+-
+-go2cfg = Go2Cfg()
+```
 
 ### A.3 修正 Go2 MJCF 的 mesh 路径
 
@@ -888,6 +978,10 @@ PY
 
 把原来的 `get_spec()` 替换为下面实现。它使用当前 MuJoCo 的 `MjSpec.assets`，
 没有依赖 `unitree_rl_mjlab` 旧版本中的 `mjlab.utils.os.update_assets`。
+
+该组合方案已在本地以 `mjlab==1.6.0`、MuJoCo 3.11.0 做内存模拟验证：
+`spec.assets` 为 16，`Scene.write()` 导出 16 个 OBJ，临时目录重载的
+`MjModel.nmesh` 为 16；源码当前仍未应用这两个改动。
 
 ```python
 GO2_XML: Path = (
@@ -957,6 +1051,7 @@ def unitree_go2_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       hidden_dims=(512, 256, 128),
       activation="elu",
       obs_normalization=True,
+      class_name="rsl_rl.models.mlp_model:MLPModel",
       distribution_cfg={
         "class_name": "rsl_rl.modules.distribution:GaussianDistribution",
         "init_std": 1.0,
@@ -967,6 +1062,7 @@ def unitree_go2_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       hidden_dims=(512, 256, 128),
       activation="elu",
       obs_normalization=True,
+      class_name="rsl_rl.models.mlp_model:MLPModel",
     ),
     algorithm=RslRlPpoAlgorithmCfg(
       class_name="rsl_rl.algorithms.ppo:PPO",
@@ -984,7 +1080,7 @@ def unitree_go2_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       max_grad_norm=1.0,
     ),
     obs_groups={"actor": ("actor",), "critic": ("critic",)},
-    experiment_name="go2_flat_ppo",
+    experiment_name="go2_ppo",
     logger="tensorboard",
     save_interval=100,
     num_steps_per_env=24,
@@ -992,8 +1088,10 @@ def unitree_go2_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   )
 ```
 
-当前版本的 `RslRlModelCfg` 也支持显式 model path；默认的 `MLPModel` 已可用，
-需要锁定时可以写成 `class_name="rsl_rl.models.mlp_model:MLPModel"`。
+当前 `scripts/train.py` 不使用顶层 `RslRlOnPolicyRunnerCfg.class_name` 来选择
+runner；它优先使用 registry 的 `runner_cls`（当前是 `VelocityOnPolicyRunner`）。
+`actor.class_name`、`critic.class_name` 和 `algorithm.class_name` 才由 rsl_rl
+在构造模型/算法时解析。
 
 ### A.6 注册环境、play 配置和 runner
 
@@ -1040,6 +1138,82 @@ register_mjlab_task(
 )
 ```
 
+### A.6.1 删除旧 runner，并保留 mjlab 1.6.0 runner
+
+目标文件：`src/tasks/locomotion/go2_ppo/rl/runner.py`。
+
+删除已注释的 `_OnnxPolicyWrapper`、`CustomOnPolicyRunner` 和
+`from rsl_rl.rsl_rl...`。rsl_rl 5.4.2 的策略通过
+`self.alg.get_policy()` 获取，mjlab 1.6.0 的 `export_policy_to_onnx()` 已调用
+`get_policy().as_onnx()`，其中包含 `MLPModel` 自身的 observation normalizer。
+
+下面是按 mjlab 1.6.0/rsl_rl 5.4.2 API 整理、并在 `/tmp` 完成 checkpoint + ONNX
+导出验证的实现；应用后应再次跑保存 smoke：
+
+```python
+from pathlib import Path
+
+from mjlab.rl import RslRlVecEnvWrapper
+from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
+from mjlab.rl.runner import MjlabOnPolicyRunner
+from rsl_rl.utils.log_writer import LogWriter
+
+
+class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
+  env: RslRlVecEnvWrapper
+
+  def save(self, path: str, infos=None) -> None:
+    super().save(path, infos)
+
+    export_dir = Path(path).parent
+    filename = "policy.onnx"
+    onnx_path = export_dir / filename
+    self.export_policy_to_onnx(str(export_dir), filename)
+
+    metadata = get_base_metadata(self.env.unwrapped, export_dir.name)
+    attach_metadata_to_onnx(str(onnx_path), metadata)
+
+    # TensorBoard writer has no external file upload. A LogWriter backend may.
+    if self.cfg.get("upload_model", True) and isinstance(
+      self.logger.writer, LogWriter
+    ):
+      self.logger.writer.save_file(str(onnx_path))
+```
+
+不要使用 `self.logger.logger_type`：rsl_rl 5.4.2 的 `Logger` 没有该属性。
+不要重新把 normalizer 包一层：当前 `MLPModel.as_onnx()` 已复制
+`model.obs_normalizer`。若未来使用完全不同的 model，再为该 model 写专用 exporter。
+
+应用后用这个最小保存测试确认 checkpoint 和 ONNX 都能生成：
+
+```python
+from dataclasses import asdict
+from pathlib import Path
+import tempfile
+
+import src.tasks
+from mjlab.envs import ManagerBasedRlEnv
+from mjlab.rl import RslRlVecEnvWrapper
+from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
+
+cfg = load_env_cfg("Unitree-Go2-Flat")
+cfg.scene.num_envs = 1
+agent = load_rl_cfg("Unitree-Go2-Flat")
+env = RslRlVecEnvWrapper(
+  ManagerBasedRlEnv(cfg=cfg, device="cpu"),
+  clip_actions=agent.clip_actions,
+)
+try:
+  runner = VelocityOnPolicyRunner(env, asdict(agent), None, "cpu")
+  with tempfile.TemporaryDirectory() as tmp:
+    checkpoint = Path(tmp) / "model_0.pt"
+    runner.save(str(checkpoint))
+    assert checkpoint.exists()
+    assert (Path(tmp) / "policy.onnx").exists()
+finally:
+  env.close()
+```
+
 ### A.7 训练入口的最小可读实现
 
 下面是 `scripts/train.py` 中与外部 rsl_rl 直接相关的核心实现。现有脚本还包含
@@ -1058,6 +1232,9 @@ from mjlab.tasks.registry import (
 
 
 def train_one_task(task_id: str, device: str, log_dir: str) -> None:
+  import mjlab.tasks  # noqa: F401
+  import src.tasks  # noqa: F401
+
   env_cfg = load_env_cfg(task_id)
   agent_cfg = load_rl_cfg(task_id)
 
@@ -1078,11 +1255,13 @@ def train_one_task(task_id: str, device: str, log_dir: str) -> None:
     log_dir,
     device,
   )
-  runner.learn(
-    num_learning_iterations=agent_cfg.max_iterations,
-    init_at_random_ep_len=True,
-  )
-  vec_env.close()
+  try:
+    runner.learn(
+      num_learning_iterations=agent_cfg.max_iterations,
+      init_at_random_ep_len=True,
+    )
+  finally:
+    vec_env.close()
 ```
 
 这里 `asdict(agent_cfg)` 是边界：mjlab 侧保存 dataclass，外部 rsl_rl runner
@@ -1124,14 +1303,16 @@ def play(task_id: str, checkpoint: Path, device: str, steps: int) -> None:
     log_dir=None,
     device=device,
   )
-  # This load_cfg is for PPO. Distillation/custom algorithms must declare
-  # their own schema, for example {"student": True}.
+  # This load_cfg is for PPO only. Distillation/custom algorithms must declare
+  # and implement their own schema; Distillation also needs teacher state.
   runner.load(
     str(checkpoint.resolve()),
     load_cfg={"actor": True},
     strict=True,
     map_location=device,
   )
+  # MjlabOnPolicyRunner.load expects the standard checkpoint ``infos`` key.
+  # A bare external rsl_rl checkpoint may need a custom loader.
   policy = runner.get_inference_policy(device=device)
 
   obs = vec_env.get_observations()
@@ -1152,13 +1333,13 @@ if __name__ == "__main__":
   play(args.task_id, args.checkpoint, args.device, args.steps)
 ```
 
-运行方式：
+运行方式（仓库根目录建议使用模块入口；直接运行脚本时必须补 `PYTHONPATH`）：
 
 ```bash
 PYTHONPATH="$PWD/rsl_rl:$PWD" \
 WARP_CACHE_PATH=/tmp/legged-wbc-warp-cache \
 .venv/bin/python scripts/play.py Unitree-Go2-Flat \
-  --checkpoint logs/rsl_rl/go2_flat_ppo/<run>/model_100.pt \
+  --checkpoint logs/rsl_rl/go2_ppo/<run>/model_100.pt \
   --steps 100
 ```
 
@@ -1195,8 +1376,11 @@ algorithm=RslRlPpoAlgorithmCfg(
 )
 ```
 
-因为 `PPO.construct_algorithm()` 会根据 `class_name` 解析算法类并构造它，
-这个例子不需要改环境。若新算法新增模型输入，先在 EnvCfg 增加 observation
+当前 `OnPolicyRunner` 解析 cfg 中的 algorithm class，并调用继承来的静态
+`construct_algorithm()`；PPO 的实现再解析 actor/critic class 并实例化算法。
+如果新增字段不在 `PPO.__init__` 的参数中，必须同时重写 algorithm 的
+`__init__`/`construct_algorithm` 或提供专用 runner。这个例子只替换 `update()`，
+所以不需要改环境。若新算法新增模型输入，先在 EnvCfg 增加 observation
 group，再在 cfg 的 `obs_groups` 中映射；`RslRlVecEnvWrapper` 通常不需要改。
 
 ### A.10 新增 observation group 的实现方式
@@ -1247,7 +1431,7 @@ runner_cfg = RslRlOnPolicyRunnerCfg(
 ### A.11 只写进文档的最终应用顺序
 
 ```text
-1. 提交/保留 src/tasks/locomotion/__init__.py
+1. 保留已由 `HEAD` 跟踪的 `src/tasks/locomotion/__init__.py`
 2. 统一 src.config.* 导入和 delay_update_period=int
 3. 修改 go2.xml 的 meshdir/file
 4. 修改 get_spec() 注入 16 个 OBJ bytes

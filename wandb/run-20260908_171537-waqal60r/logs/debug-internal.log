@@ -1,0 +1,18 @@
+{"time":"2026-09-08T17:15:39.337595397+08:00","level":"INFO","msg":"wandb-core"}
+{"time":"2026-09-08T17:15:39.338122633+08:00","level":"INFO","msg":"stream: starting","core version":"0.29.0"}
+{"time":"2026-09-08T17:15:39.453407017+08:00","level":"INFO","msg":"stream: created new stream","id":"waqal60r"}
+{"time":"2026-09-08T17:15:39.453563248+08:00","level":"INFO","msg":"handler: started"}
+{"time":"2026-09-08T17:15:39.453589955+08:00","level":"INFO","msg":"stream: started"}
+{"time":"2026-09-08T17:15:39.453636295+08:00","level":"INFO","msg":"sender: started"}
+{"time":"2026-09-08T17:15:39.453658996+08:00","level":"INFO","msg":"writer: started","stream_id":"waqal60r"}
+{"time":"2026-09-08T17:15:41.615796219+08:00","level":"ERROR","msg":"api: HTTP error","status":401,"method":"POST","url":"https://api.wandb.ai/graphql"}
+{"time":"2026-09-08T17:15:41.615910173+08:00","level":"ERROR","msg":"runupserter: failed to init run","error":"returned error 401: {\"data\":{\"upsertBucket\":null},\"errors\":[{\"message\":\"user is not logged in\",\"path\":[\"upsertBucket\"],\"extensions\":{\"code\":\"PERMISSION_ERROR\"}}]}"}
+{"time":"2026-09-08T17:15:41.621667918+08:00","level":"ERROR","msg":"sender: uploadConfigFile: runhandle: run not yet initialized"}
+{"time":"2026-09-08T17:15:41.621859772+08:00","level":"ERROR","msg":"runfiles: runhandle: run not yet initialized"}
+{"time":"2026-09-08T17:15:41.621924651+08:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-09-08T17:15:41.621930356+08:00","level":"INFO","msg":"stream: finishing up"}
+{"time":"2026-09-08T17:15:41.621934111+08:00","level":"INFO","msg":"handler: closed"}
+{"time":"2026-09-08T17:15:41.621943829+08:00","level":"INFO","msg":"sender: closed"}
+{"time":"2026-09-08T17:15:41.6219454+08:00","level":"INFO","msg":"stream: all finished"}
+{"time":"2026-09-08T17:15:43.103700872+08:00","level":"ERROR","msg":"stream: failed to shut down analytics","error":"shutdown errors: [failed to upload metrics: Post \"https://api.wandb.ai/sdk/otel/v1/metrics\": EOF]"}
+{"time":"2026-09-08T17:15:43.105806007+08:00","level":"ERROR","msg":"stream: runURL: runhandle: run not yet initialized"}
