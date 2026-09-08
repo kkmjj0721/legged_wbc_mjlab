@@ -55,4 +55,35 @@ class Go2Cfg( BaseConfig ):
     class domain_rand:
         pass
 
+
+
+class GO2CfgPPO:
+    class policy:
+        init_noise_std = 1.0
+        actor_hidden_dims = [512, 256, 128]
+        critic_hidden_dims = [512, 256, 128]
+        activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+        obs_normalization = True # Whether to normalize the observations
+
+    class algorithm:
+        value_loss_coef = 1.0
+        use_clipped_value_loss = True
+        clip_param = 0.2
+        entropy_coef = 0.01
+        num_learning_epochs = 5
+        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
+        learning_rate = 5e-4 #1.e-3 #5.e-4
+        schedule = 'adaptive' # could be adaptive, fixed
+        gamma = 0.99
+        lam = 0.95
+        desired_kl = 0.01
+        max_grad_norm = 1.
+
+    class runner:
+        num_steps_per_env = 24 # per iteration
+        max_iterations = 20000 # number of policy updates
+
+        # logging
+        save_interval = 500 # check for potential saves every this many iterations
+        experiment_name = 'test'
     
