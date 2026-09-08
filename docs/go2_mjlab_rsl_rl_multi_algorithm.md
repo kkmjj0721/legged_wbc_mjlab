@@ -758,3 +758,505 @@ AMP、蒸馏等包含额外状态时，还要验证 discriminator、teacher、re
 已验证：Go2 MJCF 在源码目录中可被 MuJoCo 解析和直接 compile；16 个 mesh 文件存在；当前工作树中 `src.tasks` 能自动发现 Flat/Rough task；CPU 单环境 Flat/Rough 的 reset/step 通过；`RslRlVecEnvWrapper`、`VelocityOnPolicyRunner`、外部 `PPO` 和 47/74 维 Flat actor/critic、234/261 维 Rough actor/critic observation 已完成一次构造与 inference smoke；`rsl_rl` 在显式修正 `PYTHONPATH` 后可以正常解析 `PPO`。`WARP_CACHE_PATH` 用于把 mjlab/MJWarp 的编译缓存放到可写目录。
 
 未验证：当前工作树下从零启动的完整 Go2 训练、播放入口、多 GPU 训练，以及未来算法的 checkpoint 兼容性。Go2 场景 asset 导出仍失败：`spec.assets` 为 0，`Scene.write()` 只生成 `scene.xml`，从临时目录重载时报 `Error opening file`；必须先修正 MJCF 路径和 `spec.assets` 注入。当前本机没有 CUDA，不能据此判定 GPU 训练状态。只有通过上述分阶段验收后，才能把这些能力标记为完成。
+
+## 附录 A：可直接应用的代码实现（本次只写入文档）
+
+本附录给出按照当前 `mjlab==1.6.0`、`rsl-rl-lib==5.4.2` 接口整理的代码。代码块是建议修改内容，本次请求只修改本文档，没有把任何代码写入项目源码。每个片段都标明了目标文件；应用时按顺序完成，并在每一步运行对应验收命令。
+
+### A.1 让 `locomotion` 被任务扫描器发现
+
+目标文件：`src/tasks/locomotion/__init__.py`。
+
+```python
+"""Locomotion task package.
+
+The parent ``src.tasks`` importer recursively discovers the task packages
+below this directory.
+"""
+```
+
+文件可以保持只有这段包说明。不要在这里创建环境实例；注册动作放在各任务的
+`config/__init__.py`，否则导入顺序会影响 registry 状态。
+
+验收：
+
+```bash
+PYTHONPATH="$PWD/rsl_rl:$PWD" .venv/bin/python - <<'PY'
+import src.tasks
+from mjlab.tasks.registry import list_tasks
+
+tasks = list_tasks()
+assert "Unitree-Go2-Flat" in tasks
+assert "Unitree-Go2-Rough" in tasks
+print("task discovery: OK")
+PY
+```
+
+### A.2 统一 Go2 配置导入和延迟字段类型
+
+目标文件：`src/assets/robots/go2/go2_constants.py`、
+`src/config/go2/go2_config.py`。
+
+如果项目采用 `src.*` 作为统一导入根，应用下面的差异：
+
+```diff
+--- a/src/assets/robots/go2/go2_constants.py
++++ b/src/assets/robots/go2/go2_constants.py
+@@
+-from config.go2.go2_config import Go2Cfg
++from src.config.go2.go2_config import Go2Cfg
+```
+
+```diff
+--- a/src/config/go2/go2_config.py
++++ b/src/config/go2/go2_config.py
+@@
+-        delay_update_period = 10.0
++        delay_update_period = 10
+```
+
+如果最终选择安装后的 `config.*` 导入根，则所有文件都统一改成
+`config.*`，不要只修改这一处。`delay_update_period` 是 physics timestep 数，
+在当前 mjlab 的 `ActuatorCfg` 中必须是 `int`。
+
+仓库内所有同一配置的 import 也要保持一致。例如选择 `src.*` 时：
+
+```diff
+--- a/src/tasks/locomotion/go2_ppo/config/rl_cfg.py
++++ b/src/tasks/locomotion/go2_ppo/config/rl_cfg.py
+@@
+-from config.go2.go2_config import Go2Cfg
++from src.config.go2.go2_config import Go2Cfg
+```
+
+如果该文件没有实际使用 `Go2Cfg`，更好的实现是直接删除这个无用 import，避免
+算法配置对机器人 legacy 配置产生隐式依赖。
+
+### A.3 修正 Go2 MJCF 的 mesh 路径
+
+目标文件：`src/assets/robots/go2/xmls/go2.xml`。
+
+把 compiler 的 meshdir 设置为 `assets`，并让 mesh 的 `file` 属性只保留文件名：
+
+```diff
+--- a/src/assets/robots/go2/xmls/go2.xml
++++ b/src/assets/robots/go2/xmls/go2.xml
+@@
+-  <compiler angle="radian" autolimits="true" />
++  <compiler angle="radian" meshdir="assets" autolimits="true" />
+@@
+-    <mesh file="assets/base_0.obj" />
+-    <mesh file="assets/base_1.obj" />
+-    <mesh file="assets/base_2.obj" />
+-    <mesh file="assets/base_3.obj" />
+-    <mesh file="assets/base_4.obj" />
+-    <mesh file="assets/hip_0.obj" />
+-    <mesh file="assets/hip_1.obj" />
+-    <mesh file="assets/thigh_0.obj" />
+-    <mesh file="assets/thigh_1.obj" />
+-    <mesh file="assets/thigh_mirror_0.obj" />
+-    <mesh file="assets/thigh_mirror_1.obj" />
+-    <mesh file="assets/calf_0.obj" />
+-    <mesh file="assets/calf_1.obj" />
+-    <mesh file="assets/calf_mirror_0.obj" />
+-    <mesh file="assets/calf_mirror_1.obj" />
+-    <mesh file="assets/foot.obj" />
++    <mesh file="base_0.obj" />
++    <mesh file="base_1.obj" />
++    <mesh file="base_2.obj" />
++    <mesh file="base_3.obj" />
++    <mesh file="base_4.obj" />
++    <mesh file="hip_0.obj" />
++    <mesh file="hip_1.obj" />
++    <mesh file="thigh_0.obj" />
++    <mesh file="thigh_1.obj" />
++    <mesh file="thigh_mirror_0.obj" />
++    <mesh file="thigh_mirror_1.obj" />
++    <mesh file="calf_0.obj" />
++    <mesh file="calf_1.obj" />
++    <mesh file="calf_mirror_0.obj" />
++    <mesh file="calf_mirror_1.obj" />
++    <mesh file="foot.obj" />
+```
+
+这一步必须和下一节的 asset key 形式一起应用。只改 XML 或只改 Python，都会让
+`Scene.write()` 的路径匹配失败。
+
+### A.4 在 `MjSpec` 中注入 mesh bytes
+
+目标文件：`src/assets/robots/go2/go2_constants.py`。
+
+把原来的 `get_spec()` 替换为下面实现。它使用当前 MuJoCo 的 `MjSpec.assets`，
+没有依赖 `unitree_rl_mjlab` 旧版本中的 `mjlab.utils.os.update_assets`。
+
+```python
+GO2_XML: Path = (
+  SRC_PATH / "assets" / "robots" / "go2" / "xmls" / "go2.xml"
+)
+GO2_ASSET_DIR = GO2_XML.parent / "assets"
+assert GO2_XML.exists()
+assert GO2_ASSET_DIR.exists()
+
+
+def get_spec() -> mujoco.MjSpec:
+  """Build a self-contained Go2 MuJoCo specification."""
+  mesh_files = tuple(sorted(GO2_ASSET_DIR.glob("*.obj")))
+  if len(mesh_files) != 16:
+    raise FileNotFoundError(
+      f"Expected 16 Go2 OBJ meshes in {GO2_ASSET_DIR}, found {len(mesh_files)}"
+    )
+
+  spec = mujoco.MjSpec.from_file(str(GO2_XML))
+  for mesh_file in mesh_files:
+    # The XML now uses meshdir="assets" and file="<name>.obj".
+    spec.assets[mesh_file.name] = mesh_file.read_bytes()
+  return spec
+```
+
+用下面的独立目录测试确认资源已经嵌入 spec：
+
+```python
+from pathlib import Path
+import tempfile
+import mujoco
+from mjlab.scene import Scene, SceneCfg
+from src.assets.robots.go2.go2_constants import get_go2_robot_cfg
+
+scene = Scene(
+  SceneCfg(entities={"robot": get_go2_robot_cfg()}),
+  device="cpu",
+)
+assert len(scene.spec.assets) == 16
+
+with tempfile.TemporaryDirectory() as tmp:
+  output = Path(tmp) / "go2"
+  scene.write(output)
+  assert len(tuple((output / "assets").rglob("*.obj"))) == 16
+  model = mujoco.MjModel.from_xml_path(str((output / "scene.xml").resolve()))
+  assert model.nmesh == 16
+```
+
+### A.5 用显式路径配置 PPO
+
+目标文件：`src/tasks/locomotion/go2_ppo/config/rl_cfg.py`。
+
+下面是一个完整的 PPO 配置工厂。`algorithm.class_name` 使用 qualified path，
+这样不会触发外层 `rsl_rl` namespace 的简单名称扫描：
+
+```python
+from mjlab.rl import (
+  RslRlModelCfg,
+  RslRlOnPolicyRunnerCfg,
+  RslRlPpoAlgorithmCfg,
+)
+
+
+def unitree_go2_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  return RslRlOnPolicyRunnerCfg(
+    actor=RslRlModelCfg(
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+      obs_normalization=True,
+      distribution_cfg={
+        "class_name": "rsl_rl.modules.distribution:GaussianDistribution",
+        "init_std": 1.0,
+        "std_type": "scalar",
+      },
+    ),
+    critic=RslRlModelCfg(
+      hidden_dims=(512, 256, 128),
+      activation="elu",
+      obs_normalization=True,
+    ),
+    algorithm=RslRlPpoAlgorithmCfg(
+      class_name="rsl_rl.algorithms.ppo:PPO",
+      value_loss_coef=1.0,
+      use_clipped_value_loss=True,
+      clip_param=0.2,
+      entropy_coef=0.01,
+      num_learning_epochs=5,
+      num_mini_batches=4,
+      learning_rate=1.0e-3,
+      schedule="adaptive",
+      gamma=0.99,
+      lam=0.95,
+      desired_kl=0.01,
+      max_grad_norm=1.0,
+    ),
+    obs_groups={"actor": ("actor",), "critic": ("critic",)},
+    experiment_name="go2_flat_ppo",
+    logger="tensorboard",
+    save_interval=100,
+    num_steps_per_env=24,
+    max_iterations=10001,
+  )
+```
+
+当前版本的 `RslRlModelCfg` 也支持显式 model path；默认的 `MLPModel` 已可用，
+需要锁定时可以写成 `class_name="rsl_rl.models.mlp_model:MLPModel"`。
+
+### A.6 注册环境、play 配置和 runner
+
+目标文件：`src/tasks/locomotion/go2_ppo/config/__init__.py`。
+
+```python
+from mjlab.tasks.registry import register_mjlab_task
+
+from src.tasks.locomotion.go2_ppo.rl import VelocityOnPolicyRunner
+
+from .env_cfgs import (
+  unitree_go2_flat_env_cfg,
+  unitree_go2_rough_env_cfg,
+)
+from .rl_cfg import unitree_go2_ppo_runner_cfg
+
+
+register_mjlab_task(
+  task_id="Unitree-Go2-Flat",
+  env_cfg=unitree_go2_flat_env_cfg(),
+  play_env_cfg=unitree_go2_flat_env_cfg(play=True),
+  rl_cfg=unitree_go2_ppo_runner_cfg(),
+  runner_cls=VelocityOnPolicyRunner,
+)
+
+register_mjlab_task(
+  task_id="Unitree-Go2-Rough",
+  env_cfg=unitree_go2_rough_env_cfg(),
+  play_env_cfg=unitree_go2_rough_env_cfg(play=True),
+  rl_cfg=unitree_go2_ppo_runner_cfg(),
+  runner_cls=VelocityOnPolicyRunner,
+)
+```
+
+新增算法时不要覆盖 PPO 的注册项，使用独立 task ID 和实验目录：
+
+```python
+register_mjlab_task(
+  task_id="Unitree-Go2-Flat-MyAlgorithm",
+  env_cfg=unitree_go2_flat_env_cfg(),
+  play_env_cfg=unitree_go2_flat_env_cfg(play=True),
+  rl_cfg=my_algorithm_runner_cfg(),
+  runner_cls=MyAlgorithmRunner,
+)
+```
+
+### A.7 训练入口的最小可读实现
+
+下面是 `scripts/train.py` 中与外部 rsl_rl 直接相关的核心实现。现有脚本还包含
+Tyro、GPU、视频、resume 和日志处理；新增算法时保持这段调用顺序：
+
+```python
+from dataclasses import asdict
+
+from mjlab.envs import ManagerBasedRlEnv
+from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+from mjlab.tasks.registry import (
+  load_env_cfg,
+  load_rl_cfg,
+  load_runner_cls,
+)
+
+
+def train_one_task(task_id: str, device: str, log_dir: str) -> None:
+  env_cfg = load_env_cfg(task_id)
+  agent_cfg = load_rl_cfg(task_id)
+
+  env = ManagerBasedRlEnv(
+    cfg=env_cfg,
+    device=device,
+    render_mode=None,
+  )
+  vec_env = RslRlVecEnvWrapper(
+    env,
+    clip_actions=agent_cfg.clip_actions,
+  )
+
+  runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
+  runner = runner_cls(
+    vec_env,
+    asdict(agent_cfg),
+    log_dir,
+    device,
+  )
+  runner.learn(
+    num_learning_iterations=agent_cfg.max_iterations,
+    init_at_random_ep_len=True,
+  )
+  vec_env.close()
+```
+
+这里 `asdict(agent_cfg)` 是边界：mjlab 侧保存 dataclass，外部 rsl_rl runner
+接收普通字典。新增 dataclass 字段不会自动生效，runner 必须显式消费这些字段。
+
+### A.8 空白 `play.py` 的最小 PPO 回放实现
+
+目标文件：`scripts/play.py`。下面是一个不依赖 viewer 的 headless 版本，先用于验证
+checkpoint、runner 和 action 输出；viewer 可以在这段逻辑之后接入。
+
+```python
+import argparse
+from dataclasses import asdict
+from pathlib import Path
+
+import torch
+
+from mjlab.envs import ManagerBasedRlEnv
+from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+
+
+def play(task_id: str, checkpoint: Path, device: str, steps: int) -> None:
+  import mjlab.tasks  # noqa: F401
+  import src.tasks  # noqa: F401
+
+  env_cfg = load_env_cfg(task_id, play=True)
+  agent_cfg = load_rl_cfg(task_id)
+  env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode=None)
+  vec_env = RslRlVecEnvWrapper(
+    env,
+    clip_actions=agent_cfg.clip_actions,
+  )
+
+  runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
+  runner = runner_cls(
+    vec_env,
+    asdict(agent_cfg),
+    log_dir=None,
+    device=device,
+  )
+  # This load_cfg is for PPO. Distillation/custom algorithms must declare
+  # their own schema, for example {"student": True}.
+  runner.load(
+    str(checkpoint.resolve()),
+    load_cfg={"actor": True},
+    strict=True,
+    map_location=device,
+  )
+  policy = runner.get_inference_policy(device=device)
+
+  obs = vec_env.get_observations()
+  with torch.inference_mode():
+    for _ in range(steps):
+      actions = policy(obs)
+      obs, _, _, _ = vec_env.step(actions)
+  vec_env.close()
+
+
+if __name__ == "__main__":
+  parser = argparse.ArgumentParser()
+  parser.add_argument("task_id")
+  parser.add_argument("--checkpoint", type=Path, required=True)
+  parser.add_argument("--device", default="cpu")
+  parser.add_argument("--steps", type=int, default=1000)
+  args = parser.parse_args()
+  play(args.task_id, args.checkpoint, args.device, args.steps)
+```
+
+运行方式：
+
+```bash
+PYTHONPATH="$PWD/rsl_rl:$PWD" \
+WARP_CACHE_PATH=/tmp/legged-wbc-warp-cache \
+.venv/bin/python scripts/play.py Unitree-Go2-Flat \
+  --checkpoint logs/rsl_rl/go2_flat_ppo/<run>/model_100.pt \
+  --steps 100
+```
+
+### A.9 外部 rsl_rl 自定义算法的最小插件
+
+下面假设外部算法仓库中新增包 `my_rsl_algorithms`。如果算法仍然是 PPO 的同一
+rollout/storage 契约，可以先继承 `PPO`，只替换 update；如果改变 storage 或
+rollout，则必须实现专用 runner，不能使用这个最小例子。
+
+外部仓库文件：`my_rsl_algorithms/__init__.py`。
+
+```python
+from rsl_rl.algorithms.ppo import PPO
+
+
+class MyPPO(PPO):
+  """Example algorithm plugin with the rsl_rl 5.4 PPO contract."""
+
+  def update(self) -> dict:
+    loss_dict = super().update()
+    # Add custom loss terms here, or replace the update implementation.
+    return loss_dict
+
+
+__all__ = ["MyPPO"]
+```
+
+当前项目的 `rl_cfg.py` 中改成：
+
+```python
+algorithm=RslRlPpoAlgorithmCfg(
+  class_name="my_rsl_algorithms:MyPPO",
+  # 其余 PPO 超参数保持不变
+)
+```
+
+因为 `PPO.construct_algorithm()` 会根据 `class_name` 解析算法类并构造它，
+这个例子不需要改环境。若新算法新增模型输入，先在 EnvCfg 增加 observation
+group，再在 cfg 的 `obs_groups` 中映射；`RslRlVecEnvWrapper` 通常不需要改。
+
+### A.10 新增 observation group 的实现方式
+
+算法需要额外输入时，先在环境配置中声明 group：
+
+```python
+# go_ppo_env_cfg.py（示意）
+observations = {
+  "actor": ObservationGroupCfg(
+    terms=actor_terms,
+    concatenate_terms=True,
+    history_length=1,
+  ),
+  "critic": ObservationGroupCfg(
+    terms=critic_terms,
+    concatenate_terms=True,
+    history_length=1,
+  ),
+  "aux": ObservationGroupCfg(
+    terms={
+      "aux_state": ObservationTermCfg(
+        func=mdp.my_aux_state,
+      ),
+    },
+    concatenate_terms=True,
+    history_length=1,
+  ),
+}
+```
+
+再把算法 set 映射到现有 group：
+
+```python
+runner_cfg = RslRlOnPolicyRunnerCfg(
+  obs_groups={
+    "actor": ("actor",),
+    "critic": ("critic",),
+    "my_aux_set": ("aux",),
+  },
+  # actor / critic / algorithm ...
+)
+```
+
+`my_aux_state`、维度、历史顺序和归一化策略必须在算法 runner 中有明确约定。
+不要为了满足算法名称，把同一份数据复制成多个环境 group。
+
+### A.11 只写进文档的最终应用顺序
+
+```text
+1. 提交/保留 src/tasks/locomotion/__init__.py
+2. 统一 src.config.* 导入和 delay_update_period=int
+3. 修改 go2.xml 的 meshdir/file
+4. 修改 get_spec() 注入 16 个 OBJ bytes
+5. 运行 Scene.write + 临时目录 MjModel reload
+6. 用显式 class_name 配置 PPO
+7. 注册 Flat/Rough task 和 runner_cls
+8. 运行 CPU reset/step 与 runner/inference smoke
+9. 再实现 play.py 并加载 checkpoint
+10. 最后按同一 cfg/runner 契约接入新算法
+```
+
+本附录中的代码没有在本次请求中写入 `src/`、`scripts/` 或外部 rsl_rl 仓库；源码工作仍需由后续变更单独实施和审查。

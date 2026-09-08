@@ -54,9 +54,9 @@ class Go2Cfg( BaseConfig ):
             "pose_range": {
                 "x": (-0.5, 0.5),
                 "y": (-0.5, 0.5),
-                "z": (0.0, 0.0),
-                "roll": (),
-                "pitch": (),
+                "z": (-0.0, 0.0),
+                "roll": (-0.0, 0.0),
+                "pitch": (-0.0, 0.0),
                 "yaw": (-3.14, 3.14),
             },
             "velocity_range": {},
