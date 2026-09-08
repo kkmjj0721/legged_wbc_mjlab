@@ -1,5 +1,5 @@
 <mujoco model="ri_plus_4438_bfm">
-  <compiler angle="radian" meshdir="../meshes/" autolimits="true" />
+  <compiler angle="radian" meshdir="assets" autolimits="true" />
   <option gravity="0 0 -9.81" iterations="50" solver="Newton" timestep="0.005" />
   <asset>
     <material name="visual_body" rgba="0.68 0.70 0.72 1" specular="0.25" shininess="0.35" />

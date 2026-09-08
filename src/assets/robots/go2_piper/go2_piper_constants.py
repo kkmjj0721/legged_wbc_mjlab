@@ -25,7 +25,7 @@ assert GO2PIPER_XML.exists()
 
 
 def get_spec() -> mujoco.MjSpec:
-    return mujoco.MjSpec.from_file(str(GO2PIPER_XML))
+  return mujoco.MjSpec.from_file(str(GO2PIPER_XML))
 
 
 ##

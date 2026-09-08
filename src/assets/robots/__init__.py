@@ -5,3 +5,8 @@ from .go2_piper.go2_piper_constants import (
 from .ri_plus_4438.ri_plus_4438_constants import(
     get_ri_plus_4438_robot_cfg as get_ri_plus_4438_robot_cfg
 )
+
+from .go2.go2_constants import(
+    get_go2_robot_cfg as get_go2_robot_cfg
+)
+
