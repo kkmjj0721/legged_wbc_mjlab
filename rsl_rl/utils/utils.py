@@ -165,6 +165,10 @@ def resolve_callable(callable_or_name: type | Callable | str) -> Callable:
 
     # Simple name - look for it in rsl_rl
     for _, module_name, _ in pkgutil.iter_modules(rsl_rl.__path__, "rsl_rl."):
+        # setup.py 不是运行时模块，不能在训练过程中导入。
+        if module_name == "rsl_rl.setup":
+            continue
+
         module = importlib.import_module(module_name)
         if hasattr(module, callable_or_name):
             return getattr(module, callable_or_name)

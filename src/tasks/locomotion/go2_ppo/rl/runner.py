@@ -9,8 +9,9 @@ from mjlab.rl.exporter_utils import (
   get_base_metadata,
 )
 from mjlab.rl.runner import MjlabOnPolicyRunner
+from rsl_rl.utils.wandb_log_writer import WandbLogWriter
 
-# from rsl_rl.rsl_rl.runners.on_policy_runner import OnPolicyRunner
+from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 
 # class _OnnxPolicyWrapper(torch.nn.Module):
 #   """
@@ -111,11 +112,14 @@ class VelocityOnPolicyRunner(MjlabOnPolicyRunner):
     policy_path = path.split("model")[0]
     filename = "policy.onnx"
     self.export_policy_to_onnx(policy_path, filename)
-    run_name: str = (
-      wandb.run.name if self.logger.logger_type == "wandb" and wandb.run else "local"
-    )  # type: ignore[assignment]
     onnx_path = os.path.join(policy_path, filename)
+    writer = self.logger.writer
+    use_wandb = (
+      isinstance(self.logger.writer, WandbLogWriter)
+      and wandb.run is not None
+    )
+    run_name: str = wandb.run.name if use_wandb else "local"
     metadata = get_base_metadata(self.env.unwrapped, run_name)
     attach_metadata_to_onnx(onnx_path, metadata)
-    if self.logger.logger_type in ["wandb"]:
-      wandb.save(policy_path + filename, base_path=os.path.dirname(policy_path))
+    if use_wandb:
+      wandb.save(onnx_path, base_path=os.path.dirname(policy_path))
