@@ -41,30 +41,32 @@ def unitree_go2_rough_env_cfg(
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
 
   feet_ground_cfg = ContactSensorCfg(
-    name="feet_ground_contact",
-    primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
-    secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found", "force"),
-    reduce="netforce",
-    num_slots=1,
+    name = "feet_ground_contact",
+    primary = ContactMatch(mode = "geom", pattern = geom_names, entity = "robot"),
+    secondary = ContactMatch(mode = "body", pattern = "terrain"),
+    fields = ("found", "force"),
+    reduce = "netforce",
+    num_slots = 1,
     track_air_time=True,
   )
+  
   nonfoot_ground_cfg = ContactSensorCfg(
-    name="nonfoot_ground_touch",
-    primary=ContactMatch(
-      mode="geom",
-      entity="robot",
+    name = "nonfoot_ground_touch",
+    primary = ContactMatch(
+      mode = "geom",
+      entity = "robot",
       # Grab all collision geoms...
-      pattern=r".*_collision\d*$",
+      pattern = r".*_collision\d*$",
       # Except for the foot geoms.
-      exclude=tuple(geom_names),
+      exclude = tuple(geom_names),
     ),
-    secondary=ContactMatch(mode="body", pattern="terrain"),
-    fields=("found", "force"),
-    reduce="none",
-    num_slots=1,
-    history_length=4,
+    secondary = ContactMatch(mode = "body", pattern = "terrain"),
+    fields = ("found", "force"),
+    reduce = "none",
+    num_slots = 1,
+    history_length = 4,
   )
+
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
     nonfoot_ground_cfg,

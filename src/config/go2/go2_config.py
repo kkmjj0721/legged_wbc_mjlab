@@ -28,7 +28,7 @@ class Go2Cfg( BaseConfig ):
         delay_min_lag = 0
         delay_max_lag = 4
         delay_hold_prob = 0.5
-        delay_update_period = 10.0
+        delay_update_period = 10
 
     class init_state:
         pos = [0.0, 0.0, 0.32]
@@ -50,11 +50,31 @@ class Go2Cfg( BaseConfig ):
         }
 
     class reset:
-        pass
+        base_offset = {
+            "pose_range": {
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
+                "z": (0.0, 0.0),
+                "roll": (),
+                "pitch": (),
+                "yaw": (-3.14, 3.14),
+            },
+            "velocity_range": {},
+        }
+
+        joint_offset = {
+            "position_range": (-0.0, 0.0),
+            "velocity_range": (-0.0, 0.0),
+        }
 
     class domain_rand:
         pass
 
+    class noise:
+        pass
+
+    class reward:
+        pass
 
 
 class GO2CfgPPO:
@@ -72,7 +92,7 @@ class GO2CfgPPO:
         entropy_coef = 0.01
         num_learning_epochs = 5
         num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 5e-4 #1.e-3 #5.e-4
+        learning_rate = 1.0e-3 #1.e-3 #5.e-4
         schedule = 'adaptive' # could be adaptive, fixed
         gamma = 0.99
         lam = 0.95
@@ -84,6 +104,6 @@ class GO2CfgPPO:
         max_iterations = 20000 # number of policy updates
 
         # logging
-        save_interval = 500 # check for potential saves every this many iterations
+        save_interval = 200 # check for potential saves every this many iterations
         experiment_name = 'test'
     

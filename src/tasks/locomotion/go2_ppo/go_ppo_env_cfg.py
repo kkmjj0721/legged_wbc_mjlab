@@ -34,6 +34,7 @@ import src.tasks.locomotion.go2_ppo.mdp as mdp
 
 from src.config.go2.go2_config import Go2Cfg
 
+go2_cfg = Go2Cfg()
 
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""
@@ -189,15 +190,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "reset_base": EventTermCfg(
       func = mdp.reset_root_state_uniform,
       mode = "reset",
-      params = {
-        "pose_range": {
-          "x": (-0.5, 0.5),
-          "y": (-0.5, 0.5),
-          "z": (0.0, 0.0),
-          "yaw": (-3.14, 3.14),
-        },
-        "velocity_range": {},
-      },
+      params = dict(go2_cfg.reset.base_offset)
     ),
     "reset_robot_joints": EventTermCfg(
       func = mdp.reset_joints_by_offset,
@@ -393,24 +386,24 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
 
   return ManagerBasedRlEnvCfg(
-    scene=SceneCfg(
-      terrain=TerrainEntityCfg(
-        terrain_type="generator",
-        terrain_generator=replace(ROUGH_TERRAINS_CFG),
-        max_init_terrain_level=5,
+    scene = SceneCfg(
+      terrain = TerrainEntityCfg(
+        terrain_type = "generator",
+        terrain_generator = replace(ROUGH_TERRAINS_CFG),
+        max_init_terrain_level = 5,
       ),
-      sensors=(terrain_scan,),
-      num_envs=1,
-      extent=2.0,
+      sensors = (terrain_scan,),
+      num_envs = 1,
+      extent = 2.0,
     ),
-    observations=observations,
-    actions=actions,
-    commands=commands,
-    events=events,
-    rewards=rewards,
-    terminations=terminations,
-    curriculum=curriculum,
-    metrics=metrics,
+    observations = observations,
+    actions = actions,
+    commands = commands,
+    events = events,
+    rewards = rewards,
+    terminations = terminations,
+    curriculum = curriculum,
+    metrics = metrics,
     viewer=ViewerConfig(
       origin_type=ViewerConfig.OriginType.ASSET_BODY,
       entity_name="robot",
@@ -419,15 +412,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       elevation=-5.0,
       azimuth=90.0,
     ),
-    sim=SimulationCfg(
-      nconmax=35,
-      njmax=1500,
-      mujoco=MujocoCfg(
-        timestep=0.005,
-        iterations=10,
-        ls_iterations=20,
+    sim = SimulationCfg(
+      nconmax = 35,
+      njmax = 1500,
+      mujoco = MujocoCfg(
+        timestep = 0.005,
+        iterations = 10,
+        ls_iterations = 20,
       ),
     ),
-    decimation=4,
-    episode_length_s=20.0,
+    decimation = 4,
+    episode_length_s = 20.0,
   )

@@ -26,9 +26,17 @@ def track_linear_velocity(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward for tracking the commanded base linear velocity.
+  """ 
+  跟踪期望线速度
 
-  The commanded z velocity is assumed to be zero.
+  数学公式:
+    r = exp( -( ||v*_xy - v^b_xy||^2 + 2 * (v^b_z)^2 ) / std^2 )
+
+  符号说明:
+    v*_xy  : 期望水平线速度 [vx*, vy*] (command[:, :2])
+    v^b_xy : 机器人机体局部系当前水平线速度 (root_link_lin_vel_b[:, :2])
+    v^b_z  : 机器人垂直线速度 (权重为 2，用于抑制躯干跳跃和上下颠簸)
+    std    : 高斯核宽度参数
   """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
@@ -46,9 +54,17 @@ def track_angular_velocity(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward heading error for heading-controlled envs, angular velocity for others.
+  """ 
+  跟踪期望角速度
 
-  The commanded xy angular velocities are assumed to be zero.
+  数学公式:
+    r = exp( -( (w*_z - w^b_z)^2 + 0.05 * ||w^b_xy||^2 ) / std^2 )
+
+  符号说明:
+    w*_z   : 期望偏航角速度 (command[:, 2])
+    w^b_z  : 机体局部系实际偏航角速度 (root_link_ang_vel_b[:, 2])
+    w^b_xy : 机体横滚与俯仰角速度 [wx, wy] (权重 0.05，抑制机身侧倾晃动)
+    std    : 高斯核宽度参数
   """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
@@ -64,10 +80,17 @@ def body_orientation_l2(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward flat base orientation (robot being upright).
+  """ 
+  鼓励机身平缓,维持机身水平直立
 
-  If asset_cfg has body_ids specified, computes the projected gravity
-  for that specific body. Otherwise, uses the root link projected gravity.
+  数学公式:
+    c = ||g^b_xy||^2 = (g^b_x)^2 + (g^b_y)^2
+    其中: g^b = R_wb^T * g^w
+
+  符号说明:
+    g^w    : 世界坐标系下的重力向量 [0, 0, -g]
+    R_wb   : 机体相对于世界坐标系的旋转矩阵
+    g^b_xy : 机体局部坐标系下的重力水平投影向量 (完全直立时 g^b_xy = 0)
   """
   asset: Entity = env.scene[asset_cfg.name]
 
@@ -89,11 +112,18 @@ def self_collision_cost(
   sensor_name: str,
   force_threshold: float = 10.0,
 ) -> torch.Tensor:
-  """Penalize self-collisions.
+  """ 
+  惩罚自碰撞
 
-  When the sensor provides force history (from ``history_length > 0``),
-  counts substeps where any contact force exceeds *force_threshold*.
-  Falls back to the instantaneous ``found`` count otherwise.
+  数学公式:
+    c = Σ_{t=1..H} I( max_i ||F_{i,t}|| > F_th )   [有 force_history 时]
+    c = found                                       [无 force_history 时]
+
+  符号说明: 
+    H      : 传感器历史缓存步数 (history_length)
+    F_{i,t}: 第 i 个接触点在子步 t 处的接触力向量
+    F_th   : 判定为有效碰撞的力阈值 (force_threshold)
+    I(·)   : 示性函数，只要任意接触力超阈值该步即计为 1
   """
   sensor: ContactSensor = env.scene[sensor_name]
   data = sensor.data
@@ -110,7 +140,16 @@ def body_angular_velocity_penalty(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize excessive body angular velocities."""
+  """ 
+  惩罚指定 Body 的横滚与俯仰角速度，消除高频晃动
+
+  数学公式:
+    c = ||w^w_xy||^2 = (w^w_x)^2 + (w^w_y)^2
+
+  符号说明:
+    w^w_xy : 指定 Link 在世界坐标系下的 Roll/Pitch 角速度分量
+
+  """
   asset: Entity = env.scene[asset_cfg.name]
   ang_vel = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids, :]
   ang_vel = ang_vel.squeeze(1)
@@ -122,7 +161,15 @@ def angular_momentum_penalty(
   env: ManagerBasedRlEnv,
   sensor_name: str,
 ) -> torch.Tensor:
-  """Penalize whole-body angular momentum to encourage natural arm swing."""
+  """ 
+  惩罚全机整体角动量，促成人形机器人手臂自然摆动配平。
+
+  数学公式:
+    c = ||L||^2 = L_x^2 + L_y^2 + L_z^2
+
+  符号说明:
+    L : 机器人整机相对于质心的总角动量向量
+  """
   angmom_sensor: BuiltinSensor = env.scene[sensor_name]
   angmom = angmom_sensor.data
   angmom_magnitude_sq = torch.sum(torch.square(angmom), dim=-1)
@@ -138,7 +185,21 @@ def feet_air_time(
   command_name: str | None = None,
   command_threshold: float = 0.1,
 ) -> torch.Tensor:
-  """Reward feet air time."""
+  """ 
+  奖励足端单腿支撑相的维持时长，促成交替迈步。
+
+  数学公式:
+    r = I(v_cmd > cmd_th) * max( 0, threshold - |t_mode - threshold| )
+    其中:
+        single_stance = ( mean(t_contact > 0) == 0.5 )
+        t_mode        = min_leg( (t_contact if in_contact else t_air) * single_stance )
+        v_cmd         = ||v*_xy|| + |w*_z|
+
+  符号说明:
+    threshold : 期望的支撑/腾空持续时间
+    t_mode    : 当前腿处于支撑或腾空的持续计时
+    I(·)      : 速度指令激活门控 (仅在有行进指令时生效)
+  """
   sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = sensor.data
   air_time = sensor_data.current_air_time
@@ -167,7 +228,17 @@ def feet_clearance(
   command_threshold: float = 0.1,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize deviation from target clearance height, weighted by foot velocity."""
+  """ 
+  惩罚摆动足高度偏差，由水平移动速度动态加权。
+
+  数学公式:
+    c = I(v_cmd > cmd_th) * Σ_{i=1..N} ( |z_i - h_target| * ||v_{i,xy}|| )
+
+  符号说明:
+    z_i       : 足端 i 的世界系高度 (site_pos_w[:, :, 2])
+    h_target  : 期望抬腿离地高度 (target_height)
+    v_{i,xy}  : 足端 i 在世界系下的水平线速度大小 (速度越快，偏差惩罚越重)
+  """
   asset: Entity = env.scene[asset_cfg.name]
   foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
   foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
@@ -194,22 +265,38 @@ def feet_gait(
         command_name: str,
         sensor_name: str,
 ) -> torch.Tensor:
-    sensor: ContactSensor = env.scene[sensor_name]
-    is_contact = sensor.data.current_contact_time > 0
-    global_phase = ((env.episode_length_buf * env.step_dt) / period).unsqueeze(1)
-    offsets = torch.as_tensor(offset, device=env.device, dtype=global_phase.dtype).view(1, -1)
-    leg_phase = (global_phase + offsets) % 1.0
-    is_stance = (leg_phase < threshold)
-    reward = (is_stance == is_contact).float().mean(dim=1)
-    if command_name is not None:
-        command = env.command_manager.get_command(command_name)
-        if command is not None:
-            linear_norm = torch.norm(command[:, :2], dim=1)
-            angular_norm = torch.abs(command[:, 2])
-            total_command = linear_norm + angular_norm
-            scale = (total_command > command_threshold).float()
-            reward *= scale
-    return reward
+  """ 
+  基于预设周期与时钟相位显式引导指定步态 (Trot / Walk 等)。
+
+  数学公式:
+    r = I(v_cmd > cmd_th) * (1 / N) * Σ_{i=1..N} I( s*_i == c_i )
+    其中:
+        φ_global = ( (episode_step * dt) / period ) mod 1.0
+        φ_i      = ( φ_global + offset_i ) mod 1.0
+        s*_i     = ( φ_i < threshold )    # 理论期望支撑相
+        c_i      = ( t_contact,i > 0 )    # 实际触地状态
+
+  符号说明:
+    period    : 步态整周期时长 (s)
+    offset_i  : 各腿的相位偏移比例 [0, 1)
+    threshold : 支撑相占空比比例 (duty cycle)
+  """
+  sensor: ContactSensor = env.scene[sensor_name]
+  is_contact = sensor.data.current_contact_time > 0
+  global_phase = ((env.episode_length_buf * env.step_dt) / period).unsqueeze(1)
+  offsets = torch.as_tensor(offset, device=env.device, dtype=global_phase.dtype).view(1, -1)
+  leg_phase = (global_phase + offsets) % 1.0
+  is_stance = (leg_phase < threshold)
+  reward = (is_stance == is_contact).float().mean(dim=1)
+  if command_name is not None:
+      command = env.command_manager.get_command(command_name)
+      if command is not None:
+          linear_norm = torch.norm(command[:, :2], dim=1)
+          angular_norm = torch.abs(command[:, 2])
+          total_command = linear_norm + angular_norm
+          scale = (total_command > command_threshold).float()
+          reward *= scale
+  return reward
 
 
 class feet_swing_height:
@@ -271,7 +358,8 @@ def feet_slip(
   command_threshold: float = 0.01,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize foot sliding (xy velocity while in contact)."""
+  """ 当足端处于着地状态,惩罚其水平面滑动速度平方
+  """
   asset: Entity = env.scene[asset_cfg.name]
   contact_sensor: ContactSensor = env.scene[sensor_name]
   command = env.command_manager.get_command(command_name)
@@ -300,7 +388,8 @@ def soft_landing(
   command_name: str | None = None,
   command_threshold: float = 0.05,
 ) -> torch.Tensor:
-  """Penalize high impact forces at landing to encourage soft footfalls."""
+  """ 仅在足端触地的首个物理步,惩罚法向/综合接触力的大小(落地时柔顺收腿减震)
+  """
   contact_sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = contact_sensor.data
   assert sensor_data.force is not None
@@ -413,6 +502,8 @@ def stand_still(
         command_threshold: float = 0.1,
         asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
 ) -> torch.Tensor:
+    """ 在速度指令低于阈值（停步）时，惩罚关节与默认站立姿态的角度差平方和
+    """
     asset: Entity = env.scene[asset_cfg.name]
     diff_angle = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
     reward = torch.sum(torch.square(diff_angle), dim=1)

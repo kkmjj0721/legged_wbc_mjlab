@@ -34,7 +34,7 @@ class Riplus4438PiperCfg( BaseConfig ):
         delay_min_lag = 0
         delay_max_lag = 4
         delay_hold_prob = 0.5
-        delay_update_period = 10.0
+        delay_update_period = 10
 
     class reward:
         pass
