@@ -55,10 +55,11 @@ def ri_4438_rough_env_cfg(
     primary = ContactMatch(
       mode = "geom",
       entity = "robot",
-      # Grab all collision geoms...
-      pattern = r".*_collision\d*$",
-      # Except for the foot geoms.
-      exclude = tuple(geom_names),
+      # Only base contact is considered an illegal ground contact.
+      # Thigh/calf/hip contacts remain observable through the robot model
+      # but no longer terminate the episode via this sensor.
+      pattern = r"^base_collision$",
+      exclude = (),
     ),
     secondary = ContactMatch(mode = "body", pattern = "terrain"),
     fields = ("found", "force"),

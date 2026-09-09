@@ -32,23 +32,32 @@
       <site name="imu" pos="0 0 0" />
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="base_link_part_1" material="visual_body" />
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="base_link_part_2" material="visual_body" />
-      <!-- MuJoCo box size stores half-extents; this matches the URDF box. -->
-      <geom name="base_collision" type="box" pos="0 -0.0011 0" size="0.10 0.065 0.045" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+      <!-- MuJoCo box size stores half-extents. Keep this proxy slightly inset
+           from the URDF box so folded legs do not catch on the base. -->
+      <geom name="base_collision" type="box" pos="0 -0.0011 0" size="0.092 0.056 0.038" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
       <body name="FL_hip" pos="0.14165 0.037 0">
         <inertial pos="-0.00266064 0.00153194 -0.00011724" quat="-0.0372601 0.71114 0.0168296 0.701861" mass="0.270797" diaginertia="3.5803e-05 3.43926e-05 2.35344e-05" />
         <joint name="FL_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.5 1.5" />
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="FL_hip" material="visual_body" />
-        <geom name="FL_hip_collision" type="mesh" mesh="FL_hip" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+        <!-- Low-cost collision proxy: the hip housing is close to a cylinder
+             whose axis follows the hip joint (the local y axis). -->
+        <geom name="FL_hip_collision" type="cylinder" size="0.028 0.024" quat="0.707107 0.707107 0 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
         <body name="FL_thigh" pos="0 0.0834 0">
           <inertial pos="-0.00360471 -0.0176323 -0.0219034" quat="0.988193 0.126831 0.0446349 0.0734545" mass="0.480862" diaginertia="0.00104576 0.000990493 0.000191919" />
           <joint name="FL_thigh_joint" pos="0 0 0" axis="0 1 0" range="-1.57 3.49" />
           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="FL_thigh" material="visual_body" />
-          <geom name="FL_thigh_collision" type="mesh" mesh="FL_thigh" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <!-- Use separate tight proxies for the thin thigh bar and its motor
+               housing; a single AABB was too large during folded motion. -->
+          <geom name="FL_thigh_collision" type="box" pos="-0.014 0 -0.078" quat="0.999388 0 -0.034993 0" size="0.020 0.014 0.078" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="FL_thigh_motor_collision" type="cylinder" pos="-0.001 -0.024 0.002" quat="0.707107 0.707107 0 0" size="0.033 0.032" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
           <body name="FL_calf" pos="0 0 -0.15">
             <inertial pos="0.00899888 2.89519e-06 -0.0659713" quat="0.70692 -0.0124579 -0.0123951 0.707075" mass="0.065602" diaginertia="0.000257707 0.000253407 6.87944e-06" />
             <joint name="FL_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.53 -0.84" />
             <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="FL_calf" material="visual_body" />
-            <geom name="FL_calf_collision" type="mesh" mesh="FL_calf" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <!-- Split the calf into a slender lower link and the upper motor
+                 housing, following the same primitive strategy as go2.xml. -->
+            <geom name="FL_calf1_collision" type="cylinder" size="0.014 0.080" pos="0.010 0 -0.077" quat="0.999688 0 -0.0249974 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="FL_calf2_collision" type="cylinder" size="0.014 0.023" pos="0.001 0 0.022" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="FL_foot" material="visual_body" />
             <geom size="0.02" pos="0 0 -0.15" rgba="1 1 1 1" name="FL_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="FL" pos="0 0 -0.15" size="0.01" />
@@ -59,17 +68,19 @@
         <inertial pos="-0.00266064 -0.00153194 0.00011724" quat="0.0168296 0.701861 -0.0372601 0.71114" mass="0.270797" diaginertia="3.5803e-05 3.43926e-05 2.35344e-05" />
         <joint name="FR_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.5 1.5" />
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="FR_hip" material="visual_body" />
-        <geom name="FR_hip_collision" type="mesh" mesh="FR_hip" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+        <geom name="FR_hip_collision" type="cylinder" size="0.028 0.024" quat="0.707107 0.707107 0 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
         <body name="FR_thigh" pos="0 -0.0834 0">
           <inertial pos="-0.00559051 0.0176322 -0.0210737" quat="0.98578 -0.125515 0.0933783 -0.0613606" mass="0.480861" diaginertia="0.00105408 0.000996037 0.000194768" />
           <joint name="FR_thigh_joint" pos="0 0 0" axis="0 1 0" range="-1.57 3.49" />
           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="FR_thigh" material="visual_body" />
-          <geom name="FR_thigh_collision" type="mesh" mesh="FR_thigh" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="FR_thigh_collision" type="box" pos="-0.014 0 -0.078" quat="0.999388 0 -0.034993 0" size="0.020 0.014 0.078" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="FR_thigh_motor_collision" type="cylinder" pos="-0.001 0.024 0.002" quat="0.707107 0.707107 0 0" size="0.033 0.032" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
           <body name="FR_calf" pos="0 0 -0.15">
             <inertial pos="0.00899889 2.89519e-06 -0.0659713" quat="0.70692 -0.0124579 -0.0123951 0.707075" mass="0.065602" diaginertia="0.000257707 0.000253407 6.87944e-06" />
             <joint name="FR_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.53 -0.84" />
             <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="FR_calf" material="visual_body" />
-            <geom name="FR_calf_collision" type="mesh" mesh="FR_calf" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="FR_calf1_collision" type="cylinder" size="0.014 0.080" pos="0.010 0 -0.077" quat="0.999688 0 -0.0249974 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="FR_calf2_collision" type="cylinder" size="0.014 0.023" pos="0.001 0 0.022" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="FR_foot" material="visual_body" />
             <geom size="0.02" pos="0 0 -0.15" rgba="1 1 1 1" name="FR_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="FR" pos="0 0 -0.15" size="0.01" />
@@ -80,17 +91,19 @@
         <inertial pos="0.00266064 0.00153194 0.00011724" quat="0.0372601 0.71114 -0.0168296 0.701861" mass="0.270797" diaginertia="3.5803e-05 3.43926e-05 2.35344e-05" />
         <joint name="RL_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.5 1.5" />
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="RL_hip" material="visual_body" />
-        <geom name="RL_hip_collision" type="mesh" mesh="RL_hip" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+        <geom name="RL_hip_collision" type="cylinder" size="0.028 0.024" quat="0.707107 0.707107 0 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
         <body name="RL_thigh" pos="0 0.0834 0">
           <inertial pos="-0.00555466 -0.0176323 -0.0210155" quat="0.985074 0.127403 0.0866694 0.0767224" mass="0.480862" diaginertia="0.00105519 0.000997623 0.00019482" />
           <joint name="RL_thigh_joint" pos="0 0 0" axis="0 1 0" range="-1.57 3.49" />
           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="RL_thigh" material="visual_body" />
-          <geom name="RL_thigh_collision" type="mesh" mesh="RL_thigh" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="RL_thigh_collision" type="box" pos="-0.014 0 -0.078" quat="0.999388 0 -0.034993 0" size="0.020 0.014 0.078" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="RL_thigh_motor_collision" type="cylinder" pos="-0.001 -0.024 0.002" quat="0.707107 0.707107 0 0" size="0.033 0.032" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
           <body name="RL_calf" pos="0 0 -0.15">
             <inertial pos="0.00899888 2.89519e-06 -0.0659713" quat="0.70692 -0.0124579 -0.0123951 0.707075" mass="0.065602" diaginertia="0.000257707 0.000253407 6.87944e-06" />
             <joint name="RL_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.53 -0.84" />
             <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="RL_calf" material="visual_body" />
-            <geom name="RL_calf_collision" type="mesh" mesh="RL_calf" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="RL_calf1_collision" type="cylinder" size="0.014 0.080" pos="0.010 0 -0.077" quat="0.999688 0 -0.0249974 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="RL_calf2_collision" type="cylinder" size="0.014 0.023" pos="0.001 0 0.022" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="RL_foot" material="visual_body" />
             <geom size="0.02" pos="0 0 -0.15" rgba="1 1 1 1" name="RL_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="RL" pos="0 0 -0.15" size="0.01" />
@@ -101,17 +114,19 @@
         <inertial pos="0.00266064 -0.00153194 -0.00011724" quat="-0.0168296 0.701861 0.0372601 0.71114" mass="0.270797" diaginertia="3.5803e-05 3.43926e-05 2.35344e-05" />
         <joint name="RR_hip_joint" pos="0 0 0" axis="1 0 0" range="-1.5 1.5" />
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="RR_hip" material="visual_body" />
-        <geom name="RR_hip_collision" type="mesh" mesh="RR_hip" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+        <geom name="RR_hip_collision" type="cylinder" size="0.028 0.024" quat="0.707107 0.707107 0 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
         <body name="RR_thigh" pos="0 -0.0834 0">
           <inertial pos="-0.00521957 0.01761785 -0.02116423" mass="0.48086142" fullinertia="0.00102378 0.00095271 0.00026924 -0.00004288 -0.00015179 -0.00018005" />
           <joint name="RR_thigh_joint" pos="0 0 0" axis="0 1 0" range="-1.57 3.49" />
           <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="RR_thigh" material="visual_body" />
-          <geom name="RR_thigh_collision" type="mesh" mesh="RR_thigh" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="RR_thigh_collision" type="box" pos="-0.014 0 -0.078" quat="0.999388 0 -0.034993 0" size="0.020 0.014 0.078" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+          <geom name="RR_thigh_motor_collision" type="cylinder" pos="-0.001 0.024 0.002" quat="0.707107 0.707107 0 0" size="0.033 0.032" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
           <body name="RR_calf" pos="0 0 -0.15">
             <inertial pos="0.00899888 2.89519e-06 -0.0659713" quat="0.70692 -0.0124579 -0.0123951 0.707075" mass="0.065602" diaginertia="0.000257707 0.000253407 6.87944e-06" />
             <joint name="RR_calf_joint" pos="0 0 0" axis="0 1 0" range="-2.53 -0.84" />
             <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="RR_calf" material="visual_body" />
-            <geom name="RR_calf_collision" type="mesh" mesh="RR_calf" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="RR_calf1_collision" type="cylinder" size="0.014 0.080" pos="0.010 0 -0.077" quat="0.999688 0 -0.0249974 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
+            <geom name="RR_calf2_collision" type="cylinder" size="0.014 0.023" pos="0.001 0 0.022" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="RR_foot" material="visual_body" />
             <geom size="0.02" pos="0 0 -0.15" rgba="1 1 1 1" name="RR_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="RR" pos="0 0 -0.15" size="0.01" />
@@ -130,6 +145,6 @@
 
   <default>
     <joint damping="0.02" frictionloss="0.06" armature="0.008234" />
-    <geom friction="0.4 0.005 0.0001" margin="0.001" condim="3" />
+    <geom friction="0.4 0.005 0.0001" margin="0.0" condim="3" />
   </default>
 </mujoco>

@@ -14,7 +14,7 @@ def ri_4438_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Ri 4438 velocity task."""
   return RslRlOnPolicyRunnerCfg(
     actor = RslRlModelCfg(
-      hidden_dims = (512, 256, 128),
+      hidden_dims = tuple(ri_4438_ppo_cfg.policy.actor_hidden_dims),
       activation = "elu",
       obs_normalization = True,
       distribution_cfg = {
@@ -25,7 +25,7 @@ def ri_4438_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     ),
 
     critic = RslRlModelCfg(
-      hidden_dims = (512, 256, 128),
+      hidden_dims = tuple(ri_4438_ppo_cfg.policy.critic_hidden_dims),
       activation = "elu",
       obs_normalization = True,
     ),

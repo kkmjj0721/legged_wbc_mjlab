@@ -1,6 +1,0 @@
-Metadata-Version: 2.4
-Name: legged-wbc-mjlab
-Version: 0.1.0
-Requires-Python: <3.12,>=3.11
-Requires-Dist: mjlab==1.6.0
-Requires-Dist: rsl-rl-lib==5.4.2

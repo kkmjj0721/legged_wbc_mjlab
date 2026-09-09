@@ -171,14 +171,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       entity_name = "robot",
       resampling_time_range = (3.0, 8.0),
       rel_standing_envs = 0.05,
-      heading_command = True,
+      heading_command = False,
       heading_control_stiffness = 0.5,
       debug_vis = True,
       ranges = UniformVelocityCommandCfg.Ranges(
         lin_vel_x = (-1.0, 2.0),
         lin_vel_y = (-1.0, 1.0),
         ang_vel_z = (-1.0, 1.0),
-        heading = (-math.pi, math.pi),
+        # heading = (-math.pi, math.pi),
       ),
     )
   }
@@ -296,7 +296,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight=-0.025,  # Override per-robot
       params={"sensor_name": "robot/root_angmom"},
     ),
-    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -200.0),
+    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -100.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
     "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -10.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01 * (0.15381525329142837 / 0.25) ** 2),
