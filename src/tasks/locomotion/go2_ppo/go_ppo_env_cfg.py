@@ -221,9 +221,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "foot_friction": EventTermCfg(
-      mode="startup",
-      func=dr.geom_friction,
-      params={
+      mode = "startup",
+      func = dr.geom_friction,
+      params = {
         "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
         "operation": "abs",
         "ranges": (0.3, 1.6),
@@ -231,17 +231,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "encoder_bias": EventTermCfg(
-      mode="startup",
-      func=dr.encoder_bias,
-      params={
+      mode = "startup",
+      func = dr.encoder_bias,
+      params = {
         "asset_cfg": SceneEntityCfg("robot"),
         "bias_range": (-0.015, 0.015),
       },
     ),
     "base_com": EventTermCfg(
-      mode="startup",
-      func=dr.body_com_offset,
-      params={
+      mode = "startup",
+      func = dr.body_com_offset,
+      params = {
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
         "operation": "add",
         "ranges": {
@@ -259,9 +259,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   rewards = {
     "track_linear_velocity": RewardTermCfg(
-      func=mdp.track_linear_velocity,
-      weight=1.0,
-      params={"command_name": "twist", "std": math.sqrt(0.25)},
+      func = mdp.track_linear_velocity,
+      weight = 1.0,
+      params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func=mdp.track_angular_velocity,

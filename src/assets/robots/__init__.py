@@ -10,3 +10,7 @@ from .go2.go2_constants import(
     get_go2_robot_cfg as get_go2_robot_cfg
 )
 
+from .ri_4438.ri_4438_constants import(
+    get_ri_4438_robot_cfg as get_ri_4438_robot_cfg
+)
+
