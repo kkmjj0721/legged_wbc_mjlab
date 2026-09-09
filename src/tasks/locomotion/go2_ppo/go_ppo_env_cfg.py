@@ -62,11 +62,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "base_ang_vel": ObservationTermCfg(
       func = mdp.builtin_sensor,
       params = {"sensor_name": "robot/imu_ang_vel"},
-      noise = Unoise(n_min=-0.2, n_max=0.2),
+      noise = Unoise(n_min = -0.2, n_max = 0.2),
     ),
     "projected_gravity": ObservationTermCfg(
       func = mdp.projected_gravity,
-      noise = Unoise(n_min=-0.05, n_max=0.05),
+      noise = Unoise(n_min = -0.05, n_max = 0.05),
     ),
     "command": ObservationTermCfg(
       func = mdp.generated_commands,
@@ -78,19 +78,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "joint_pos": ObservationTermCfg(
       func = mdp.joint_pos_rel,
-      noise = Unoise(n_min=-0.01, n_max=0.01),
+      noise = Unoise(n_min = -0.01, n_max = 0.01),
     ),
     "joint_vel": ObservationTermCfg(
       func = mdp.joint_vel_rel,
-      noise = Unoise(n_min=-1.5, n_max=1.5),
+      noise = Unoise(n_min = -1.5, n_max = 1.5),
     ),
-    "actions": ObservationTermCfg(func=mdp.last_action),
-    "height_scan": ObservationTermCfg(
-      func = envs_mdp.height_scan,
-      params = {"sensor_name": "terrain_scan"},
-      noise = Unoise(n_min=-0.1, n_max=0.1),
-      scale = 1 / terrain_scan.max_distance,
-    ),
+    "actions": ObservationTermCfg(func = mdp.last_action),
   }
 
   critic_terms = {
@@ -98,12 +92,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "base_lin_vel": ObservationTermCfg(
       func = mdp.builtin_sensor,
       params = {"sensor_name": "robot/imu_lin_vel"},
-      noise = Unoise(n_min=-0.5, n_max=0.5),
+      noise = Unoise(n_min = -0.5, n_max = 0.5),
     ),
     "height_scan": ObservationTermCfg(
-      func=envs_mdp.height_scan,
-      params={"sensor_name": "terrain_scan"},
-      scale=1 / terrain_scan.max_distance,
+      func = envs_mdp.height_scan,
+      params = {"sensor_name": "terrain_scan"},
+      scale = 1 / terrain_scan.max_distance,
     ),
     "foot_height": ObservationTermCfg(
       func = mdp.foot_height,
@@ -118,8 +112,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params = {"sensor_name": "feet_ground_contact"},
     ),
     "foot_contact_forces": ObservationTermCfg(
-      func=mdp.foot_contact_forces,
-      params={"sensor_name": "feet_ground_contact"},
+      func = mdp.foot_contact_forces,
+      params = {"sensor_name": "feet_ground_contact"},
     ),
   }
 
@@ -152,11 +146,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # Actions
   ##
 
+  base_action_scale = go2_cfg.control.action_scale
+  scale = {
+    r".*_hip_joint": base_action_scale * go2_cfg.control.hip_reduction,
+    r".*_thigh_joint": base_action_scale,
+    r".*_calf_joint": base_action_scale,
+  }
+
   actions: dict[str, ActionTermCfg] = {
     "joint_pos": JointPositionActionCfg(
       entity_name = "robot",
       actuator_names = (".*",),
-      scale = 0.25,  # Override per-robot.
+      scale = scale,
       use_default_offset = True,
     )
   }
@@ -187,6 +188,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
 
   events = {
+    # reset
     "reset_base": EventTermCfg(
       func = mdp.reset_root_state_uniform,
       mode = "reset",
@@ -201,6 +203,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
+
+    # dr
     "push_robot": EventTermCfg(
       func = mdp.push_by_setting_velocity,
       mode = "interval",

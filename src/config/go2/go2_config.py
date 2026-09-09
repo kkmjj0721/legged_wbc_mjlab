@@ -12,14 +12,22 @@ class Go2Cfg( BaseConfig ):
         send_timeouts = True # send time out information to the algorithm
         episode_length_s = 20 # episode length in seconds
 
-    class asset:
-        file = "../../assets/robots/go2/xmls/go2.xml"
-        name = "Go2"
+    class comaman:
+        curriculum = True
+        max_curriculum = 1.0
+        num_commands = 4  # [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
+        resampling_time = [4.0, 8.0]  # [s] time before new command is given
+        heading_command = False  # if true: compute ang vel command from heading error
+        class ranges:
+            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
+            lin_vel_y = [-1.0, 1.0]  # min max [m/s]
+            ang_vel_yaw = [-1.0, 1.0]  # min max [rad/s]
+            heading = [-3.14, 3.14]
 
     class control:
         stiffness = {"hip": 20.0, "thigh": 20.0, "calf": 40.0,}  
         damping = {"hip": 0.5, "thigh": 0.5, "calf": 1.0,}  
-        action_scale = 0.25
+        action_scale = 0.5
         decimation = 4  # control frequency = sim frequency / decimation
         hip_reduction = 0.5
         effort_limit = {"hip": 23.7, "thigh": 23.7, "calf": 45.43,}
