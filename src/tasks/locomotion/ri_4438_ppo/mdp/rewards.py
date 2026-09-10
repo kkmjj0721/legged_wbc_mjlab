@@ -517,3 +517,35 @@ def stand_still(
             reward *= scale
     return reward
 
+
+def hip_joint_deviation_penalty(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  command_threshold: float = 0.1,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """惩罚无侧向/偏航角速度指令时 hip 关节偏离默认位置。
+
+  ``command[:, 1]`` 和 ``command[:, 2]`` 分别是侧向线速度和偏航角速度。
+  前向速度不参与门控，因此机器人可以向前行走时仍保持 hip 关节约束。
+  返回值是未加权的平方误差，通常应在 ``RewardTermCfg`` 中使用负权重。
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+
+  # If no joint subset was resolved by the manager, select hip joints by name so
+  # the default call cannot accidentally penalize every joint in the robot.
+  joint_ids = asset_cfg.joint_ids
+  if isinstance(joint_ids, slice) and asset_cfg.joint_names is None:
+    joint_ids, _ = asset.find_joints(r".*_hip_joint")
+
+  default_joint_pos = asset.data.default_joint_pos
+  assert default_joint_pos is not None
+  joint_error = asset.data.joint_pos[:, joint_ids] - default_joint_pos[:, joint_ids]
+  penalty = torch.sum(torch.square(joint_error), dim=1)
+
+  no_lateral_velocity = torch.abs(command[:, 1]) <= command_threshold
+  no_angular_velocity = torch.abs(command[:, 2]) <= command_threshold
+  active = (no_lateral_velocity & no_angular_velocity).to(penalty.dtype)
+  return penalty * active

@@ -11,5 +11,13 @@ dependencies = [
     "rsl-rl-lib==5.4.2",
 ]
 
+[project.optional-dependencies]
+sim2sim = [
+    "mujoco>=3.1",
+    "onnxruntime>=1.17",
+    "pygame>=2.5",
+    "pyyaml>=6.0",
+]
+
 [tool.uv.sources]
 rsl-rl-lib = { path = "rsl_rl", editable = true }

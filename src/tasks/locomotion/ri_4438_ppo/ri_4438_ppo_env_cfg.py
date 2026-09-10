@@ -251,6 +251,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         },
       },
     ),
+    # "pd_gains": EventTermCfg(
+    #   func = dr.pd_gains,
+    #   mode = "startup",
+    #   params = {
+
+    #   }
+    # ),
   }
 
   ##
@@ -300,6 +307,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
     "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -10.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01 * (0.15381525329142837 / 0.25) ** 2),
+    "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.01),
+    "hip_pos": RewardTermCfg(
+      func=mdp.hip_joint_deviation_penalty,
+      weight = -0.5,
+      params = {
+        "command_name": "twist",
+      }
+    ),
     "foot_gait": RewardTermCfg(
       func = mdp.feet_gait,
       weight = 0.5,

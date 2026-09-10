@@ -18,21 +18,21 @@ class Ri4438PiperCfg( BaseConfig ):
             heading = [-3.14, 3.14]
         
     class control:
-        stiffness = {"hip": 30.0, "thigh": 30.0, "calf": 30.0,}  
-        damping = {"hip": 0.6, "thigh": 0.6, "calf": 0.6,}  
-        action_scale = 0.5
+        stiffness = {"hip": 32.50652905356971, "thigh": 32.50652905356971, "calf": 32.50652905356971,}  
+        damping = {"hip": 2.06942991271352, "thigh": 2.06942991271352, "calf": 2.06942991271352}  
+        action_scale = 0.15381525329142837
         decimation = 4  # control frequency = sim frequency / decimation
-        hip_reduction = 0.5
+        hip_reduction = 1.0
         effort_limit = {"hip": 10.0, "thigh": 10.0, "calf": 10.0 }
         armature = 0.008234
         friction = 0.01
         delay_min_lag = 0
         delay_max_lag = 4
-        delay_hold_prob = 0.5
+        delay_hold_prob = 0.3
         delay_update_period = 10
 
     class init_state:
-        pos = [0.0, 0.0, 0.25]
+        pos = [0.0, 0.0, 0.32]
         default_joint = {
             "FL_hip_joint": -0.0,
             "RL_hip_joint": -0.0,

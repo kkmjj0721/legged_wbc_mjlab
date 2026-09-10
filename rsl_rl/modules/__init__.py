@@ -7,6 +7,7 @@
 
 from .cnn import CNN
 from .distribution import BetaDistribution, Distribution, GaussianDistribution, HeteroscedasticGaussianDistribution
+from .him_estimator import HIMEstimator
 from .mlp import MLP
 from .normalization import EmpiricalDiscountedVariationNormalization, EmpiricalNormalization
 from .rnn import RNN, HiddenState
@@ -14,6 +15,7 @@ from .rnn import RNN, HiddenState
 __all__ = [
     "CNN",
     "MLP",
+    "HIMEstimator",
     "RNN",
     "BetaDistribution",
     "Distribution",
@@ -22,4 +24,14 @@ __all__ = [
     "GaussianDistribution",
     "HeteroscedasticGaussianDistribution",
     "HiddenState",
+    "HIMActorCritic",
 ]
+
+
+def __getattr__(name: str):
+    """Lazily expose the legacy HIM actor name without introducing an import cycle."""
+    if name == "HIMActorCritic":
+        from rsl_rl.models.him_actor_model import HIMActorCritic
+
+        return HIMActorCritic
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
