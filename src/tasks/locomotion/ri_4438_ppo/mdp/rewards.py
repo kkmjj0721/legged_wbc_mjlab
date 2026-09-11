@@ -549,3 +549,10 @@ def hip_joint_deviation_penalty(
   no_angular_velocity = torch.abs(command[:, 2]) <= command_threshold
   active = (no_lateral_velocity & no_angular_velocity).to(penalty.dtype)
   return penalty * active
+
+
+def torques_limit(
+  env: ManagerBasedRlEnv,
+  
+):
+  pass

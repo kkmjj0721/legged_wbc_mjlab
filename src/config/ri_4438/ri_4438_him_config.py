@@ -1,117 +1,76 @@
-from src.config.base.base_config import BaseConfig
+"""RI-4438 HIM configuration shared by the task and rsl_rl adapters.
 
-class Ri4438HimCfg( BaseConfig ):
-    class env:
-        num_envs = 4096
-        num_action = 12
-        num_obs_history = 6
-        num_obs_one_step = 3 + 3 + 3 + 2 + num_action * 3
-        num_obs = num_obs_one_step * num_obs_history
-        num_privileged_obs = num_obs_one_step + 3 + 187
-        env_spacing = 3.  # not used with heightfields/trimeshes 
-        send_timeouts = True # send time out information to the algorithm
-        episode_length_s = 20 # episode length in seconds
+The old HIMLoco configuration described a 45-dimensional frame.  RI-4438's
+actor also contains the two-dimensional sinusoidal gait phase, so the actual
+frame is 47 dimensions and the six-frame history is 282 dimensions.
+"""
 
-    class comaman:
-        curriculum = True
-        max_curriculum = 1.0
-        num_commands = 4  # [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
-        resampling_time = [4.0, 8.0]  # [s] time before new command is given
-        heading_command = False  # if true: compute ang vel command from heading error
-        class ranges:
-            lin_vel_x = [-1.0, 1.0]  # min max [m/s]
-            lin_vel_y = [-1.0, 1.0]  # min max [m/s]
-            ang_vel_yaw = [-1.0, 1.0]  # min max [rad/s]
-            heading = [-3.14, 3.14]
-
-    class control:
-        stiffness = {"hip": 30.0, "thigh": 30.0, "calf": 30.0,}  
-        damping = {"hip": 0.6, "thigh": 0.6, "calf": 0.6,}  
-        action_scale = 0.5
-        decimation = 4  # control frequency = sim frequency / decimation
-        hip_reduction = 0.5
-        effort_limit = {"hip": 10.0, "thigh": 10.0, "calf": 10.0 }
-        armature = 0.008234
-        friction = 0.01
-        delay_min_lag = 0
-        delay_max_lag = 4
-        delay_hold_prob = 0.5
-        delay_update_period = 10
-
-    class init_state:
-        pos = [0.0, 0.0, 0.25]
-        default_joint = {
-            "FL_hip_joint": -0.0,
-            "RL_hip_joint": -0.0,
-            "FR_hip_joint": 0.0,
-            "RR_hip_joint": 0.0,
-
-            "FL_thigh_joint": 0.9,
-            "RL_thigh_joint": 0.9,
-            "FR_thigh_joint": 0.9,
-            "RR_thigh_joint": 0.9,
-
-            "FL_calf_joint": -1.8,
-            "RL_calf_joint": -1.8,
-            "FR_calf_joint": -1.8,
-            "RR_calf_joint": -1.8,
-        }
-
-    class reset:
-        base_offset = {
-            "pose_range": {
-                "x": (-0.0, 0.0),
-                "y": (-0.0, 0.0),
-                "z": (-0.0, 0.0),
-                "roll": (-0.0, 0.0),
-                "pitch": (-0.0, 0.0),
-                "yaw": (-0.0, 0.0),
-            },
-            "velocity_range": {},
-        }
-
-        joint_offset = {
-            "position_range": (-0.0, 0.0),
-            "velocity_range": (-0.0, 0.0),
-        }
-
-    class domain_rand:
-        pass
-
-    class noise:
-        pass
-
-    class reward:
-        pass
+from src.config.ri_4438.ri_4438_config import Ri4438CfgPPO, Ri4438PiperCfg
 
 
-class Ri4438CFGHimPPO:
-    class policy:
-        init_noise_std = 1.0
-        actor_hidden_dims = [512, 256, 128]
-        critic_hidden_dims = [512, 256, 128]
-        activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
-        obs_normalization = True # Whether to normalize the observations
+class Ri4438HimCfg(Ri4438PiperCfg):
+    """Environment-side dimensions and robot defaults used by HIM."""
 
-    class algorithm:
-        value_loss_coef = 1.0
-        use_clipped_value_loss = True
-        clip_param = 0.2
-        entropy_coef = 0.01
-        num_learning_epochs = 5
-        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 1.0e-3 #1.e-3 #5.e-4
-        schedule = 'adaptive' # could be adaptive, fixed
-        gamma = 0.99
-        lam = 0.95
-        desired_kl = 0.01
-        max_grad_norm = 1.
+    class env(Ri4438PiperCfg.env):
+        num_envs = 16384
+        num_actions = 12
+        num_one_step_obs = 3 + 3 + 3 + 2 + num_actions * 3  # 47
+        history_size = 6
+        num_observations = num_one_step_obs * history_size  # 282
 
-    class runner:
-        num_steps_per_env = 100 # per iteration
-        max_iterations = 20000 # number of policy updates
+        # Names used by the original HIMLoco configuration, retained as
+        # read-only aliases for scripts that inspect environment dimensions.
+        num_action = num_actions
+        num_obs_history = history_size
+        num_obs_one_step = num_one_step_obs
+        num_obs = num_observations
 
-        # logging
-        save_interval = 200 # check for potential saves every this many iterations
-        experiment_name = 'ri_4438_him'
-    
+        # The actor frame is followed by privileged terms in the critic.  The
+        # exact rough/flat dimensions are documented here for validation; the
+        # live MjLab observation manager remains the source of truth.
+        rough_num_privileged_obs = num_one_step_obs + 3 + 3 + 4 + 187
+        flat_num_privileged_obs = num_one_step_obs + 3 + 4 + 4 + 4 + 12
+        num_privileged_obs = rough_num_privileged_obs
+        env_spacing = 3.0
+        send_timeouts = True
+        episode_length_s = 20.0
+
+
+class Ri4438CFGHimPPO(Ri4438CfgPPO):
+    """HIM policy, estimator, PPO and runner hyperparameters."""
+
+    class policy(Ri4438CfgPPO.policy):
+        num_one_step_obs = Ri4438HimCfg.env.num_one_step_obs
+        history_size = Ri4438HimCfg.env.history_size
+        history_term_dims = (
+            3,  # base_ang_vel
+            3,  # projected_gravity
+            3,  # command
+            2,  # phase
+            Ri4438HimCfg.env.num_actions,  # joint_pos
+            Ri4438HimCfg.env.num_actions,  # joint_vel
+            Ri4438HimCfg.env.num_actions,  # actions
+        )
+        history_order = "frame_major_oldest_first"
+        encoder_hidden_dims = (128, 64, 16)
+        target_hidden_dims = (128, 64)
+        num_prototype = 32
+        temperature = 3.0
+        sinkhorn_eps = 0.05
+        sinkhorn_iters = 3
+
+    class algorithm(Ri4438CfgPPO.algorithm):
+        estimator_learning_rate = 1.0e-3
+        estimator_max_grad_norm = 10.0
+
+        # critic = actor frame (47) + true base linear velocity (3) + other
+        # privileged terms.  The target input removes command [6:9] and
+        # appends the privileged velocity.
+        estimator_velocity_slice = (47, 50)
+        estimator_target_slices = ((0, 6), (9, 47), (47, 50))
+
+    class runner(Ri4438CfgPPO.runner):
+        num_steps_per_env = 100
+        max_iterations = 20000
+        save_interval = 100
+        experiment_name = "ri_4438_him"

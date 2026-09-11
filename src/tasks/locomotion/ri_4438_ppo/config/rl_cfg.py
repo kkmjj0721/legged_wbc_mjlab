@@ -15,18 +15,18 @@ def ri_4438_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   return RslRlOnPolicyRunnerCfg(
     actor = RslRlModelCfg(
       hidden_dims = tuple(ri_4438_ppo_cfg.policy.actor_hidden_dims),
-      activation = "elu",
+      activation = ri_4438_ppo_cfg.policy.activation,
       obs_normalization = True,
       distribution_cfg = {
         "class_name": "GaussianDistribution",
-        "init_std": 1.0,
+        "init_std": float(ri_4438_ppo_cfg.policy.init_noise_std),
         "std_type": "scalar",
       },
     ),
 
     critic = RslRlModelCfg(
       hidden_dims = tuple(ri_4438_ppo_cfg.policy.critic_hidden_dims),
-      activation = "elu",
+      activation = ri_4438_ppo_cfg.policy.activation,
       obs_normalization = True,
     ),
 
@@ -46,8 +46,8 @@ def ri_4438_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     ),
 
     logger = "tensorboard",         # tensorboard or wandb
-    experiment_name = "ri_4438_ppo",
-    save_interval = 100,
-    num_steps_per_env = 24,
-    max_iterations = 10001,
+    experiment_name = ri_4438_ppo_cfg.runner.experiment_name,
+    save_interval = int(ri_4438_ppo_cfg.runner.save_interval),
+    num_steps_per_env = int(ri_4438_ppo_cfg.runner.num_steps_per_env),
+    max_iterations = int(ri_4438_ppo_cfg.runner.max_iterations),
   )

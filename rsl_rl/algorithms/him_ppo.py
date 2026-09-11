@@ -51,13 +51,12 @@ class HIMPPO:
         estimator_obs_groups: list[str] | None = None,
         estimator_velocity_slice: tuple[int, int] | list[int] | None = None,
         estimator_target_slice: tuple[int, int] | list[int] | None = None,
+        estimator_target_slices: tuple[tuple[int, int], ...] | list[tuple[int, int]] | None = None,
         **kwargs,
     ) -> None:
         """Initialize PPO and the HIM estimator training configuration."""
         self.use_mixed_precision = use_mixed_precision
-        if kwargs:
-            unexpected = ", ".join(sorted(kwargs))
-            print(f"HIMPPO.__init__ got unexpected arguments, which will be ignored: {unexpected}")
+        del kwargs
 
         self.device = device
         self.is_multi_gpu = multi_gpu_cfg is not None
@@ -96,6 +95,8 @@ class HIMPPO:
         self.clip_param = clip_param
         self.num_learning_epochs = num_learning_epochs
         self.num_mini_batches = num_mini_batches
+        if self.num_learning_epochs < 1 or self.num_mini_batches < 1:
+            raise ValueError("num_learning_epochs and num_mini_batches must be positive")
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
         self.gamma = gamma
@@ -109,8 +110,11 @@ class HIMPPO:
         if isinstance(estimator_obs_groups, str):
             estimator_obs_groups = [estimator_obs_groups]
         self.estimator_obs_groups = list(estimator_obs_groups or [])
-        self.estimator_velocity_slice = tuple(estimator_velocity_slice) if estimator_velocity_slice else None
-        self.estimator_target_slice = tuple(estimator_target_slice) if estimator_target_slice else None
+        self.estimator_velocity_slice = self._normalize_slice(estimator_velocity_slice)
+        self.estimator_target_slices = self._normalize_target_slices(
+            estimator_target_slice,
+            estimator_target_slices,
+        )
 
     def act(self, obs: TensorDict) -> torch.Tensor:
         """Sample actions and record the current transition."""
@@ -126,9 +130,11 @@ class HIMPPO:
         self, obs: TensorDict, rewards: torch.Tensor, dones: torch.Tensor, extras: dict[str, torch.Tensor]
     ) -> None:
         """Record rewards, termination flags, and the post-step observation."""
-        self.transition.next_observations = obs.clone()
+        self.transition.next_observations, self.transition.next_observations_valid = self._resolve_next_observations(
+            obs, dones, extras
+        )
         self.transition.rewards = rewards.clone()
-        self.transition.dones = dones
+        self.transition.dones = dones.clone()
         if "time_outs" in extras:
             self.transition.rewards += self.gamma * torch.squeeze(
                 self.transition.values * extras["time_outs"].unsqueeze(1).to(self.device), 1
@@ -187,14 +193,23 @@ class HIMPPO:
 
             history = self.actor.get_observation_tensor(batch.observations)
             history = self.actor.obs_normalizer(history)
-            next_critic_obs = self._get_estimator_target(batch.next_observations)
-            estimation_loss, swap_loss = self.estimator.update(
-                history,
-                next_critic_obs,
-                velocity_slice=self.estimator_velocity_slice,
-                target_slice=self.estimator_target_slice,
-                gradient_reducer=self._reduce_estimator_gradients if self.is_multi_gpu else None,
+            velocity_target, target_obs = self._get_estimator_targets(batch.next_observations)
+            valid_estimator_samples = batch.next_observations_valid.reshape(-1).bool()
+            update_estimator = torch.tensor(
+                int(valid_estimator_samples.any()), dtype=torch.int32, device=self.device
             )
+            if self.is_multi_gpu:
+                torch.distributed.all_reduce(update_estimator, op=torch.distributed.ReduceOp.MAX)
+            if bool(update_estimator.item()):
+                estimation_loss, swap_loss = self.estimator.update(
+                    history[valid_estimator_samples],
+                    velocity_target=velocity_target[valid_estimator_samples],
+                    target_obs=target_obs[valid_estimator_samples],
+                    gradient_reducer=self._reduce_estimator_gradients if self.is_multi_gpu else None,
+                )
+            else:
+                estimation_loss = 0.0
+                swap_loss = 0.0
 
             ratio = torch.exp(actions_log_prob - torch.squeeze(batch.old_actions_log_prob))
             surrogate = -torch.squeeze(batch.advantages) * ratio
@@ -265,14 +280,14 @@ class HIMPPO:
         if load_cfg is None:
             load_cfg = {"actor": True, "critic": True, "optimizer": True, "estimator": True, "iteration": True}
         if load_cfg.get("actor"):
-            self._raw_actor.load_state_dict(loaded_dict["actor_state_dict"], strict=strict)
+            self._load_actor_state(loaded_dict, strict, load_cfg.get("estimator", True))
         if load_cfg.get("critic"):
-            self._raw_critic.load_state_dict(loaded_dict["critic_state_dict"], strict=strict)
-        if load_cfg.get("optimizer"):
+            self._load_critic_state(loaded_dict, strict)
+        if load_cfg.get("optimizer") and "optimizer_state_dict" in loaded_dict:
             self.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
             self.learning_rate = self.optimizer.param_groups[0]["lr"]
-        if load_cfg.get("estimator") and "estimator_state_dict" in loaded_dict:
-            self.estimator.load_state_dict(loaded_dict["estimator_state_dict"], strict=strict)
+        if load_cfg.get("estimator"):
+            self._load_estimator_state(loaded_dict, strict)
             if "estimator_optimizer_state_dict" in loaded_dict:
                 self.estimator.optimizer.load_state_dict(loaded_dict["estimator_optimizer_state_dict"])
         return bool(load_cfg.get("iteration", False))
@@ -340,14 +355,27 @@ class HIMPPO:
             if id(param) not in estimator_param_ids
         )
 
-    def _get_estimator_target(self, next_observations: TensorDict | None) -> torch.Tensor:
-        """Concatenate configured next-observation groups for estimator supervision."""
+    def _get_estimator_targets(self, next_observations: TensorDict | None) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build velocity and one-step targets from post-step observation groups."""
         if next_observations is None:
             raise ValueError("HIM batches must contain next_observations")
         groups = self.estimator_obs_groups
         if not groups:
             groups = self.actor.obs_groups
-        return torch.cat([next_observations[group] for group in groups], dim=-1)
+        next_critic_obs = torch.cat([next_observations[group] for group in groups], dim=-1)
+        velocity_slice = self.estimator_velocity_slice or (
+            self.actor.num_one_step_obs,
+            self.actor.num_one_step_obs + 3,
+        )
+        target_slices = self.estimator_target_slices or ((3, self.actor.num_one_step_obs + 3),)
+        velocity_target = self._slice_features(next_critic_obs, velocity_slice)
+        target_obs = torch.cat([self._slice_features(next_critic_obs, slc) for slc in target_slices], dim=-1)
+        if velocity_target.shape[-1] != 3 or target_obs.shape[-1] != self.actor.num_one_step_obs:
+            raise ValueError(
+                "Invalid HIM estimator target configuration: expected velocity width 3 and target width "
+                f"{self.actor.num_one_step_obs}, got {velocity_target.shape[-1]} and {target_obs.shape[-1]}"
+            )
+        return velocity_target, target_obs
 
     def _update_learning_rate(self, old_params, new_params) -> None:
         """Adapt PPO learning rate from the Gaussian KL divergence."""
@@ -368,3 +396,137 @@ class HIMPPO:
                 self.learning_rate = learning_rate.item()
             for param_group in self.optimizer.param_groups:
                 param_group["lr"] = self.learning_rate
+
+    def _resolve_next_observations(
+        self,
+        obs: TensorDict,
+        dones: torch.Tensor,
+        extras: dict[str, torch.Tensor],
+    ) -> tuple[TensorDict, torch.Tensor]:
+        """Resolve true post-step observations and the samples valid for estimator training."""
+        next_observations = obs.clone()
+        done_mask = dones.reshape(-1).bool().to(self.device)
+        valid = (~done_mask).view(-1, 1)
+        terminal_observations = self._get_terminal_observations(extras)
+        if terminal_observations is None or not done_mask.any():
+            return next_observations, valid
+
+        terminal_observations = terminal_observations.to(self.device)
+        copied = False
+        required_groups = self.estimator_obs_groups or self.actor.obs_groups
+        terminal_batch = terminal_observations.batch_size[0] if terminal_observations.batch_size else 0
+        for group, value in next_observations.items():
+            if group not in terminal_observations:
+                continue
+            terminal_value = terminal_observations[group]
+            if terminal_batch == next_observations.batch_size[0]:
+                value[done_mask] = terminal_value[done_mask]
+            elif terminal_batch == int(done_mask.sum().item()):
+                value[done_mask] = terminal_value
+            else:
+                raise ValueError(
+                    "terminal observations must contain either all environments or only done environments, got "
+                    f"batch {terminal_batch} for {next_observations.batch_size[0]} envs"
+                )
+            copied = True
+        if copied and all(group in terminal_observations for group in required_groups):
+            valid[done_mask] = True
+        return next_observations, valid
+
+    @staticmethod
+    def _get_terminal_observations(extras: dict) -> TensorDict | None:
+        """Return terminal observations from common VecEnv extras keys, if present."""
+        for key in ("terminal_observations", "terminal_observation", "final_observations", "final_observation"):
+            value = extras.get(key)
+            if isinstance(value, TensorDict):
+                return value
+            if isinstance(value, dict):
+                tensors = list(value.values())
+                if tensors and all(isinstance(item, torch.Tensor) for item in tensors):
+                    return TensorDict(value, batch_size=[tensors[0].shape[0]])
+        return None
+
+    @staticmethod
+    def _slice_features(tensor: torch.Tensor, slc: tuple[int, int]) -> torch.Tensor:
+        start, stop = slc
+        if start < 0 or stop <= start or stop > tensor.shape[-1]:
+            raise ValueError(f"Invalid slice {(start, stop)} for tensor width {tensor.shape[-1]}")
+        return tensor[:, start:stop]
+
+    @staticmethod
+    def _normalize_slice(value: tuple[int, int] | list[int] | None) -> tuple[int, int] | None:
+        if value is None:
+            return None
+        if len(value) != 2:
+            raise ValueError(f"Expected a two-element slice, got {value}")
+        return int(value[0]), int(value[1])
+
+    @classmethod
+    def _normalize_target_slices(
+        cls,
+        target_slice: tuple[int, int] | list[int] | None,
+        target_slices: tuple[tuple[int, int], ...] | list[tuple[int, int]] | None,
+    ) -> tuple[tuple[int, int], ...] | None:
+        if target_slices is not None:
+            return tuple(cls._normalize_slice(slc) for slc in target_slices)  # type: ignore[arg-type]
+        if target_slice is not None:
+            if len(target_slice) == 2 and all(isinstance(item, int) for item in target_slice):
+                return (cls._normalize_slice(target_slice),)  # type: ignore[return-value]
+            return tuple(cls._normalize_slice(slc) for slc in target_slice)  # type: ignore[arg-type]
+        return None
+
+    def _load_actor_state(self, loaded_dict: dict, strict: bool, load_estimator: bool = True) -> None:
+        if "actor_state_dict" in loaded_dict:
+            state_dict = loaded_dict["actor_state_dict"]
+            if not load_estimator:
+                state_dict = {
+                    key: value for key, value in state_dict.items() if not key.startswith("estimator.")
+                }
+            self._raw_actor.load_state_dict(state_dict, strict=strict if load_estimator else False)
+            return
+        if "model_state_dict" not in loaded_dict:
+            if strict:
+                raise KeyError("actor_state_dict")
+            return
+        state_dict = self._legacy_actor_state_dict(loaded_dict["model_state_dict"], load_estimator)
+        self._raw_actor.load_state_dict(state_dict, strict=False if state_dict else strict)
+
+    def _load_critic_state(self, loaded_dict: dict, strict: bool) -> None:
+        if "critic_state_dict" in loaded_dict:
+            self._raw_critic.load_state_dict(loaded_dict["critic_state_dict"], strict=strict)
+            return
+        if "model_state_dict" not in loaded_dict:
+            if strict:
+                raise KeyError("critic_state_dict")
+            return
+        state_dict = self._legacy_critic_state_dict(loaded_dict["model_state_dict"])
+        self._raw_critic.load_state_dict(state_dict, strict=False if state_dict else strict)
+
+    def _load_estimator_state(self, loaded_dict: dict, strict: bool) -> None:
+        if "estimator_state_dict" in loaded_dict:
+            self.estimator.load_state_dict(loaded_dict["estimator_state_dict"], strict=strict)
+            return
+        if "model_state_dict" not in loaded_dict:
+            return
+        state_dict = self._legacy_prefixed_state_dict(loaded_dict["model_state_dict"], "estimator.", "")
+        if state_dict:
+            self.estimator.load_state_dict(state_dict, strict=False)
+
+    @staticmethod
+    def _legacy_prefixed_state_dict(state_dict: dict, old_prefix: str, new_prefix: str) -> dict:
+        return {
+            f"{new_prefix}{key[len(old_prefix):]}": value
+            for key, value in state_dict.items()
+            if key.startswith(old_prefix)
+        }
+
+    def _legacy_actor_state_dict(self, state_dict: dict, load_estimator: bool = True) -> dict:
+        actor_state = self._legacy_prefixed_state_dict(state_dict, "actor.", "mlp.")
+        if load_estimator:
+            actor_state.update(self._legacy_prefixed_state_dict(state_dict, "estimator.", "estimator."))
+        if "std" in state_dict and hasattr(self._raw_actor.distribution, "std_param"):
+            actor_state["distribution.std_param"] = state_dict["std"]
+        return actor_state
+
+    def _legacy_critic_state_dict(self, state_dict: dict) -> dict:
+        return self._legacy_prefixed_state_dict(state_dict, "critic.", "mlp.")

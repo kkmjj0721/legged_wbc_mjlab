@@ -1,4 +1,4 @@
-"""Velocity task configuration.
+"""RI-4438 HIM velocity task configuration.
 
 This module provides a factory function to create a base velocity task config.
 Robot-specific configurations call the factory and customize as needed.
@@ -30,7 +30,7 @@ from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
-import src.tasks.locomotion.ri_4438_ppo.mdp as mdp
+import src.tasks.locomotion.ri_4438_him.mdp as mdp
 
 from src.config.ri_4438.ri_4438_config import Ri4438PiperCfg
 
@@ -58,6 +58,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # Observations
   ##
 
+  # Keep this order in sync with ``Ri4438HimCfg`` and the estimator target
+  # slices.  The actor history is represented as six frame-major observations,
+  # each containing the following 47 features.
   actor_terms = {
     "base_ang_vel": ObservationTermCfg(
       func = mdp.builtin_sensor,
@@ -94,26 +97,20 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params = {"sensor_name": "robot/imu_lin_vel"},
       noise = Unoise(n_min = -0.5, n_max = 0.5),
     ),
-    "height_scan": ObservationTermCfg(
-      func = envs_mdp.height_scan,
-      params = {"sensor_name": "terrain_scan"},
-      scale = 1 / terrain_scan.max_distance,
-    ),
-    "foot_height": ObservationTermCfg(
-      func = mdp.foot_height,
-      params = {"asset_cfg": SceneEntityCfg("robot", site_names=())},  # Set per-robot.
-    ),
-    "foot_air_time": ObservationTermCfg(
-      func = mdp.foot_air_time,
-      params = {"sensor_name": "feet_ground_contact"},
+    "base_com": ObservationTermCfg(
+      func = mdp.base_com,
+      params = {
+        "asset_cfg": SceneEntityCfg("robot", body_names=("base_link",)),
+      },
     ),
     "foot_contact": ObservationTermCfg(
       func = mdp.foot_contact,
       params = {"sensor_name": "feet_ground_contact"},
     ),
-    "foot_contact_forces": ObservationTermCfg(
-      func = mdp.foot_contact_forces,
-      params = {"sensor_name": "feet_ground_contact"},
+    "height_scan": ObservationTermCfg(
+      func = envs_mdp.height_scan,
+      params = {"sensor_name": "terrain_scan"},
+      scale = 1 / terrain_scan.max_distance,
     ),
   }
 
@@ -122,7 +119,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       terms = actor_terms,
       concatenate_terms = True,
       enable_corruption = True,
-      history_length = 1,
+      history_length = 6,
+      # HIMActorModel reverses this explicit time axis to current-first.
+      flatten_history_dim = False,
     ),
     "critic": ObservationGroupCfg(
       terms = critic_terms,
@@ -358,7 +357,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -100.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
     "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -10.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01 * (0.15381525329142837 / 0.25) ** 2),
+    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01),
     "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.01),
     "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight = -2.0e-5),
     "hip_pos": RewardTermCfg(
@@ -490,7 +489,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       azimuth = 90.0,
     ),
     sim = SimulationCfg(
-      nconmax = 35,
+      nconmax = 256,
       njmax = 1500,
       mujoco = MujocoCfg(
         timestep = 0.005,
@@ -500,4 +499,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     decimation = 4,
     episode_length_s = 20.0,
+    # HIM training stores the pre-reset terminal observation before the
+    # dedicated runner partially resets completed environments.  Play mode
+    # overrides this to True in ``config/env_cfgs.py``.
+    auto_reset = False,
   )

@@ -11,6 +11,8 @@ class Ri4438PiperCfg( BaseConfig ):
         num_commands = 4  # [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
         resampling_time = [4.0, 8.0]  # [s] time before new command is given
         heading_command = False  # if true: compute ang vel command from heading error
+        rel_standing_envs = 0.05
+        rel_forward_envs = 0.1
         class ranges:
             lin_vel_x = [-1.0, 1.0]  # min max [m/s]
             lin_vel_y = [-1.0, 1.0]  # min max [m/s]
@@ -69,7 +71,12 @@ class Ri4438PiperCfg( BaseConfig ):
         }
    
     class domain_rand:
-        pass
+        link_mass_range = [0.8, 1.2]
+        KpKd_factor_range = [0.9, 1.1]
+        com_displacement_range = [-0.05, 0.05]
+        motor_offset_range = [-0.02, 0.02]
+        motor_strength_range = [0.9, 1.1]
+
 
     class noise:
         pass
@@ -106,7 +113,7 @@ class Ri4438CfgPPO:
 
         # logging
         save_interval = 200 # check for potential saves every this many iterations
-        experiment_name = 'test'
+        experiment_name = 'ri_4438_ppo'
         
 
 

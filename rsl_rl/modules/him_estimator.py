@@ -44,13 +44,13 @@ class HIMEstimator(nn.Module):
     ) -> None:
         """Initialize the estimator and its independent optimizer."""
         super().__init__()
-        if kwargs:
-            unexpected = ", ".join(sorted(kwargs))
-            print(f"HIMEstimator.__init__ got unexpected arguments, which will be ignored: {unexpected}")
+        del kwargs
         if temporal_steps < 1 or num_one_step_obs < 1:
             raise ValueError("temporal_steps and num_one_step_obs must be positive")
         if len(enc_hidden_dims) < 1 or len(tar_hidden_dims) < 1:
             raise ValueError("enc_hidden_dims and tar_hidden_dims must not be empty")
+        if num_prototype < 1 or temperature <= 0 or sinkhorn_eps <= 0 or sinkhorn_iters < 1:
+            raise ValueError("num_prototype must be positive and Sinkhorn/temperature parameters must be valid")
 
         self.temporal_steps = int(temporal_steps)
         self.num_one_step_obs = int(num_one_step_obs)
@@ -103,17 +103,19 @@ class HIMEstimator(nn.Module):
     def update(
         self,
         obs_history: torch.Tensor,
-        next_critic_obs: torch.Tensor,
+        velocity_target: torch.Tensor | None = None,
+        target_obs: torch.Tensor | None = None,
+        *,
+        next_critic_obs: torch.Tensor | None = None,
         velocity_slice: tuple[int, int] | None = None,
         target_slice: tuple[int, int] | None = None,
+        target_slices: tuple[tuple[int, int], ...] | list[tuple[int, int]] | None = None,
         learning_rate: float | None = None,
         gradient_reducer: Callable[[Iterable[nn.Parameter]], None] | None = None,
         lr: float | None = None,
     ) -> tuple[float, float]:
         """Perform one estimator update and return estimation and swap losses."""
         self._validate_history(obs_history)
-        if next_critic_obs.ndim != 2:
-            raise ValueError(f"next_critic_obs must be a 2D tensor, got {next_critic_obs.shape}")
         if learning_rate is None:
             learning_rate = lr
         if learning_rate is not None:
@@ -121,24 +123,55 @@ class HIMEstimator(nn.Module):
             for param_group in self.optimizer.param_groups:
                 param_group["lr"] = self.learning_rate
 
-        velocity_slice = velocity_slice or (self.num_one_step_obs, self.num_one_step_obs + 3)
-        target_slice = target_slice or (3, self.num_one_step_obs + 3)
-        velocity = next_critic_obs[:, velocity_slice[0] : velocity_slice[1]].detach()
-        next_obs = next_critic_obs[:, target_slice[0] : target_slice[1]].detach()
-        if velocity.shape[-1] != 3 or next_obs.shape[-1] != self.num_one_step_obs:
+        # Preserve the pre-explicit-target API: update(history, critic_obs, ...).
+        if next_critic_obs is None and target_obs is None and velocity_target is not None:
+            if velocity_target.ndim == 2 and velocity_target.shape[-1] != 3:
+                next_critic_obs = velocity_target
+                velocity_target = None
+
+        if velocity_target is None or target_obs is None:
+            if next_critic_obs is None:
+                raise ValueError("Either explicit velocity_target/target_obs or next_critic_obs must be provided")
+            if next_critic_obs.ndim != 2:
+                raise ValueError(f"next_critic_obs must be a 2D tensor, got {next_critic_obs.shape}")
+            velocity_slice = velocity_slice or (self.num_one_step_obs, self.num_one_step_obs + 3)
+            target_slices = _normalize_target_slices(target_slice, target_slices, self.num_one_step_obs)
+            velocity_target = _slice_range(next_critic_obs, velocity_slice).detach()
+            target_obs = torch.cat([_slice_range(next_critic_obs, slc) for slc in target_slices], dim=-1).detach()
+        else:
+            velocity_target = velocity_target.detach()
+            target_obs = target_obs.detach()
+
+        if velocity_target.ndim != 2 or target_obs.ndim != 2:
+            raise ValueError(
+                f"HIM estimator targets must be 2D tensors, got {velocity_target.shape} and {target_obs.shape}"
+            )
+        if velocity_target.shape[-1] != 3 or target_obs.shape[-1] != self.num_one_step_obs:
             raise ValueError(
                 "Invalid HIM estimator slices: expected velocity width 3 and target width "
-                f"{self.num_one_step_obs}, got {velocity.shape[-1]} and {next_obs.shape[-1]}"
+                f"{self.num_one_step_obs}, got {velocity_target.shape[-1]} and {target_obs.shape[-1]}"
             )
-
-        encoded = self.encoder(obs_history)
-        pred_velocity, source_latent = encoded[..., :3], encoded[..., 3:]
-        source_latent = F.normalize(source_latent, dim=-1, p=2)
-        target_latent = F.normalize(self.target(next_obs), dim=-1, p=2)
 
         with torch.no_grad():
             normalized_proto = F.normalize(self.proto.weight.data, dim=-1, p=2)
             self.proto.weight.copy_(normalized_proto)
+
+        if obs_history.shape[0] == 0:
+            self.optimizer.zero_grad()
+            if gradient_reducer is not None:
+                zero_loss = torch.zeros((), dtype=obs_history.dtype, device=obs_history.device)
+                for parameter in self.parameters():
+                    zero_loss = zero_loss + parameter.sum() * 0.0
+                zero_loss.backward()
+                gradient_reducer(self.parameters())
+                nn.utils.clip_grad_norm_(self.parameters(), self.max_grad_norm)
+                self.optimizer.step()
+            return 0.0, 0.0
+
+        encoded = self.encoder(obs_history)
+        pred_velocity, source_latent = encoded[..., :3], encoded[..., 3:]
+        source_latent = F.normalize(source_latent, dim=-1, p=2)
+        target_latent = F.normalize(self.target(target_obs), dim=-1, p=2)
 
         source_scores = source_latent @ self.proto.weight.T
         target_scores = target_latent @ self.proto.weight.T
@@ -149,9 +182,10 @@ class HIMEstimator(nn.Module):
         source_log_probs = F.log_softmax(source_scores / self.temperature, dim=-1)
         target_log_probs = F.log_softmax(target_scores / self.temperature, dim=-1)
         swap_loss = -0.5 * (
-            source_assignments * target_log_probs + target_assignments * source_log_probs
+            source_assignments * target_log_probs
+            + target_assignments * source_log_probs
         ).mean()
-        estimation_loss = F.mse_loss(pred_velocity, velocity)
+        estimation_loss = F.mse_loss(pred_velocity, velocity_target)
         loss = estimation_loss + swap_loss
 
         self.optimizer.zero_grad()
@@ -187,3 +221,26 @@ def sinkhorn(out: torch.Tensor, eps: float = 0.05, iters: int = 3) -> torch.Tens
         assignments /= assignments.sum(dim=0, keepdim=True).clamp_min(torch.finfo(assignments.dtype).eps)
         assignments /= batch_size
     return (assignments * batch_size).T
+
+
+def _slice_range(tensor: torch.Tensor, slc: tuple[int, int]) -> torch.Tensor:
+    """Return a validated feature slice from a 2D tensor."""
+    if len(slc) != 2:
+        raise ValueError(f"Slice must be a pair, got {slc}")
+    start, stop = int(slc[0]), int(slc[1])
+    if start < 0 or stop <= start or stop > tensor.shape[-1]:
+        raise ValueError(f"Invalid slice {(start, stop)} for tensor width {tensor.shape[-1]}")
+    return tensor[:, start:stop]
+
+
+def _normalize_target_slices(
+    target_slice: tuple[int, int] | None,
+    target_slices: tuple[tuple[int, int], ...] | list[tuple[int, int]] | None,
+    num_one_step_obs: int,
+) -> tuple[tuple[int, int], ...]:
+    """Normalize singular/plural target-slice configuration."""
+    if target_slices is not None:
+        return tuple((int(start), int(stop)) for start, stop in target_slices)
+    if target_slice is not None:
+        return ((int(target_slice[0]), int(target_slice[1])),)
+    return ((3, num_one_step_obs + 3),)

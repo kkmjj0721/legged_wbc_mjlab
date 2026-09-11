@@ -33,8 +33,7 @@ def terrain_levels_vel(
   command_name: str,
   asset_cfg: SceneEntityCfg = _DEFAULT_SCENE_CFG,
 ) -> torch.Tensor:
-  """ 重写速度课程训练
-      实现：
+  """ 
   """
   asset: Entity = env.scene[asset_cfg.name]
 

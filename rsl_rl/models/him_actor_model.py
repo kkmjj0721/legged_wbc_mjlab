@@ -39,18 +39,19 @@ class HIMActorModel(nn.Module):
         num_one_step_obs: int | None = None,
         num_one_step_observations: int | None = None,
         history_size: int | None = None,
+        history_term_dims: tuple[int, ...] | list[int] | None = None,
+        history_order: str | None = None,
         estimator_cfg: dict | None = None,
         **kwargs,
     ) -> None:
         """Initialize the HIM actor from TensorDict observation groups."""
         super().__init__()
-        if kwargs:
-            unexpected = ", ".join(sorted(kwargs))
-            print(f"HIMActorModel.__init__ got unexpected arguments, which will be ignored: {unexpected}")
+        del kwargs
         if obs_set not in obs_groups:
             raise KeyError(f"Observation set '{obs_set}' is not present in obs_groups")
 
         self.obs_groups = list(obs_groups[obs_set])
+        self._has_temporal_axis = any(obs[group].ndim == 3 for group in self.obs_groups)
         self.obs_dim = self._get_obs_dim(obs)
         if num_one_step_obs is None:
             num_one_step_obs = num_one_step_observations
@@ -66,6 +67,37 @@ class HIMActorModel(nn.Module):
         self.history_size = int(history_size or inferred_history_size)
         if self.history_size != inferred_history_size:
             raise ValueError("history_size does not match the configured actor history dimension")
+
+        if history_term_dims is not None:
+            history_term_dims = tuple(int(dim) for dim in history_term_dims)
+            if not history_term_dims or any(dim < 1 for dim in history_term_dims):
+                raise ValueError("history_term_dims must contain positive dimensions")
+            if sum(history_term_dims) != self.num_one_step_obs:
+                raise ValueError(
+                    "history_term_dims must sum to num_one_step_obs, got "
+                    f"{sum(history_term_dims)} and {self.num_one_step_obs}"
+                )
+        if history_order is None:
+            if history_term_dims is not None:
+                history_order = "term_major_oldest_first"
+            elif self._has_temporal_axis:
+                history_order = "frame_major_oldest_first"
+            else:
+                history_order = "frame_major_current_first"
+        if history_order not in (
+            "term_major_oldest_first",
+            "frame_major_oldest_first",
+            "frame_major_current_first",
+        ):
+            raise ValueError(
+                "history_order must be 'term_major_oldest_first', 'frame_major_oldest_first', "
+                "or 'frame_major_current_first'"
+            )
+        if history_order == "term_major_oldest_first" and history_term_dims is None:
+            raise ValueError("history_term_dims is required for term-major observation history")
+        self.history_order = history_order
+        self.history_term_dims = history_term_dims
+        self.register_buffer("history_permutation", self._build_history_permutation(), persistent=False)
 
         self.obs_normalization = obs_normalization
         self.obs_normalizer = EmpiricalNormalization(self.obs_dim) if obs_normalization else nn.Identity()
@@ -122,8 +154,18 @@ class HIMActorModel(nn.Module):
         return torch.cat((one_step_obs, velocity, latent), dim=-1)
 
     def get_observation_tensor(self, obs: TensorDict) -> torch.Tensor:
-        """Concatenate the configured actor observation groups."""
-        return torch.cat([obs[group] for group in self.obs_groups], dim=-1)
+        """Return frame-major history with the current observation first."""
+        values = [obs[group] for group in self.obs_groups]
+        if self._has_temporal_axis:
+            if not all(value.ndim == 3 for value in values):
+                raise ValueError("HIM history groups must all use the same temporal rank")
+            if any(value.shape[-2] != self.history_size for value in values):
+                raise ValueError(f"Expected history length {self.history_size} for all HIM history groups")
+            # Concatenate terms within each frame, then reverse oldest->newest
+            # manager history to the current->oldest layout used by HIM.
+            return torch.cat(values, dim=-1).flip(dims=(1,)).flatten(start_dim=1)
+        obs_history = torch.cat(values, dim=-1)
+        return obs_history.index_select(-1, self.history_permutation)
 
     def reset(self, dones: torch.Tensor | None = None, hidden_state=None) -> None:
         """Reset policy state; HIM is feed-forward and has no recurrent state."""
@@ -189,10 +231,45 @@ class HIMActorModel(nn.Module):
         for group in self.obs_groups:
             if group not in obs:
                 raise KeyError(f"Observation group '{group}' is not present")
-            if obs[group].ndim != 2:
-                raise ValueError(f"HIMActorModel only supports 1D observations, got {obs[group].shape}")
-            obs_dim += obs[group].shape[-1]
+            value = obs[group]
+            if value.ndim == 2:
+                obs_dim += value.shape[-1]
+            elif value.ndim == 3:
+                obs_dim += value.shape[-2] * value.shape[-1]
+            else:
+                raise ValueError(f"HIMActorModel only supports 1D or history observations, got {value.shape}")
         return obs_dim
+
+    def _build_history_permutation(self) -> torch.Tensor:
+        """Build indices from the configured raw history layout to current-first frames."""
+        if self.history_order == "frame_major_current_first":
+            return torch.arange(self.obs_dim, dtype=torch.long)
+
+        # A non-flattened observation is unambiguously frame-major.  The
+        # explicit term-major option only applies to flattened manager output.
+        if self.history_order == "frame_major_oldest_first" or self._has_temporal_axis:
+            frame_indices = torch.arange(self.history_size - 1, -1, -1, dtype=torch.long)
+            return (frame_indices[:, None] * self.num_one_step_obs + torch.arange(self.num_one_step_obs)).flatten()
+
+        permutation: list[int] = []
+        term_offset = 0
+        for time_idx in range(self.history_size - 1, -1, -1):
+            for term_dim in self.history_term_dims:  # type: ignore[union-attr]
+                frame_offset = term_offset + time_idx * term_dim
+                permutation.extend(range(frame_offset, frame_offset + term_dim))
+                term_offset += term_dim * self.history_size
+            term_offset = 0
+        return torch.tensor(permutation, dtype=torch.long)
+
+    def _flatten_history_group(self, value: torch.Tensor) -> torch.Tensor:
+        """Flatten optional [batch, history, features] groups into the model layout."""
+        if value.ndim == 2:
+            return value
+        if value.ndim != 3 or value.shape[-2] != self.history_size:
+            raise ValueError(
+                f"Expected history observation shape [batch, {self.history_size}, features], got {value.shape}"
+            )
+        return value.flatten(start_dim=-2)
 
     @staticmethod
     def _actor_input_dim(input_dim: int) -> int:
@@ -205,7 +282,7 @@ class HIMActorCritic(HIMActorModel):
 
 
 class _TorchHIMActorModel(nn.Module):
-    """Deterministic TorchScript export wrapper for HIM."""
+    """Deterministic HIM export wrapper consuming current-first frame history."""
 
     def __init__(self, model: HIMActorModel) -> None:
         super().__init__()
@@ -217,7 +294,7 @@ class _TorchHIMActorModel(nn.Module):
         self.num_latent = model.estimator.num_latent
 
     def forward(self, obs_history: torch.Tensor) -> torch.Tensor:
-        """Compute deterministic actions from a concatenated history tensor."""
+        """Compute actions from frame-major history ordered current to oldest."""
         obs_history = self.obs_normalizer(obs_history)
         parts = self.estimator_encoder(obs_history)
         velocity = parts[..., :3]
@@ -232,11 +309,11 @@ class _TorchHIMActorModel(nn.Module):
 
 
 class _OnnxHIMActorModel(_TorchHIMActorModel):
-    """ONNX export wrapper with standard metadata used by the runner."""
+    """ONNX wrapper accepting frame-major, current-first observation history."""
 
     input_names = ["obs_history"]
     output_names = ["actions"]
 
     def get_dummy_inputs(self) -> tuple[torch.Tensor]:
-        """Return a dummy history input for ONNX tracing."""
+        """Return a current-first dummy history input for ONNX tracing."""
         return (torch.zeros(1, self.estimator_encoder[0].in_features),)
