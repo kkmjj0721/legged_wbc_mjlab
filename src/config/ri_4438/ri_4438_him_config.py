@@ -71,6 +71,6 @@ class Ri4438CFGHimPPO(Ri4438CfgPPO):
 
     class runner(Ri4438CfgPPO.runner):
         num_steps_per_env = 100
-        max_iterations = 20000
+        max_iterations = 100000
         save_interval = 100
         experiment_name = "ri_4438_him"
