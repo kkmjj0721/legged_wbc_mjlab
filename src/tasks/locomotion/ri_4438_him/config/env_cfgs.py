@@ -10,9 +10,15 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
-from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
+from mjlab.sensor import (
+  ContactMatch,
+  ContactSensorCfg,
+  ObjRef,
+  RayCastSensorCfg,
+  RingPatternCfg,
+  TerrainHeightSensorCfg,
+)
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
 from src.tasks.locomotion.ri_4438_him.ri_4438_him_env_cfg import (
@@ -45,6 +51,34 @@ def ri_4438_rough_env_cfg(
 
   foot_names = ("FR", "FL", "RR", "RL")
   site_names = ("FR", "FL", "RR", "RL")
+
+  feet_height_cfg = TerrainHeightSensorCfg(
+    name="feet_terrain_height",
+    frame=tuple(
+      ObjRef(
+        type="site",
+        name=name,
+        entity="robot",
+      )
+      for name in site_names
+    ),
+    pattern=RingPatternCfg.single_ring(
+      radius=0.02,
+      num_samples=4,
+      include_center=True,
+    ),
+    ray_alignment="world",
+    max_distance=1.0,
+    exclude_parent_body=True,
+
+    # 地形几何体默认是 group=0，
+    # 排除机器人自身的 visual/collision 几何体。
+    include_geom_groups=(0,),
+
+    # 取脚下局部地形中最高的点，作为保守 clearance。
+    reduction="min",
+  )
+
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
 
   feet_ground_cfg = ContactSensorCfg(
@@ -77,6 +111,7 @@ def ri_4438_rough_env_cfg(
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
     nonfoot_ground_cfg,
+    feet_height_cfg,
   )
 
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
@@ -157,42 +192,16 @@ def ri_4438_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
-  # Remove raycast sensor and height scan (no terrain to scan).
-  cfg.scene.sensors = tuple(
-    s for s in (cfg.scene.sensors or ()) if s.name != "terrain_scan"
-  )
-  cfg.observations["critic"].terms.pop("height_scan", None)
-
-  site_names = ("FR", "FL", "RR", "RL")
-  critic_terms = cfg.observations["critic"].terms
-  actor_term_names = (
-    "base_ang_vel",
-    "projected_gravity",
-    "command",
-    "phase",
-    "joint_pos",
-    "joint_vel",
-    "actions",
-  )
-  cfg.observations["critic"].terms = {
-    **{name: critic_terms[name] for name in actor_term_names},
-    "base_lin_vel": critic_terms["base_lin_vel"],
-    "foot_height": ObservationTermCfg(
-      func = mdp.foot_height,
-      params = {
-        "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
-      },
-    ),
-    "foot_air_time": ObservationTermCfg(
-      func = mdp.foot_air_time,
-      params = {"sensor_name": "feet_ground_contact"},
-    ),
-    "foot_contact": critic_terms["foot_contact"],
-    "foot_contact_forces": ObservationTermCfg(
-      func = mdp.foot_contact_forces,
-      params = {"sensor_name": "feet_ground_contact"},
-    ),
-  }
+  # Keep the exact same critic observation schema as rough terrain.
+  #
+  # The critic is part of a HIM checkpoint (including its first-layer weight
+  # and observation normalizer).  Removing ``terrain_scan`` and rebuilding the
+  # flat critic with foot-only terms changes the input from 244 to 74 values,
+  # which makes a rough <-> flat resume fail with a state-dict size mismatch.
+  # A raycast against the plane is valid and produces a constant/near-constant
+  # height scan, so retaining this term keeps both variants shape-compatible.
+  # ``terrain_levels`` is still removed below because a plane has no terrain
+  # curriculum.
 
   # Disable terrain curriculum (not present in play mode since rough clears all).
   cfg.curriculum.pop("terrain_levels", None)

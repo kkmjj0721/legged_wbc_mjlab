@@ -28,8 +28,11 @@ class Ri4438HimCfg(Ri4438PiperCfg):
         # The actor frame is followed by privileged terms in the critic.  The
         # exact rough/flat dimensions are documented here for validation; the
         # live MjLab observation manager remains the source of truth.
-        rough_num_privileged_obs = num_one_step_obs + 3 + 3 + 4 + 187
-        flat_num_privileged_obs = num_one_step_obs + 3 + 4 + 4 + 4 + 12
+        # Rough and flat use the same critic layout so a HIM checkpoint can be
+        # resumed after switching terrain.  On flat terrain ``height_scan`` is
+        # retained and evaluates to a constant/near-constant scan.
+        rough_num_privileged_obs = num_one_step_obs + 3 + 3 + 4 + 187  # 244
+        flat_num_privileged_obs = rough_num_privileged_obs
         num_privileged_obs = rough_num_privileged_obs
         env_spacing = 3.0
         send_timeouts = True

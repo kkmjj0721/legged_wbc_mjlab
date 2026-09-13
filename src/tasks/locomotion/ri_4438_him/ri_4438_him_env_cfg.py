@@ -320,12 +320,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func = mdp.track_linear_velocity,
-      weight = 1.5,
+      weight = 1.0,
       params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "track_angular_velocity": RewardTermCfg(
       func = mdp.track_angular_velocity,
-      weight = 0.5,
+      weight = 1.0,
       params = {"command_name": "twist", "std": math.sqrt(0.5)},
     ),
     "body_orientation_l2": RewardTermCfg(
@@ -335,7 +335,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg(
       func=mdp.variable_posture,
-      weight=0.75,
+      weight=0.5,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
@@ -356,9 +356,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight = -0.025,  # Override per-robot
       params = {"sensor_name": "robot/root_angmom"},
     ),
-    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -100.0),
+    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -10.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -10.0),
+    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -1.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01),
     "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.01),
     "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight = -2.0e-5),
@@ -385,7 +385,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func = mdp.feet_clearance,
       weight = -1.0,
       params = {
-        "target_height": 0.08,
+        "target_height": 0.1,
+        "height_sensor_name": "feet_terrain_height",
         "command_name": "twist",
         "command_threshold": 0.1,
         "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
@@ -449,9 +450,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         params = {
           "command_name": "twist",
           "velocity_stages": [
-            {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-1.0, 1.0)},
-            {"step": 5000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.75, 0.75)},
-            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0)},
+            {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 7500 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
+            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+            {"step": 15000 * 100, "lin_vel_x": (-1.0, 1.25), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+            {"step": 20000 * 100, "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
           ],
         },
       ),
@@ -483,18 +486,26 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
             # 2.金字塔台阶地形类型（楼梯）
             "stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-                proportion = 0.4,                             
-                step_height_range = (0.0, 0.20),              # 台阶高度范围（难度从 0.0m 逐渐加大到 0.20m）
+                proportion = 0.3,                             
+                step_height_range = (0.05, 0.20),              # 台阶高度范围（难度从 0.0m 逐渐加大到 0.20m）
                 step_width = 0.3,                             # 每个台阶的踏步宽度为 0.3 米
-                platform_width = 2.0,                         # 金字塔顶部的中央平坦平台宽度为 2.0 米
+                platform_width = 3.0,                         # 金字塔顶部的中央平坦平台宽度为 2.0 米
+            ),
+
+            "stairs": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+                proportion = 0.3,                             
+                step_height_range = (0.05, 0.20),              # 台阶高度范围（难度从 0.0m 逐渐加大到 0.20m）
+                step_width = 0.3,                             # 每个台阶的踏步宽度为 0.3 米
+                platform_width = 3.0,                         # 金字塔顶部的中央平坦平台宽度为 2.0 米
             ),
 
             # 3. 随机高度场崎岖地形类型（碎石路、粗糙砂石地面）
-            "rough": terrain_gen.HfRandomUniformTerrainCfg(
-                proportion = 0.2,                 
-                noise_range = (0.02, 0.10),       # 随机起伏高度范围（噪声幅度从 2cm 逐渐增加到 10cm）
-                noise_step = 0.02,                # 噪声高度的离散采样步长为 0.02 米
-            ),
+            # "rough": terrain_gen.HfRandomUniformTerrainCfg(
+            #     proportion = 0.2,                 
+            #     noise_range = (0.0, 0.06),       # 随机起伏高度范围（噪声幅度从 2cm 逐渐增加到 10cm）
+            #     noise_step = 0.02,                # 噪声高度的离散采样步长为 0.02 米
+            #     scale_with_difficulty = True
+            # ),
 
             # # 4. 柏林噪声连续起伏地形（缓坡/土丘/旷野）
             # "perlin_noise": terrain_gen.HfPerlinNoiseTerrainCfg(
@@ -506,8 +517,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             # 5. 离散凸起障碍高度场（随机柱状/方块障碍)
             "discrete_obstacles": terrain_gen.HfDiscreteObstaclesTerrainCfg(
                 proportion = 0.2,
-                obstacle_height_range = (0.05, 0.20),           # 障碍高度范围（从 5cm 递增至 20cm）
-                obstacle_width_range = (0.4, 0.8),              # 障碍物宽度/边长范围（0.4m ~ 0.8m）
+                obstacle_height_range = (0.05, 0.10),           # 障碍高度范围（从 5cm 递增至 20cm）
+                obstacle_width_range = (0.3, 0.6),              # 障碍物宽度/边长范围（0.4m ~ 0.8m）
                 num_obstacles = 12,                             # 每个子地形块内生成的障碍物数量
                 platform_width = 1.5,                           # 中心预留平坦出生区域宽度（避免出生直接卡入障碍）
             )

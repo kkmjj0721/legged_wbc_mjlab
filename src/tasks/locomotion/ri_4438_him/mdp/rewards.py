@@ -11,7 +11,7 @@ from mjlab.tasks.velocity.mdp.rewards import *  # noqa: F401, F403
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import BuiltinSensor, ContactSensor
+from mjlab.sensor import BuiltinSensor, ContactSensor, TerrainHeightSensor
 from mjlab.utils.lab_api.math import quat_apply_inverse
 from mjlab.utils.lab_api.string import resolve_matching_names_values
 
@@ -79,15 +79,49 @@ def feet_gait(env: ManagerBasedRlEnv, period: float, offset: list[float], thresh
   return reward
 
 
-def feet_clearance(env: ManagerBasedRlEnv, target_height: float, command_name: str | None = None, command_threshold: float = 0.1, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
+def feet_clearance(
+  env: ManagerBasedRlEnv, 
+  target_height: float, 
+  height_sensor_name: str,
+  command_name: str | None = None, 
+  command_threshold: float = 0.1, 
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
+  ) -> torch.Tensor:
+  # asset: Entity = env.scene[asset_cfg.name]
+  # heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
+  # velocities = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]
+  # cost = (torch.abs(heights - target_height) * torch.linalg.norm(velocities, dim=-1)).sum(dim=1)
+  # if command_name is not None:
+  #   command = env.command_manager.get_command(command_name)
+  #   if command is not None:
+  #     cost *= (torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2]) > command_threshold).float()
+  # return cost
   asset: Entity = env.scene[asset_cfg.name]
-  heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
-  velocities = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]
-  cost = (torch.abs(heights - target_height) * torch.linalg.norm(velocities, dim=-1)).sum(dim=1)
+  height_sensor: TerrainHeightSensor = env.scene[height_sensor_name]
+
+  # [B, N]，每只脚的脚端中心到局部地形表面的垂直距离
+  foot_clearance = height_sensor.data.heights
+
+  # 与脚端高度保持相同顺序
+  foot_vel_xy = asset.data.site_lin_vel_w[
+    :, asset_cfg.site_ids, :2
+  ]
+  foot_speed = torch.linalg.norm(foot_vel_xy, dim=-1)
+
+  cost = (
+    torch.abs(foot_clearance - target_height) * foot_speed
+  ).sum(dim=1)
+
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
     if command is not None:
-      cost *= (torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2]) > command_threshold).float()
+      active = (
+        torch.linalg.norm(command[:, :2], dim=1)
+        + torch.abs(command[:, 2])
+        > command_threshold
+      ).float()
+      cost *= active
+
   return cost
 
 
