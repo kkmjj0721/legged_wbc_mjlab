@@ -1,10 +1,8 @@
-"""RI-4438 HIM environment configurations."""
+"""Unitree Go2 HIM rough- and flat-terrain environments."""
 
 from typing import Literal
 
-from src.assets.robots import (
-  get_ri_4438_robot_cfg,
-)
+from src.assets.robots import get_go2_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -21,46 +19,37 @@ from mjlab.sensor import (
 )
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
-from src.tasks.locomotion.ri_4438_him.ri_4438_him_env_cfg import (
-  make_velocity_env_cfg,
-)
-
-import src.tasks.locomotion.ri_4438_him.mdp as mdp
+import src.tasks.locomotion.go2_him.mdp as mdp
+from src.tasks.locomotion.go2_him.go2_him_env_cfg import make_velocity_env_cfg
 
 TerrainType = Literal["rough", "obstacles"]
 
 
-def ri_4438_rough_env_cfg(
+def unitree_go2_him_rough_env_cfg(
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """Create the RI-4438 HIM rough-terrain environment."""
-  cfg = make_velocity_env_cfg()
+  """Create the Go2 HIM rough-terrain environment."""
 
+  cfg = make_velocity_env_cfg()
   cfg.sim.mujoco.ccd_iterations = 500
   cfg.sim.contact_sensor_maxmatch = 500
   cfg.sim.nconmax = None
-  cfg.scene.entities = {"robot": get_ri_4438_robot_cfg()}
-  # Training keeps true terminal observations; play mode may auto-reset.
+  cfg.scene.entities = {"robot": get_go2_robot_cfg()}
   cfg.auto_reset = bool(play)
 
-  # Set raycast sensor frame to RI-4438 base_link.
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "terrain_scan":
       assert isinstance(sensor, RayCastSensorCfg)
       sensor.frame.name = "base_link"
 
   foot_names = ("FR", "FL", "RR", "RL")
-  site_names = ("FR", "FL", "RR", "RL")
+  site_names = foot_names
+  geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
 
   feet_height_cfg = TerrainHeightSensorCfg(
     name="feet_terrain_height",
     frame=tuple(
-      ObjRef(
-        type="site",
-        name=name,
-        entity="robot",
-      )
-      for name in site_names
+      ObjRef(type="site", name=name, entity="robot") for name in site_names
     ),
     pattern=RingPatternCfg.single_ring(
       radius=0.02,
@@ -70,43 +59,34 @@ def ri_4438_rough_env_cfg(
     ray_alignment="world",
     max_distance=1.0,
     exclude_parent_body=True,
-
-    # 地形几何体默认是 group=0，
-    # 排除机器人自身的 visual/collision 几何体。
     include_geom_groups=(0,),
-
-    # 取脚下局部地形中最高的点，作为保守 clearance。
     reduction="min",
   )
 
-  geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
-
   feet_ground_cfg = ContactSensorCfg(
-    name = "feet_ground_contact",
-    primary = ContactMatch(mode = "geom", pattern = geom_names, entity = "robot"),
-    secondary = ContactMatch(mode = "body", pattern = "terrain"),
-    fields = ("found", "force"),
-    reduce = "netforce",
-    num_slots = 1,
+    name="feet_ground_contact",
+    primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="netforce",
+    num_slots=1,
     track_air_time=True,
   )
 
+  # Go2 has three base collision geoms (base1/base2/base3).  Leg contacts
+  # are kept as a separate reward signal and do not terminate the episode.
   nonfoot_ground_cfg = ContactSensorCfg(
-    name = "nonfoot_ground_touch",
-    primary = ContactMatch(
-      mode = "geom",
-      entity = "robot",
-      # Only base contact is considered an illegal ground contact.
-      # Thigh/calf/hip contacts remain observable through the robot model
-      # but no longer terminate the episode via this sensor.
-      pattern = r"^base_collision$",
-      exclude = (),
+    name="nonfoot_ground_touch",
+    primary=ContactMatch(
+      mode="geom",
+      entity="robot",
+      pattern=r"^base[123]_collision$",
     ),
-    secondary = ContactMatch(mode = "body", pattern = "terrain"),
-    fields = ("found", "force"),
-    reduce = "none",
-    num_slots = 1,
-    history_length = 4,
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=1,
+    history_length=4,
   )
 
   leg_ground_cfg = ContactSensorCfg(
@@ -116,10 +96,7 @@ def ri_4438_rough_env_cfg(
       entity="robot",
       pattern=r"^(FR|FL|RR|RL)_(hip|thigh|calf).*_collision$",
     ),
-    secondary=ContactMatch(
-      mode="body",
-      pattern="terrain",
-    ),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
     fields=("found", "force"),
     reduce="none",
     num_slots=1,
@@ -130,9 +107,8 @@ def ri_4438_rough_env_cfg(
     feet_ground_cfg,
     nonfoot_ground_cfg,
     feet_height_cfg,
-    leg_ground_cfg
+    leg_ground_cfg,
   )
-
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
 
@@ -173,56 +149,40 @@ def ri_4438_rough_env_cfg(
     params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
   )
 
-  # Apply play mode overrides.
   if play:
-    # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
     cfg.auto_reset = True
-
     cfg.observations["actor"].enable_corruption = False
     cfg.events.pop("push_robot", None)
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(
-      func = envs_mdp.randomize_terrain,
-      mode = "reset",
-      params = {},
+      func=envs_mdp.randomize_terrain,
+      mode="reset",
+      params={},
     )
-
-    if cfg.scene.terrain is not None:
-      if cfg.scene.terrain.terrain_generator is not None:
-        cfg.scene.terrain.terrain_generator.curriculum = False
-        cfg.scene.terrain.terrain_generator.num_cols = 5
-        cfg.scene.terrain.terrain_generator.num_rows = 5
-        cfg.scene.terrain.terrain_generator.border_width = 10.0
+    if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
+      cfg.scene.terrain.terrain_generator.curriculum = False
+      cfg.scene.terrain.terrain_generator.num_cols = 5
+      cfg.scene.terrain.terrain_generator.num_rows = 5
+      cfg.scene.terrain.terrain_generator.border_width = 10.0
 
   return cfg
 
 
-def ri_4438_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
-  """Create the RI-4438 HIM flat-terrain environment."""
-  cfg = ri_4438_rough_env_cfg(play=play)
+def unitree_go2_him_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create the Go2 HIM flat-terrain environment."""
 
+  cfg = unitree_go2_him_rough_env_cfg(play=play)
   cfg.sim.njmax = 300
   cfg.sim.mujoco.ccd_iterations = 50
   cfg.sim.contact_sensor_maxmatch = 64
-  # cfg.sim.nconmax = None
 
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
-  # Keep the exact same critic observation schema as rough terrain.
-  #
-  # The critic is part of a HIM checkpoint (including its first-layer weight
-  # and observation normalizer).  Removing ``terrain_scan`` and rebuilding the
-  # flat critic with foot-only terms changes the input from 244 to 74 values,
-  # which makes a rough <-> flat resume fail with a state-dict size mismatch.
-  # A raycast against the plane is valid and produces a constant/near-constant
-  # height scan, so retaining this term keeps both variants shape-compatible.
-  # ``terrain_levels`` is still removed below because a plane has no terrain
-  # curriculum.
-
-  # Disable terrain curriculum (not present in play mode since rough clears all).
+  # Keep the terrain scan in the flat critic.  This preserves the exact 244-
+  # feature critic schema and therefore allows rough/flat checkpoint resume.
   cfg.curriculum.pop("terrain_levels", None)
 
   if play:

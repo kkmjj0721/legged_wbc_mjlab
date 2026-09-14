@@ -3,7 +3,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""HIM-enhanced PPO implementation for the modern rsl_rl API."""
+"""HIM-enhanced PPO implementation for the modern rsl_rl API.
+
+The estimator lifecycle intentionally follows native HIMLoco: its own
+supervised/contrastive optimizer is stepped before the PPO step and receives
+the current adaptive PPO learning rate.  Estimator outputs are detached in
+the actor, so the PPO loss does not apply a second estimator gradient.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +27,7 @@ from rsl_rl.utils import reduce_gradients_in_buckets, resolve_class, resolve_obs
 
 
 class HIMPPO:
-    """Proximal policy optimization with a separately trained HIM estimator."""
+    """PPO with the native HIM estimator update lifecycle."""
 
     def __init__(
         self,
@@ -75,14 +81,16 @@ class HIMPPO:
         self.rnd = None
         self.intrinsic_rewards = None
 
-        estimator_params = list(self.estimator.parameters())
-        estimator_param_ids = {id(param) for param in estimator_params}
-        ppo_params = [
-            param
-            for param in chain(self.actor.parameters(), self.critic.parameters())
-            if id(param) not in estimator_param_ids
-        ]
-        self.optimizer = resolve_optimizer(optimizer)(ppo_params, lr=learning_rate)
+        # Native HIMLoco keeps estimator parameters in the PPO optimizer.  The
+        # estimator also owns a second optimizer for its HIM objective; since
+        # HIMActorModel detaches estimator outputs, PPO contributes no gradient
+        # to these parameters, matching the original implementation.
+        self.optimizer = resolve_optimizer(optimizer)(
+            chain(self.actor.parameters(), self.critic.parameters()),
+            lr=learning_rate,
+        )
+        # This is only the estimator optimizer's initial LR.  Each mini-batch
+        # update below synchronizes it to the current PPO LR, as in HIMLoco.
         if estimator_learning_rate is not None:
             self.estimator.learning_rate = float(estimator_learning_rate)
             for param_group in self.estimator.optimizer.param_groups:
@@ -205,6 +213,9 @@ class HIMPPO:
                     history[valid_estimator_samples],
                     velocity_target=velocity_target[valid_estimator_samples],
                     target_obs=target_obs[valid_estimator_samples],
+                    # Native HIMLoco synchronizes the estimator optimizer
+                    # with the adaptive PPO learning rate at every update.
+                    learning_rate=self.learning_rate,
                     gradient_reducer=self._reduce_estimator_gradients if self.is_multi_gpu else None,
                 )
             else:
@@ -231,7 +242,7 @@ class HIMPPO:
             loss.backward()
             if self.is_multi_gpu:
                 self.reduce_parameters()
-            nn.utils.clip_grad_norm_(self._ppo_parameters(), self.max_grad_norm)
+            nn.utils.clip_grad_norm_(self._all_parameters(), self.max_grad_norm)
             self.optimizer.step()
 
             mean_value_loss += value_loss.item()
@@ -284,8 +295,16 @@ class HIMPPO:
         if load_cfg.get("critic"):
             self._load_critic_state(loaded_dict, strict)
         if load_cfg.get("optimizer") and "optimizer_state_dict" in loaded_dict:
-            self.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
-            self.learning_rate = self.optimizer.param_groups[0]["lr"]
+            optimizer_state = loaded_dict["optimizer_state_dict"]
+            # Older MjLab HIM checkpoints excluded estimator parameters from
+            # this optimizer.  Keep their model weights loadable and start a
+            # fresh PPO optimizer when the saved slot count is incompatible.
+            current_count = len(self.optimizer.param_groups[0]["params"])
+            saved_groups = optimizer_state.get("param_groups", [])
+            saved_count = len(saved_groups[0].get("params", [])) if saved_groups else 0
+            if current_count == saved_count:
+                self.optimizer.load_state_dict(optimizer_state)
+                self.learning_rate = self.optimizer.param_groups[0]["lr"]
         if load_cfg.get("estimator"):
             self._load_estimator_state(loaded_dict, strict)
             if "estimator_optimizer_state_dict" in loaded_dict:
@@ -312,7 +331,7 @@ class HIMPPO:
         """Average PPO and estimator gradients across distributed workers."""
         if self.is_multi_gpu:
             reduce_gradients_in_buckets(
-                self._ppo_parameters(),
+                self._all_parameters(),
                 self.gpu_world_size,
                 self.grad_reduce_bucket_mb,
             )
@@ -346,14 +365,9 @@ class HIMPPO:
         algorithm.compile(cfg.get("torch_compile_mode"))
         return algorithm
 
-    def _ppo_parameters(self) -> Iterable[nn.Parameter]:
-        """Yield parameters owned by the PPO optimizer, excluding estimator weights."""
-        estimator_param_ids = {id(param) for param in self.estimator.parameters()}
-        return (
-            param
-            for param in chain(self.actor.parameters(), self.critic.parameters())
-            if id(param) not in estimator_param_ids
-        )
+    def _all_parameters(self) -> Iterable[nn.Parameter]:
+        """Yield all actor/critic parameters, including the HIM estimator."""
+        return chain(self.actor.parameters(), self.critic.parameters())
 
     def _get_estimator_targets(self, next_observations: TensorDict | None) -> tuple[torch.Tensor, torch.Tensor]:
         """Build velocity and one-step targets from post-step observation groups."""

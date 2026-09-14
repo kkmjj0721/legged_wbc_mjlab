@@ -21,13 +21,28 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
-def track_linear_velocity(env: ManagerBasedRlEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
+def track_linear_velocity_l1(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  command_threshold: float = 0.1,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
-  assert command is not None
+
   actual = asset.data.root_link_lin_vel_b
-  error = torch.square(command[:, :2] - actual[:, :2]).sum(dim=1) + 2.0 * torch.square(actual[:, 2])
-  return torch.exp(-error / std**2)
+  error = torch.linalg.norm(
+    command[:, :2] - actual[:, :2],
+    dim=1,
+  )
+
+  active = (
+    torch.linalg.norm(command[:, :2], dim=1)
+    + torch.abs(command[:, 2])
+    > command_threshold
+  ).to(error.dtype)
+
+  return error * active
 
 
 def track_angular_velocity(env: ManagerBasedRlEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
