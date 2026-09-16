@@ -8,11 +8,22 @@ import numpy as np
 class OnnxPolicy:
     """ONNX actor adapter shared by simulation and a future real backend."""
 
-    def __init__(self, path: Path | None, observation_dim: int, action_dim: int):
+    def __init__(
+        self,
+        path: Path | None,
+        observation_dim: int,
+        action_dim: int,
+        action_clip: float | None = 1.0,
+    ):
         self._session = None
         self._input_name = None
         self.observation_dim = observation_dim
         self.action_dim = action_dim
+        if action_clip is not None:
+            action_clip = float(action_clip)
+            if not np.isfinite(action_clip) or action_clip <= 0.0:
+                raise ValueError("action_clip must be null or a finite positive number")
+        self.action_clip = action_clip
         if path is None:
             return
         if not path.exists():
@@ -45,4 +56,7 @@ class OnnxPolicy:
         action = np.asarray(self._session.run(None, {self._input_name: observation})[0]).reshape(-1)
         if action.size != self.action_dim or not np.all(np.isfinite(action)):
             raise ValueError("Policy produced a non-finite or incorrectly sized action")
-        return np.clip(action.astype(np.float64), -1.0, 1.0)
+        action = action.astype(np.float64)
+        if self.action_clip is not None:
+            action = np.clip(action, -self.action_clip, self.action_clip)
+        return action

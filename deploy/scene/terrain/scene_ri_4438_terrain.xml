@@ -1,0 +1,304 @@
+<mujoco model="ri_4438 combined terrain">
+  <compiler meshdir="../../../src/assets/robots/ri_4438/xmls" />
+  <include file="../../../src/assets/robots/ri_4438/xmls/ri_4438.xml" />
+
+  <statistic center="1 0 0.5" extent="15" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="-125" elevation="-25" />
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient"
+      rgb1="0.3 0.5 0.7" rgb2="0.02 0.02 0.05" width="512" height="3072" />
+    <texture name="checkerboard" type="2d" builtin="checker" mark="edge"
+      rgb1="0.22 0.28 0.34" rgb2="0.10 0.14 0.18" markrgb="0.8 0.8 0.8"
+      width="512" height="512" />
+    <material name="checkerboard" texture="checkerboard" texuniform="true"
+      texrepeat="2 2" reflectance="0.15" />
+    <material name="stairs_terrain" rgba="0.55 0.58 0.62 1" />
+    <material name="heightfield_terrain" rgba="0.36 0.43 0.31 1" />
+    <!-- Horizontal half-sizes 2.5 m make the heightfield exactly 5 m x 5 m.
+         The copied grayscale image is normalized into a 0.2 m height range. -->
+    <hfield name="rough_5m" file="../../../../../deploy/scene/terrain/assets/height_field.png"
+      size="2.5 2.5 0.2 0.02" />
+  </asset>
+
+  <default>
+    <default class="deploy_terrain">
+      <geom friction="0.8 0.01 0.001" condim="3" contype="1" conaffinity="1" />
+    </default>
+  </default>
+
+  <worldbody>
+    <light name="sun" pos="0 0 8" dir="0 0 -1" directional="true" />
+    <geom name="terrain_floor" type="plane" pos="0 0 0" size="25 15 0.1"
+      class="deploy_terrain" material="checkerboard" />
+
+    <!-- 5 cm pyramid stair lane: 0.3 m tread, 2.0 m summit, ten steps per side. -->
+    <geom name="stairs_05_up_01" type="box" pos="5.15 -9 0.025" size="0.15 0.75 0.025" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_02" type="box" pos="5.45 -9 0.050" size="0.15 0.75 0.050" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_03" type="box" pos="5.75 -9 0.075" size="0.15 0.75 0.075" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_04" type="box" pos="6.05 -9 0.100" size="0.15 0.75 0.100" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_05" type="box" pos="6.35 -9 0.125" size="0.15 0.75 0.125" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_06" type="box" pos="6.65 -9 0.150" size="0.15 0.75 0.150" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_07" type="box" pos="6.95 -9 0.175" size="0.15 0.75 0.175" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_08" type="box" pos="7.25 -9 0.200" size="0.15 0.75 0.200" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_09" type="box" pos="7.55 -9 0.225" size="0.15 0.75 0.225" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_up_10" type="box" pos="7.85 -9 0.250" size="0.15 0.75 0.250" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_platform" type="box" pos="9.0 -9 0.250" size="1.0 0.75 0.250" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_09" type="box" pos="10.15 -9 0.225" size="0.15 0.75 0.225" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_08" type="box" pos="10.45 -9 0.200" size="0.15 0.75 0.200" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_07" type="box" pos="10.75 -9 0.175" size="0.15 0.75 0.175" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_06" type="box" pos="11.05 -9 0.150" size="0.15 0.75 0.150" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_05" type="box" pos="11.35 -9 0.125" size="0.15 0.75 0.125" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_04" type="box" pos="11.65 -9 0.100" size="0.15 0.75 0.100" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_03" type="box" pos="11.95 -9 0.075" size="0.15 0.75 0.075" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_02" type="box" pos="12.25 -9 0.050" size="0.15 0.75 0.050" class="deploy_terrain" material="stairs_terrain" />
+    <geom name="stairs_05_down_01" type="box" pos="12.55 -9 0.025" size="0.15 0.75 0.025" class="deploy_terrain" material="stairs_terrain" />
+
+    <!-- The other nine lanes use nested boxes with the same footprint and
+         unique fixed heights from 6 cm through 14 cm. -->
+    <body name="stairs_06cm" pos="0 -7 0">
+      <geom name="stairs_06_up_01" type="box" pos="5.15 0 0.03" size="0.15 0.75 0.03" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_02" type="box" pos="5.45 0 0.06" size="0.15 0.75 0.06" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_03" type="box" pos="5.75 0 0.09" size="0.15 0.75 0.09" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_04" type="box" pos="6.05 0 0.12" size="0.15 0.75 0.12" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_05" type="box" pos="6.35 0 0.15" size="0.15 0.75 0.15" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_06" type="box" pos="6.65 0 0.18" size="0.15 0.75 0.18" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_07" type="box" pos="6.95 0 0.21" size="0.15 0.75 0.21" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_08" type="box" pos="7.25 0 0.24" size="0.15 0.75 0.24" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_09" type="box" pos="7.55 0 0.27" size="0.15 0.75 0.27" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_up_10" type="box" pos="7.85 0 0.30" size="0.15 0.75 0.30" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_platform" type="box" pos="9 0 0.30" size="1 0.75 0.30" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_09" type="box" pos="10.15 0 0.27" size="0.15 0.75 0.27" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_08" type="box" pos="10.45 0 0.24" size="0.15 0.75 0.24" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_07" type="box" pos="10.75 0 0.21" size="0.15 0.75 0.21" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_06" type="box" pos="11.05 0 0.18" size="0.15 0.75 0.18" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_05" type="box" pos="11.35 0 0.15" size="0.15 0.75 0.15" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_04" type="box" pos="11.65 0 0.12" size="0.15 0.75 0.12" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_03" type="box" pos="11.95 0 0.09" size="0.15 0.75 0.09" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_02" type="box" pos="12.25 0 0.06" size="0.15 0.75 0.06" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_06_down_01" type="box" pos="12.55 0 0.03" size="0.15 0.75 0.03" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <!-- Compact repeated lanes. Each body's geom z/size values are multiples
+         of its documented step height; names make the height machine-checkable. -->
+    <body name="stairs_07cm" pos="0 -5 0">
+      <geom name="stairs_07_up_01" type="box" pos="5.15 0 0.035" size="0.15 0.75 0.035" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_02" type="box" pos="5.45 0 0.070" size="0.15 0.75 0.070" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_03" type="box" pos="5.75 0 0.105" size="0.15 0.75 0.105" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_04" type="box" pos="6.05 0 0.140" size="0.15 0.75 0.140" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_05" type="box" pos="6.35 0 0.175" size="0.15 0.75 0.175" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_06" type="box" pos="6.65 0 0.210" size="0.15 0.75 0.210" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_07" type="box" pos="6.95 0 0.245" size="0.15 0.75 0.245" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_08" type="box" pos="7.25 0 0.280" size="0.15 0.75 0.280" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_09" type="box" pos="7.55 0 0.315" size="0.15 0.75 0.315" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_up_10" type="box" pos="7.85 0 0.350" size="0.15 0.75 0.350" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_platform" type="box" pos="9 0 0.350" size="1 0.75 0.350" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_09" type="box" pos="10.15 0 0.315" size="0.15 0.75 0.315" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_08" type="box" pos="10.45 0 0.280" size="0.15 0.75 0.280" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_07" type="box" pos="10.75 0 0.245" size="0.15 0.75 0.245" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_06" type="box" pos="11.05 0 0.210" size="0.15 0.75 0.210" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_05" type="box" pos="11.35 0 0.175" size="0.15 0.75 0.175" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_04" type="box" pos="11.65 0 0.140" size="0.15 0.75 0.140" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_03" type="box" pos="11.95 0 0.105" size="0.15 0.75 0.105" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_02" type="box" pos="12.25 0 0.070" size="0.15 0.75 0.070" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_07_down_01" type="box" pos="12.55 0 0.035" size="0.15 0.75 0.035" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <!-- Seven additional fixed-height lanes complete the 5 to 14 cm set. -->
+    <body name="stairs_08cm" pos="0 -3 0">
+      <geom name="stairs_08_up_01" type="box" pos="5.15 0 0.040" size="0.15 0.75 0.040" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_02" type="box" pos="5.45 0 0.080" size="0.15 0.75 0.080" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_03" type="box" pos="5.75 0 0.120" size="0.15 0.75 0.120" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_04" type="box" pos="6.05 0 0.160" size="0.15 0.75 0.160" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_05" type="box" pos="6.35 0 0.200" size="0.15 0.75 0.200" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_06" type="box" pos="6.65 0 0.240" size="0.15 0.75 0.240" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_07" type="box" pos="6.95 0 0.280" size="0.15 0.75 0.280" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_08" type="box" pos="7.25 0 0.320" size="0.15 0.75 0.320" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_09" type="box" pos="7.55 0 0.360" size="0.15 0.75 0.360" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_up_10" type="box" pos="7.85 0 0.400" size="0.15 0.75 0.400" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_platform" type="box" pos="9 0 0.400" size="1 0.75 0.400" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_09" type="box" pos="10.15 0 0.360" size="0.15 0.75 0.360" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_08" type="box" pos="10.45 0 0.320" size="0.15 0.75 0.320" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_07" type="box" pos="10.75 0 0.280" size="0.15 0.75 0.280" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_06" type="box" pos="11.05 0 0.240" size="0.15 0.75 0.240" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_05" type="box" pos="11.35 0 0.200" size="0.15 0.75 0.200" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_04" type="box" pos="11.65 0 0.160" size="0.15 0.75 0.160" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_03" type="box" pos="11.95 0 0.120" size="0.15 0.75 0.120" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_02" type="box" pos="12.25 0 0.080" size="0.15 0.75 0.080" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_08_down_01" type="box" pos="12.55 0 0.040" size="0.15 0.75 0.040" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <body name="stairs_09cm" pos="0 -1 0">
+      <geom name="stairs_09_up_01" type="box" pos="5.15 0 0.045" size="0.15 0.75 0.045" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_02" type="box" pos="5.45 0 0.090" size="0.15 0.75 0.090" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_03" type="box" pos="5.75 0 0.135" size="0.15 0.75 0.135" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_04" type="box" pos="6.05 0 0.180" size="0.15 0.75 0.180" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_05" type="box" pos="6.35 0 0.225" size="0.15 0.75 0.225" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_06" type="box" pos="6.65 0 0.270" size="0.15 0.75 0.270" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_07" type="box" pos="6.95 0 0.315" size="0.15 0.75 0.315" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_08" type="box" pos="7.25 0 0.360" size="0.15 0.75 0.360" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_09" type="box" pos="7.55 0 0.405" size="0.15 0.75 0.405" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_up_10" type="box" pos="7.85 0 0.450" size="0.15 0.75 0.450" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_platform" type="box" pos="9 0 0.450" size="1 0.75 0.450" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_09" type="box" pos="10.15 0 0.405" size="0.15 0.75 0.405" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_08" type="box" pos="10.45 0 0.360" size="0.15 0.75 0.360" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_07" type="box" pos="10.75 0 0.315" size="0.15 0.75 0.315" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_06" type="box" pos="11.05 0 0.270" size="0.15 0.75 0.270" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_05" type="box" pos="11.35 0 0.225" size="0.15 0.75 0.225" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_04" type="box" pos="11.65 0 0.180" size="0.15 0.75 0.180" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_03" type="box" pos="11.95 0 0.135" size="0.15 0.75 0.135" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_02" type="box" pos="12.25 0 0.090" size="0.15 0.75 0.090" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_09_down_01" type="box" pos="12.55 0 0.045" size="0.15 0.75 0.045" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <body name="stairs_10cm" pos="0 1 0">
+      <geom name="stairs_10_up_01" type="box" pos="5.15 0 0.050" size="0.15 0.75 0.050" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_02" type="box" pos="5.45 0 0.100" size="0.15 0.75 0.100" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_03" type="box" pos="5.75 0 0.150" size="0.15 0.75 0.150" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_04" type="box" pos="6.05 0 0.200" size="0.15 0.75 0.200" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_05" type="box" pos="6.35 0 0.250" size="0.15 0.75 0.250" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_06" type="box" pos="6.65 0 0.300" size="0.15 0.75 0.300" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_07" type="box" pos="6.95 0 0.350" size="0.15 0.75 0.350" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_08" type="box" pos="7.25 0 0.400" size="0.15 0.75 0.400" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_09" type="box" pos="7.55 0 0.450" size="0.15 0.75 0.450" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_up_10" type="box" pos="7.85 0 0.500" size="0.15 0.75 0.500" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_platform" type="box" pos="9 0 0.500" size="1 0.75 0.500" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_09" type="box" pos="10.15 0 0.450" size="0.15 0.75 0.450" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_08" type="box" pos="10.45 0 0.400" size="0.15 0.75 0.400" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_07" type="box" pos="10.75 0 0.350" size="0.15 0.75 0.350" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_06" type="box" pos="11.05 0 0.300" size="0.15 0.75 0.300" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_05" type="box" pos="11.35 0 0.250" size="0.15 0.75 0.250" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_04" type="box" pos="11.65 0 0.200" size="0.15 0.75 0.200" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_03" type="box" pos="11.95 0 0.150" size="0.15 0.75 0.150" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_02" type="box" pos="12.25 0 0.100" size="0.15 0.75 0.100" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_10_down_01" type="box" pos="12.55 0 0.050" size="0.15 0.75 0.050" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <body name="stairs_11cm" pos="0 3 0">
+      <geom name="stairs_11_up_01" type="box" pos="5.15 0 0.055" size="0.15 0.75 0.055" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_02" type="box" pos="5.45 0 0.110" size="0.15 0.75 0.110" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_03" type="box" pos="5.75 0 0.165" size="0.15 0.75 0.165" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_04" type="box" pos="6.05 0 0.220" size="0.15 0.75 0.220" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_05" type="box" pos="6.35 0 0.275" size="0.15 0.75 0.275" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_06" type="box" pos="6.65 0 0.330" size="0.15 0.75 0.330" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_07" type="box" pos="6.95 0 0.385" size="0.15 0.75 0.385" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_08" type="box" pos="7.25 0 0.440" size="0.15 0.75 0.440" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_09" type="box" pos="7.55 0 0.495" size="0.15 0.75 0.495" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_up_10" type="box" pos="7.85 0 0.550" size="0.15 0.75 0.550" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_platform" type="box" pos="9 0 0.550" size="1 0.75 0.550" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_09" type="box" pos="10.15 0 0.495" size="0.15 0.75 0.495" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_08" type="box" pos="10.45 0 0.440" size="0.15 0.75 0.440" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_07" type="box" pos="10.75 0 0.385" size="0.15 0.75 0.385" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_06" type="box" pos="11.05 0 0.330" size="0.15 0.75 0.330" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_05" type="box" pos="11.35 0 0.275" size="0.15 0.75 0.275" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_04" type="box" pos="11.65 0 0.220" size="0.15 0.75 0.220" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_03" type="box" pos="11.95 0 0.165" size="0.15 0.75 0.165" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_02" type="box" pos="12.25 0 0.110" size="0.15 0.75 0.110" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_11_down_01" type="box" pos="12.55 0 0.055" size="0.15 0.75 0.055" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <body name="stairs_12cm" pos="0 5 0">
+      <geom name="stairs_12_up_01" type="box" pos="5.15 0 0.060" size="0.15 0.75 0.060" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_02" type="box" pos="5.45 0 0.120" size="0.15 0.75 0.120" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_03" type="box" pos="5.75 0 0.180" size="0.15 0.75 0.180" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_04" type="box" pos="6.05 0 0.240" size="0.15 0.75 0.240" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_05" type="box" pos="6.35 0 0.300" size="0.15 0.75 0.300" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_06" type="box" pos="6.65 0 0.360" size="0.15 0.75 0.360" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_07" type="box" pos="6.95 0 0.420" size="0.15 0.75 0.420" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_08" type="box" pos="7.25 0 0.480" size="0.15 0.75 0.480" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_09" type="box" pos="7.55 0 0.540" size="0.15 0.75 0.540" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_up_10" type="box" pos="7.85 0 0.600" size="0.15 0.75 0.600" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_platform" type="box" pos="9 0 0.600" size="1 0.75 0.600" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_09" type="box" pos="10.15 0 0.540" size="0.15 0.75 0.540" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_08" type="box" pos="10.45 0 0.480" size="0.15 0.75 0.480" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_07" type="box" pos="10.75 0 0.420" size="0.15 0.75 0.420" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_06" type="box" pos="11.05 0 0.360" size="0.15 0.75 0.360" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_05" type="box" pos="11.35 0 0.300" size="0.15 0.75 0.300" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_04" type="box" pos="11.65 0 0.240" size="0.15 0.75 0.240" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_03" type="box" pos="11.95 0 0.180" size="0.15 0.75 0.180" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_02" type="box" pos="12.25 0 0.120" size="0.15 0.75 0.120" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_12_down_01" type="box" pos="12.55 0 0.060" size="0.15 0.75 0.060" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <body name="stairs_13cm" pos="0 7 0">
+      <geom name="stairs_13_up_01" type="box" pos="5.15 0 0.065" size="0.15 0.75 0.065" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_02" type="box" pos="5.45 0 0.130" size="0.15 0.75 0.130" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_03" type="box" pos="5.75 0 0.195" size="0.15 0.75 0.195" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_04" type="box" pos="6.05 0 0.260" size="0.15 0.75 0.260" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_05" type="box" pos="6.35 0 0.325" size="0.15 0.75 0.325" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_06" type="box" pos="6.65 0 0.390" size="0.15 0.75 0.390" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_07" type="box" pos="6.95 0 0.455" size="0.15 0.75 0.455" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_08" type="box" pos="7.25 0 0.520" size="0.15 0.75 0.520" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_09" type="box" pos="7.55 0 0.585" size="0.15 0.75 0.585" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_up_10" type="box" pos="7.85 0 0.650" size="0.15 0.75 0.650" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_platform" type="box" pos="9 0 0.650" size="1 0.75 0.650" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_09" type="box" pos="10.15 0 0.585" size="0.15 0.75 0.585" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_08" type="box" pos="10.45 0 0.520" size="0.15 0.75 0.520" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_07" type="box" pos="10.75 0 0.455" size="0.15 0.75 0.455" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_06" type="box" pos="11.05 0 0.390" size="0.15 0.75 0.390" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_05" type="box" pos="11.35 0 0.325" size="0.15 0.75 0.325" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_04" type="box" pos="11.65 0 0.260" size="0.15 0.75 0.260" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_03" type="box" pos="11.95 0 0.195" size="0.15 0.75 0.195" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_02" type="box" pos="12.25 0 0.130" size="0.15 0.75 0.130" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_13_down_01" type="box" pos="12.55 0 0.065" size="0.15 0.75 0.065" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <body name="stairs_14cm" pos="0 9 0">
+      <geom name="stairs_14_up_01" type="box" pos="5.15 0 0.070" size="0.15 0.75 0.070" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_02" type="box" pos="5.45 0 0.140" size="0.15 0.75 0.140" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_03" type="box" pos="5.75 0 0.210" size="0.15 0.75 0.210" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_04" type="box" pos="6.05 0 0.280" size="0.15 0.75 0.280" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_05" type="box" pos="6.35 0 0.350" size="0.15 0.75 0.350" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_06" type="box" pos="6.65 0 0.420" size="0.15 0.75 0.420" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_07" type="box" pos="6.95 0 0.490" size="0.15 0.75 0.490" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_08" type="box" pos="7.25 0 0.560" size="0.15 0.75 0.560" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_09" type="box" pos="7.55 0 0.630" size="0.15 0.75 0.630" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_up_10" type="box" pos="7.85 0 0.700" size="0.15 0.75 0.700" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_platform" type="box" pos="9 0 0.700" size="1 0.75 0.700" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_09" type="box" pos="10.15 0 0.630" size="0.15 0.75 0.630" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_08" type="box" pos="10.45 0 0.560" size="0.15 0.75 0.560" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_07" type="box" pos="10.75 0 0.490" size="0.15 0.75 0.490" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_06" type="box" pos="11.05 0 0.420" size="0.15 0.75 0.420" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_05" type="box" pos="11.35 0 0.350" size="0.15 0.75 0.350" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_04" type="box" pos="11.65 0 0.280" size="0.15 0.75 0.280" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_03" type="box" pos="11.95 0 0.210" size="0.15 0.75 0.210" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_02" type="box" pos="12.25 0 0.140" size="0.15 0.75 0.140" class="deploy_terrain" material="stairs_terrain" />
+      <geom name="stairs_14_down_01" type="box" pos="12.55 0 0.070" size="0.15 0.75 0.070" class="deploy_terrain" material="stairs_terrain" />
+    </body>
+
+    <geom name="terrain_heightfield_5m" type="hfield" hfield="rough_5m"
+      pos="-11 0 0" class="deploy_terrain" material="heightfield_terrain" />
+  </worldbody>
+
+  <actuator>
+    <position name="FL_hip_joint_position" joint="FL_hip_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="FL_thigh_joint_position" joint="FL_thigh_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="FL_calf_joint_position" joint="FL_calf_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="FR_hip_joint_position" joint="FR_hip_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="FR_thigh_joint_position" joint="FR_thigh_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="FR_calf_joint_position" joint="FR_calf_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="RL_hip_joint_position" joint="RL_hip_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="RL_thigh_joint_position" joint="RL_thigh_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="RL_calf_joint_position" joint="RL_calf_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="RR_hip_joint_position" joint="RR_hip_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="RR_thigh_joint_position" joint="RR_thigh_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+    <position name="RR_calf_joint_position" joint="RR_calf_joint" kp="30" kv="0.6"
+      ctrlrange="-3.5 3.5" ctrllimited="true" forcerange="-10 10" forcelimited="true" />
+  </actuator>
+</mujoco>

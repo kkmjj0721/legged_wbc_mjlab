@@ -16,18 +16,30 @@ class DeploymentRuntime:
         self.cfg = cfg
         self.backend = MujocoBackend(cfg)
         self.commands = CommandBus(cfg.command_limit, cfg.command_deadzone)
-        self.inputs = InputManager(cfg.input_backend, self.commands, cfg.joystick_axes)
+        self.inputs = InputManager(
+            cfg.input_backend,
+            self.commands,
+            cfg.joystick_axes,
+            **getattr(cfg, "gamepad_options", {}),
+        )
         self.fsm = LocomotionFSM(cfg, self.backend, policy, self.commands)
+        self._shutdown_sent = False
 
     def run(self, headless: bool, max_steps: int | None = None) -> None:
         self.inputs.start(headless=headless)
         print(
-            "[INFO] Controls: U=stand, P/Space=passive, R=reset, Esc=quit; "
+            "[INFO] Controls: U=stand, L=enable RL, B=hold STAND, "
+            "P/G/Space=getdown, R=reset, Esc=estop+quit; "
             "W/S=forward/back, A/D=left/right, Q/E=yaw, F=follow/free camera. "
             "In the viewer, motion keys are toggles: press again to stop."
         )
         if self.cfg.input_backend in ("joystick", "both"):
-            print("[INFO] Gamepad: left stick=vx/vy, right-X=yaw, A=stand, B/Circle=passive, Start=reset, Select=quit.")
+            print(
+                "[INFO] Gamepad: left stick=vx/vy, right-X=yaw, "
+                "A=stand, X=enable RL, B=hold stand, Y=getdown, "
+                "Start=reset, Back/Select=estop+quit."
+            )
+        normal_exit = False
         try:
             if headless:
                 steps = 0
@@ -36,19 +48,24 @@ class DeploymentRuntime:
                         break
                     self.fsm.step()
                     steps += 1
+                normal_exit = True
             else:
                 import mujoco
                 import mujoco.viewer
                 with mujoco.viewer.launch_passive(self.backend.model, self.backend.data, key_callback=self.inputs.key_callback) as viewer:
                     follow_camera = self.cfg.camera_follow
                     self._set_camera(viewer, follow_camera, mujoco)
-                    last = time.perf_counter()
+                    # Use a monotonic deadline to avoid accumulating scheduler
+                    # drift.  Physics remains fixed-step while rendering may
+                    # run at a lower rate on a busy desktop.
+                    next_deadline = time.monotonic()
                     while viewer.is_running():
-                        now = time.perf_counter()
-                        elapsed = min(0.05, max(0.0, now - last))
-                        last = now
-                        for _ in range(max(1, int(round(elapsed / self.cfg.timestep)))):
+                        now = time.monotonic()
+                        elapsed = min(0.05, max(0.0, now - next_deadline + self.cfg.timestep))
+                        physics_steps = max(1, int(round(elapsed / self.cfg.timestep)))
+                        for _ in range(physics_steps):
                             self.fsm.step()
+                        next_deadline += physics_steps * self.cfg.timestep
                         viewer.sync()
                         if self.commands.consume("camera_toggle"):
                             follow_camera = not follow_camera
@@ -56,12 +73,38 @@ class DeploymentRuntime:
                             print(f"[INFO] camera={'follow' if follow_camera else 'free'}")
                         if self.commands.consume("quit"):
                             break
-                        time.sleep(self.cfg.timestep)
+                        sleep_for = next_deadline - time.monotonic()
+                        if sleep_for > 0.0:
+                            time.sleep(min(sleep_for, self.cfg.timestep))
+                normal_exit = True
+        except KeyboardInterrupt:
+            # Ctrl-C is an operator request to leave; still perform the same
+            # safe actuator shutdown as an emergency event.
+            print("[INFO] interrupt received; stopping safely")
+            normal_exit = True
         finally:
             self.inputs.close()
+            self._safe_shutdown("runtime shutdown" if normal_exit else "runtime failure")
 
     def close(self) -> None:
+        self._safe_shutdown("runtime close")
         self.backend.close()
+
+    def _safe_shutdown(self, reason: str) -> None:
+        """Best-effort torque-off on every runtime exit path.
+
+        Backends used by tests or legacy integrations may not implement the
+        emergency API, so shutdown deliberately degrades to a no-op there.
+        """
+        if self._shutdown_sent:
+            return
+        self._shutdown_sent = True
+        emergency_stop = getattr(self.backend, "emergency_stop", None)
+        if callable(emergency_stop):
+            try:
+                emergency_stop(reason)
+            except Exception:
+                pass
 
     def _set_camera(self, viewer, follow: bool, mujoco_module) -> None:
         """Configure the native MuJoCo camera to track the configured body."""

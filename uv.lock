@@ -653,17 +653,29 @@ sim2sim = [
     { name = "pygame" },
     { name = "pyyaml" },
 ]
+urdf-tools = [
+    { name = "mujoco" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "trimesh" },
+    { name = "viser" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "mjlab", specifier = "==1.6.0" },
     { name = "mujoco", marker = "extra == 'sim2sim'", specifier = ">=3.1" },
+    { name = "mujoco", marker = "extra == 'urdf-tools'", specifier = ">=3.1" },
+    { name = "numpy", marker = "extra == 'urdf-tools'", specifier = ">=2.0" },
     { name = "onnxruntime", marker = "extra == 'sim2sim'", specifier = ">=1.17" },
     { name = "pygame", marker = "extra == 'sim2sim'", specifier = ">=2.5" },
     { name = "pyyaml", marker = "extra == 'sim2sim'", specifier = ">=6.0" },
     { name = "rsl-rl-lib", editable = "rsl_rl" },
+    { name = "scipy", marker = "extra == 'urdf-tools'", specifier = ">=1.12" },
+    { name = "trimesh", marker = "extra == 'urdf-tools'", specifier = ">=4.0" },
+    { name = "viser", marker = "extra == 'urdf-tools'", specifier = ">=1.0" },
 ]
-provides-extras = ["sim2sim"]
+provides-extras = ["sim2sim", "urdf-tools"]
 
 [[package]]
 name = "markdown"

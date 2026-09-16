@@ -1,0 +1,120 @@
+model:
+  xml: deploy/scene/terrain/scene_ri_4438_terrain.xml
+  policy: logs/rsl_rl/ri_4438_him/2026-09-15_15-52-14/policy.onnx
+  timestep: 0.005
+  decimation: 4
+  render: true
+
+policy:
+  # HIM consumes six complete 47-value frames, current frame first.
+  observation_dim: 282
+  history_size: 6
+  history_order: current-first
+  action_dim: 12
+  # Training uses clip_actions=null; actuator force limits remain active.
+  action_clip: null
+  command_dim: 3
+  joint_names:
+    - FL_hip_joint
+    - FL_thigh_joint
+    - FL_calf_joint
+    - FR_hip_joint
+    - FR_thigh_joint
+    - FR_calf_joint
+    - RL_hip_joint
+    - RL_thigh_joint
+    - RL_calf_joint
+    - RR_hip_joint
+    - RR_thigh_joint
+    - RR_calf_joint
+  observation_terms:
+    - base_ang_vel
+    - projected_gravity
+    - command
+    - phase
+    - joint_pos_rel
+    - joint_vel
+    - last_action
+
+control:
+  # Values exported in the HIM ONNX metadata and training configuration.
+  kp: 32.50652905356971
+  kd: 2.06942991271352
+  effort_limit: 10.0
+  action_scale: [0.25, 0.5, 0.5, 0.25, 0.5, 0.5, 0.25, 0.5, 0.5, 0.25, 0.5, 0.5]
+  phase_period: 0.6
+  control_dt: 0.02
+  noise: false
+
+pose:
+  # All quaternions use MuJoCo's [w, x, y, z] convention.
+  lying_pos: [0.0, 0.0, 0.085]
+  lying_quat: [1.0, 0.0, 0.0, 0.0]
+  lying_joint: [0.646, 0.943, -2.53, -0.646, 0.943, -2.53, 0.646, 0.943, -2.53, -0.646, 0.943, -2.53]
+  standing_pos: [0.0, 0.0, 0.27]
+  standing_quat: [1.0, 0.0, 0.0, 0.0]
+  default_joint: [0.0, 0.9, -1.8, 0.0, 0.9, -1.8, 0.0, 0.9, -1.8, 0.0, 0.9, -1.8]
+  stand_duration: 3.0
+  getdown_duration: 3.0
+
+safety:
+  fall_height: 0.055
+  fall_tilt: 1.20
+  # The MuJoCo free-base equilibrium settles below the nominal spawn height;
+  # allow the measured settle gate to accept that physical equilibrium.
+  settle_height_tolerance: 0.10
+
+camera:
+  follow: true
+  track_body: base_link
+  distance: 2.5
+  azimuth: 90.0
+  elevation: -20.0
+
+input:
+  backend: both
+  deadzone: 0.08
+  command_limit: [1.0, 1.0, 1.0]
+  joystick_axes: [0, 1, 2]
+  # One-shot startup stand; returning to PASSIVE does not trigger another stand.
+  auto_stand: true
+  auto_enable_rl: true
+  # Beitong Asura 2 Pro (星闪) normally exposes an SDL game-controller map.
+  # Leave selectors unset to allow either raw Joystick or SDL Controller mode.
+  gamepad:
+    device_name: null
+    device_guid: null
+    device_index: null
+    prefer_controller: true
+    deadzone: 0.12
+    yaw_rescale: 1.0
+    reconnect_interval: 1.0
+    liveness_timeout: 2.0
+    axis_config:
+      left_x: LEFTX
+      left_y: LEFTY
+      yaw: RIGHTX
+    button_config:
+      stand: A
+      enable_rl: X
+      disable_rl: B
+      get_down: Y
+      reset: START
+      back: BACK
+
+terrain:
+  default: combined
+  spawns:
+    combined: {offset: [0.0, 0.0, 0.0], yaw: 0.0}
+    checkerboard: {offset: [0.0, 0.0, 0.0], yaw: 0.0}
+    stairs_5cm: {offset: [4.0, -9.0, 0.0], yaw: 0.0}
+    stairs_6cm: {offset: [4.0, -7.0, 0.0], yaw: 0.0}
+    stairs_7cm: {offset: [4.0, -5.0, 0.0], yaw: 0.0}
+    stairs_8cm: {offset: [4.0, -3.0, 0.0], yaw: 0.0}
+    stairs_9cm: {offset: [4.0, -1.0, 0.0], yaw: 0.0}
+    stairs_10cm: {offset: [4.0, 1.0, 0.0], yaw: 0.0}
+    stairs_11cm: {offset: [4.0, 3.0, 0.0], yaw: 0.0}
+    stairs_12cm: {offset: [4.0, 5.0, 0.0], yaw: 0.0}
+    stairs_13cm: {offset: [4.0, 7.0, 0.0], yaw: 0.0}
+    stairs_14cm: {offset: [4.0, 9.0, 0.0], yaw: 0.0}
+    heightfield: {offset: [-11.0, 0.0, 0.0], yaw: 0.0}

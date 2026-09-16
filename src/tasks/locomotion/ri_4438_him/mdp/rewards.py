@@ -188,3 +188,63 @@ class variable_posture:
     std = torch.where(standing, self.std_standing, torch.where(walking, self.std_walking, self.std_running))
     error = asset.data.joint_pos[:, asset_cfg.joint_ids] - self.default_joint_pos[:, asset_cfg.joint_ids]
     return torch.exp(-torch.mean(torch.square(error) / torch.square(std), dim=1))
+
+def feet_clearance_phase(
+  env: ManagerBasedRlEnv,
+  target_height: float,
+  height_sensor_name: str,
+  command_name: str,
+  period: float,
+  offset: list[float],
+  threshold: float = 0.56,
+  foot_radius: float = 0.0155,
+  command_threshold: float = 0.1,
+) -> torch.Tensor:
+  """在期望摆动阶段惩罚净空不足，不依赖实际脚速或接触状态。"""
+  if not 0.0 < threshold < 1.0:
+    raise ValueError("threshold 必须在 0 和 1 之间")
+  if not 0.0 <= foot_radius < target_height:
+    raise ValueError("需要 0 <= foot_radius < target_height")
+
+  period_steps = int(round(period / env.step_dt))
+  if period_steps < 2 or abs(period_steps * env.step_dt - period) > 1e-6:
+    raise ValueError("period 必须是控制步长的整数倍，且至少包含两个控制步")
+
+  height_sensor: TerrainHeightSensor = env.scene[height_sensor_name]
+  heights = height_sensor.data.heights
+  if heights.ndim != 2 or heights.shape[1] != len(offset):
+    raise ValueError("高度传感器的脚数量必须与 offset 长度一致")
+
+  # 与 feet_gait 使用相同的周期计数与相位偏移。
+  phase = (
+    (env.episode_length_buf % period_steps).to(heights.dtype) / period_steps
+  ).unsqueeze(1)
+  offsets = torch.as_tensor(
+    offset, device=heights.device, dtype=heights.dtype
+  ).view(1, -1)
+  leg_phase = (phase + offsets) % 1.0
+  swing = leg_phase >= threshold
+
+  # 摆动进度 0 -> 1；净空要求由脚半径升至 target_height，再下降。
+  swing_phase = ((leg_phase - threshold) / (1.0 - threshold)).clamp(0.0, 1.0)
+  amplitude = target_height - foot_radius
+  required_height = foot_radius + amplitude * torch.sin(
+    torch.pi * swing_phase
+  ).square()
+
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  active = (
+    torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+    > command_threshold
+  )
+  mask = (swing & active.unsqueeze(1)).to(heights.dtype)
+
+  # 抬得比要求高不扣分；使用无量纲误差，并对四只脚取平均。
+  shortfall = (required_height - heights).clamp_min(0.0)
+  cost = ((shortfall / amplitude).square() * mask).mean(dim=1)
+
+  env.extras["log"]["Metrics/swing_clearance_shortfall_m"] = (
+    (shortfall * mask).sum() / mask.sum().clamp_min(1.0)
+  )
+  return cost

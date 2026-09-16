@@ -18,6 +18,13 @@ sim2sim = [
     "pygame>=2.5",
     "pyyaml>=6.0",
 ]
+urdf-tools = [
+    "mujoco>=3.1",
+    "numpy>=2.0",
+    "scipy>=1.12",
+    "trimesh>=4.0",
+    "viser>=1.0",
+]
 
 [tool.uv.sources]
 rsl-rl-lib = { path = "rsl_rl", editable = true }

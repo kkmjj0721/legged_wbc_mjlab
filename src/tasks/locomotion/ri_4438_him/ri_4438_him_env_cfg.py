@@ -328,9 +328,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         },
     ),
     "track_angular_velocity": RewardTermCfg(
-      func = mdp.track_angular_velocity,
+      func = him_mdp.track_angular_velocity,
       weight = 1.0,
-      params = {"command_name": "twist", "std": math.sqrt(0.5)},
+      params = {"command_name": "twist", "std": math.sqrt(0.35)},
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
@@ -339,7 +339,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg(
       func=mdp.variable_posture,
-      weight=0.00,
+      weight=0.005,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
@@ -362,20 +362,20 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -10.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -1.0),
+    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -10.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01),
-    "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.01),
+    "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.02),
     "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight = -2.0e-5),
     "hip_pos": RewardTermCfg(
       func = him_mdp.hip_joint_deviation_penalty,
-      weight = -0.1,
+      weight = -1.0,
       params = {
         "command_name": "twist",
       }
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.01,
+      weight = 0.05,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5],
@@ -385,15 +385,29 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "sensor_name": "feet_ground_contact",
       }
     ),
+    # "foot_clearance": RewardTermCfg(
+    #   func = mdp.feet_clearance,
+    #   weight = -0.01,
+    #   params = {
+    #     "target_height": 0.08,
+    #     "height_sensor_name": "feet_terrain_height",
+    #     "command_name": "twist",
+    #     "command_threshold": 0.1,
+    #     "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+    #   },
+    # ),
     "foot_clearance": RewardTermCfg(
-      func = mdp.feet_clearance,
-      weight = -0.01,
-      params = {
+      func=him_mdp.feet_clearance_phase,
+      weight=-0.05,
+      params={
         "target_height": 0.08,
         "height_sensor_name": "feet_terrain_height",
         "command_name": "twist",
         "command_threshold": 0.1,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        "period": 0.6,
+        "offset": [0.0, 0.5, 0.5, 0.0],
+        "threshold": 0.56,
+        "foot_radius": 0.0155,
       },
     ),
     "foot_slip": RewardTermCfg(
@@ -432,6 +446,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "force_threshold": 1.0,
       },
     ),
+    "self_collision": RewardTermCfg(
+      func=mdp.self_collision_cost,
+      weight = -0.1,
+      params={
+        "sensor_name": "self_collision_contact",
+        "force_threshold": 1.0,
+      },
+    ),
   }
 
   ##
@@ -454,11 +476,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   def _build_curriculum():
     curriculum = {
       "terrain_levels": CurriculumTermCfg(
-        func = mdp.terrain_levels_vel,
+        func = him_mdp.terrain_levels_vel,
         params = {"command_name": "twist"},
       ),
       "command_vel": CurriculumTermCfg(
-        func = mdp.commands_vel,
+        func = him_mdp.commands_vel,
         params = {
           "command_name": "twist",
           "velocity_stages": [
@@ -466,10 +488,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             # {"step": 500 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
 
             {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 5000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
-            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
-            # {"step": 17500 * 100, "lin_vel_x": (-1.0, 1.25), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
-            # {"step": 20000 * 100, "lin_vel_x": (-1.0, 1.5), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+            {"step": 2000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 12000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 14000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 1.0), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 16000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.75)},
+            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.5, 1.0)},
+            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
+            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
           ],
         },
       ),
@@ -487,39 +514,34 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       terrain = TerrainEntityCfg(
         terrain_type = "generator",
       #   terrain_generator = replace(ROUGH_TERRAINS_CFG),
-        terrain_generator = TerrainGeneratorCfg(
-          curriculum = True,
-          size = (8.0, 8.0),            # 子地形大小
-          num_rows = 10,                                                # 地形行数（难度等级）
-          num_cols = 20,                                                # 地形列数（地形类型）
-          border_width = 25.0,                                         # 边界宽度
-          sub_terrains = {
-            # 1. 平坦地面类型
-            "flat": terrain_gen.BoxFlatTerrainCfg(
-                proportion = 0.1        # 占比 20%
+        terrain_generator=TerrainGeneratorCfg(
+          curriculum=True, size=(8.0, 8.0), num_rows=10, num_cols=20, border_width=25.0,
+          sub_terrains={
+            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.1),
+            "stairs_15": terrain_gen.BoxPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
             ),
-
-            # 2.金字塔台阶地形类型（楼梯）
-            "stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-                proportion = 0.3,                             
-                step_height_range = (0.05, 0.15),              # 台阶高度范围（难度从 0.0m 逐渐加大到 0.20m）
-                step_width = 0.3,                             # 每个台阶的踏步宽度为 0.3 米
-                platform_width = 3.0,                         # 金字塔顶部的中央平坦平台宽度为 2.0 米
+            "stairs_20": terrain_gen.BoxPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
             ),
-
-            "inverted_pyramid_stairs": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-                proportion = 0.4,                             
-                step_height_range = (0.05, 0.15),              # 台阶高度范围（难度从 0.0m 逐渐加大到 0.20m）
-                step_width = 0.3,                             # 每个台阶的踏步宽度为 0.3 米
-                platform_width = 3.0,                         # 金字塔顶部的中央平坦平台宽度为 2.0 米
+            "stairs_25": terrain_gen.BoxPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
             ),
-
-            # 5. 离散凸起障碍高度场（随机柱状/方块障碍)
+            "inverted_pyramid_stairs_15": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs-20": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs_25": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs_30": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.30, platform_width=2.0,
+            ),
             "discrete_obstacles": terrain_gen.BoxRandomGridTerrainCfg(
-                proportion = 0.2,
-                grid_width = 0.4,
-                grid_height_range=(0.0, 0.1),                         
-            )
+              proportion = 0.2, grid_width = 0.4, grid_height_range = (0.0, 0.1),
+            ),
           },
         ),
         max_init_terrain_level = 5,

@@ -1,0 +1,101 @@
+seed: 42
+num_steps_per_env: 100
+max_iterations: 100000
+obs_groups:
+  actor: !!python/tuple
+  - actor
+  critic: !!python/tuple
+  - critic
+save_interval: 100
+experiment_name: ri_4438_him
+run_name: ''
+logger: tensorboard
+wandb_project: mjlab
+wandb_tags: !!python/tuple []
+resume: true
+load_run: 2026-09-15_09-52-30
+load_checkpoint: model_10500.pt
+clip_actions: null
+upload_model: true
+class_name: src.tasks.locomotion.ri_4438_him.rl.runner:HIMOnPolicyRunner
+actor:
+  hidden_dims: !!python/tuple
+  - 512
+  - 256
+  - 128
+  activation: elu
+  obs_normalization: true
+  distribution_cfg:
+    class_name: rsl_rl.modules.distribution:GaussianDistribution
+    init_std: 1.0
+    std_type: scalar
+  class_name: rsl_rl.models.him_actor_model:HIMActorModel
+  num_one_step_obs: 47
+  history_size: 6
+  history_term_dims: !!python/tuple
+  - 3
+  - 3
+  - 3
+  - 2
+  - 12
+  - 12
+  - 12
+  history_order: frame_major_oldest_first
+  estimator_cfg:
+    enc_hidden_dims: !!python/tuple
+    - 128
+    - 64
+    - 16
+    tar_hidden_dims: !!python/tuple
+    - 128
+    - 64
+    activation: elu
+    learning_rate: 0.001
+    max_grad_norm: 10.0
+    num_prototype: 32
+    temperature: 3.0
+    sinkhorn_eps: 0.05
+    sinkhorn_iters: 3
+critic:
+  hidden_dims: !!python/tuple
+  - 512
+  - 256
+  - 128
+  activation: elu
+  obs_normalization: true
+  class_name: MLPModel
+algorithm:
+  num_learning_epochs: 5
+  num_mini_batches: 4
+  learning_rate: 0.001
+  schedule: adaptive
+  gamma: 0.99
+  lam: 0.95
+  entropy_coef: 0.01
+  desired_kl: 0.01
+  max_grad_norm: 1.0
+  value_loss_coef: 1.0
+  use_clipped_value_loss: true
+  clip_param: 0.2
+  normalize_advantage_per_mini_batch: false
+  optimizer: adam
+  share_cnn_encoders: false
+  class_name: rsl_rl.algorithms.him_ppo:HIMPPO
+  estimator_learning_rate: 0.001
+  estimator_max_grad_norm: 10.0
+  estimator_obs_groups: !!python/tuple
+  - critic
+  estimator_velocity_slice: !!python/tuple
+  - 47
+  - 50
+  estimator_target_slices: !!python/tuple
+  - !!python/tuple
+    - 0
+    - 6
+  - !!python/tuple
+    - 9
+    - 47
+  - !!python/tuple
+    - 47
+    - 50
+multi_gpu: null
