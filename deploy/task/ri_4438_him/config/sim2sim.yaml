@@ -1,6 +1,6 @@
 model:
   xml: deploy/scene/terrain/scene_ri_4438_terrain.xml
-  policy: logs/rsl_rl/ri_4438_him/2026-09-15_15-52-14/policy.onnx
+  policy: /home/sunteng/Downloads/logs/rsl_rl/ri_4438_him/2026-09-18_11-02-06/policy.onnx
   timestep: 0.005
   decimation: 4
   render: true
@@ -74,7 +74,7 @@ camera:
 input:
   backend: both
   deadzone: 0.08
-  command_limit: [1.0, 1.0, 1.0]
+  command_limit: [1.0, 0.75, 0.75]
   joystick_axes: [0, 1, 2]
   # One-shot startup stand; returning to PASSIVE does not trigger another stand.
   auto_stand: true
@@ -86,7 +86,11 @@ input:
     device_guid: null
     device_index: null
     prefer_controller: true
-    deadzone: 0.12
+    deadzone: 0.18
+    deadzone_exit: 0.15
+    calibration:
+      center_limit: 0.15
+      release_margin: 0.005
     yaw_rescale: 1.0
     reconnect_interval: 1.0
     liveness_timeout: 2.0

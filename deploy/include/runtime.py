@@ -26,12 +26,11 @@ class DeploymentRuntime:
         self._shutdown_sent = False
 
     def run(self, headless: bool, max_steps: int | None = None) -> None:
-        self.inputs.start(headless=headless)
         print(
             "[INFO] Controls: U=stand, L=enable RL, B=hold STAND, "
             "P/G/Space=getdown, R=reset, Esc=estop+quit; "
             "W/S=forward/back, A/D=left/right, Q/E=yaw, F=follow/free camera. "
-            "In the viewer, motion keys are toggles: press again to stop."
+            "Motion keys adjust velocity by 0.1 per press; Z/X=zeros velocity."
         )
         if self.cfg.input_backend in ("joystick", "both"):
             print(
@@ -39,11 +38,20 @@ class DeploymentRuntime:
                 "A=stand, X=enable RL, B=hold stand, Y=getdown, "
                 "Start=reset, Back/Select=estop+quit."
             )
+            print(
+                "[INFO] Leave both sticks centered while the gamepad calibrates; "
+                "velocity remains zero until calibration and the neutral hold complete."
+            )
         normal_exit = False
         try:
+            # SDL event pumping and gamepad device access must stay on this
+            # runtime thread.  InputManager.poll() below is therefore part of
+            # both the headless and viewer control loops.
+            self.inputs.start(headless=headless)
             if headless:
                 steps = 0
                 while max_steps is None or steps < max_steps:
+                    self.inputs.poll()
                     if self.commands.consume("quit"):
                         break
                     self.fsm.step()
@@ -60,6 +68,9 @@ class DeploymentRuntime:
                     # run at a lower rate on a busy desktop.
                     next_deadline = time.monotonic()
                     while viewer.is_running():
+                        self.inputs.poll()
+                        if self.commands.consume("quit"):
+                            break
                         now = time.monotonic()
                         elapsed = min(0.05, max(0.0, now - next_deadline + self.cfg.timestep))
                         physics_steps = max(1, int(round(elapsed / self.cfg.timestep)))
@@ -71,8 +82,6 @@ class DeploymentRuntime:
                             follow_camera = not follow_camera
                             self._set_camera(viewer, follow_camera, mujoco)
                             print(f"[INFO] camera={'follow' if follow_camera else 'free'}")
-                        if self.commands.consume("quit"):
-                            break
                         sleep_for = next_deadline - time.monotonic()
                         if sleep_for > 0.0:
                             time.sleep(min(sleep_for, self.cfg.timestep))

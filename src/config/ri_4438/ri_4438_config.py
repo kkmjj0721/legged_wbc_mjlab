@@ -1,7 +1,7 @@
 from src.config.base.base_config import BaseConfig
 
 
-class Ri4438PiperCfg( BaseConfig ):
+class Ri4438Cfg( BaseConfig ):
     class env:
         num_envs = 4096
 
@@ -9,10 +9,10 @@ class Ri4438PiperCfg( BaseConfig ):
         curriculum = True
         max_curriculum = 1.0
         num_commands = 4  # [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
-        resampling_time = [8.0, 12.0]  # [s] time before new command is given
+        resampling_time = [6.0, 12.0]  # [s] time before new command is given
         heading_command = False  # if true: compute ang vel command from heading error
         rel_standing_envs = 0.1
-        rel_forward_envs = 0.3
+        rel_forward_envs = 0.1
         class ranges:
             lin_vel_x = [-1.0, 1.0]  # min max [m/s]
             lin_vel_y = [-1.0, 1.0]  # min max [m/s]
@@ -20,8 +20,8 @@ class Ri4438PiperCfg( BaseConfig ):
             heading = [-3.14, 3.14]
                 
     class control:
-        stiffness = {"hip": 32.50652905356971, "thigh": 32.50652905356971, "calf": 32.50652905356971,}  
-        damping = {"hip": 2.06942991271352, "thigh": 2.06942991271352, "calf": 2.06942991271352}  
+        stiffness = {"hip": 32.5065, "thigh": 32.5065, "calf": 32.5065}
+        damping   = {"hip":  2.0694, "thigh":  2.0694, "calf":  2.0694}
         action_scale = 0.5
         decimation = 4  # control frequency = sim frequency / decimation
         hip_reduction = 0.5
@@ -30,7 +30,7 @@ class Ri4438PiperCfg( BaseConfig ):
         friction = 0.01
         delay_min_lag = 0
         delay_max_lag = 4
-        delay_hold_prob = 0.3
+        delay_hold_prob = 0.4
         delay_update_period = 10
 
     class init_state:
@@ -55,12 +55,12 @@ class Ri4438PiperCfg( BaseConfig ):
     class reset:
         base_offset = {
             "pose_range": {
-                "x": (-0.0, 0.0),
-                "y": (-0.0, 0.0),
+                "x": (-0.5, 0.5),
+                "y": (-0.5, 0.5),
                 "z": (-0.0, 0.0),
-                "roll": (-0.0, 0.0),
-                "pitch": (-0.0, 0.0),
-                "yaw": (-0.0, 0.0),
+                "roll": (-0.3, 0.3),
+                "pitch": (-0.3, 0.3),
+                "yaw": (-3.14, 3.14),
             },
             "velocity_range": {},
         }
@@ -71,12 +71,11 @@ class Ri4438PiperCfg( BaseConfig ):
         }
    
     class domain_rand:
-        link_mass_range = [0.8, 1.2]
-        KpKd_factor_range = [0.9, 1.1]
+        link_mass_range = [0.75, 1.1]
+        KpKd_factor_range = [0.8, 1.2]
         com_displacement_range = [-0.05, 0.05]
         motor_offset_range = [-0.02, 0.02]
-        motor_strength_range = [0.9, 1.1]
-
+        motor_strength_range = [0.8, 1.2]
 
     class noise:
         pass

@@ -32,9 +32,9 @@ from mjlab.viewer import ViewerConfig
 
 import src.tasks.locomotion.ri_4438_ppo.mdp as mdp
 
-from src.config.ri_4438.ri_4438_config import Ri4438PiperCfg
+from src.config.ri_4438.ri_4438_config import Ri4438Cfg
 
-ri_4438_cfg = Ri4438PiperCfg()
+ri_4438_cfg = Ri4438Cfg()
 
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""

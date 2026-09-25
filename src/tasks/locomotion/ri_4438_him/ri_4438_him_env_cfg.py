@@ -26,7 +26,9 @@ from mjlab.scene import SceneCfg
 from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
-from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from src.tasks.locomotion.ri_4438_him.mdp.velocity_command import (
+  HeadingHoldVelocityCommandCfg as UniformVelocityCommandCfg,
+)
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
@@ -34,9 +36,9 @@ from mjlab.viewer import ViewerConfig
 
 import src.tasks.locomotion.ri_4438_him.mdp as him_mdp
 
-from src.config.ri_4438.ri_4438_config import Ri4438PiperCfg
+from src.config.ri_4438.ri_4438_him_config import Ri4438HimCfg
 
-ri_4438_cfg = Ri4438PiperCfg()
+ri_4438_cfg = Ri4438HimCfg()
 
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""
@@ -121,7 +123,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       terms = actor_terms,
       concatenate_terms = True,
       enable_corruption = True,
-      history_length = 6,
+      history_length = ri_4438_cfg.env.history_size,
       # HIMActorModel reverses this explicit time axis to current-first.
       flatten_history_dim = False,
     ),
@@ -132,6 +134,24 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       history_length = 1,
     ),
   }
+
+  for name in ("base_ang_vel", "projected_gravity"):
+    actor_terms[name] = replace(
+      actor_terms[name], 
+      delay_min_lag = 0, 
+      delay_max_lag = 2,
+      delay_hold_prob = 0.3,
+      delay_update_period = 10
+    )
+
+  for name in ("joint_pos", "joint_vel"):
+    actor_terms[name] = replace(
+      actor_terms[name], 
+      delay_min_lag = 0, 
+      delay_max_lag = 2,
+      delay_hold_prob = 0.3,
+      delay_update_period = 10
+    )
 
   ##
   # Metrics
@@ -283,17 +303,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "effort_limit_range": tuple(ri_4438_cfg.domain_rand.motor_strength_range)
       }  
     ),
-
-    # "body_mass": EventTermCfg(
-    #   func = dr.body_mass,
-    #   mode = "startup",
-    #   params = {
-    #     "asset_cfg": SceneEntityCfg("robot"),
-    #     "ranges": tuple(ri_4438_cfg.domain_rand.link_mass_range),
-    #     "operation": "scale",
-    #   },
-    # )
-
+    # 你觉得我的训练怎么样，现在部署的时候前进走的很好，但是vel\_y和后腿还有，ang就不太好，你觉得是什么问题？要不要我改改一些东西，然后重新训练一版，你目前只分析就行了，你再检查一下部署的代码，看看是不是部署的问题（/home/sunteng/Sim2real\_master），分析即可，不要修改代码，详细看看
     "pseudo_inertia": EventTermCfg(
       func = dr.pseudo_inertia,
       mode = "startup",
@@ -320,7 +330,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func = him_mdp.track_linear_velocity,
-      weight = 1.0,
+      weight = 3.0,
       params = {
         "command_name": "twist", 
         # "command_threshold": 0.1,
@@ -329,8 +339,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
-      weight = 1.0,
-      params = {"command_name": "twist", "std": math.sqrt(0.35)},
+      weight = 2.0,
+      params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
@@ -339,7 +349,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg(
       func=mdp.variable_posture,
-      weight=0.005,
+      weight=1.0,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
@@ -352,7 +362,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "body_ang_vel": RewardTermCfg(
       func = mdp.body_angular_velocity_penalty,
-      weight = -0.05,  # Override per-robot
+      weight = -0.1,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
@@ -375,7 +385,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.05,
+      weight = 0.5,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5],
@@ -385,22 +395,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "sensor_name": "feet_ground_contact",
       }
     ),
-    # "foot_clearance": RewardTermCfg(
-    #   func = mdp.feet_clearance,
-    #   weight = -0.01,
-    #   params = {
-    #     "target_height": 0.08,
-    #     "height_sensor_name": "feet_terrain_height",
-    #     "command_name": "twist",
-    #     "command_threshold": 0.1,
-    #     "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-    #   },
-    # ),
     "foot_clearance": RewardTermCfg(
-      func=him_mdp.feet_clearance_phase,
-      weight=-0.05,
+      func=him_mdp.feet_clearance_phase_plateau,
+      weight=-0.1,
       params={
-        "target_height": 0.08,
+        "target_height": 0.15,
         "height_sensor_name": "feet_terrain_height",
         "command_name": "twist",
         "command_threshold": 0.1,
@@ -408,11 +407,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "offset": [0.0, 0.5, 0.5, 0.0],
         "threshold": 0.56,
         "foot_radius": 0.0155,
+        "ramp_fraction": 0.25,
       },
     ),
     "foot_slip": RewardTermCfg(
       func = mdp.feet_slip,
-      weight = -0.05,
+      weight = -1.0,
       params = {
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -422,7 +422,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "soft_landing": RewardTermCfg(
       func = mdp.soft_landing,
-      weight = -1e-3,
+      weight = -2e-3,
       params = {
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -431,7 +431,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "stand_still": RewardTermCfg(
       func = him_mdp.stand_still,
-      weight = -1.0,
+      weight = -0.5,
       params = {
         "command_name": "twist",
         "command_threshold": 0.1,
@@ -448,10 +448,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "self_collision": RewardTermCfg(
       func=mdp.self_collision_cost,
-      weight = -0.1,
+      weight = -100.0,
       params={
         "sensor_name": "self_collision_contact",
         "force_threshold": 1.0,
+      },
+    ),
+    "stumble": RewardTermCfg(
+      func = him_mdp.stumble,
+      weight = -0.1,
+      params = {
+        "sensor_name": "feet_ground_contact",
+        "ratio": 5.0,
       },
     ),
   }
@@ -484,19 +492,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         params = {
           "command_name": "twist",
           "velocity_stages": [
-            # {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            # {"step": 500 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
-
             {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 2000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 12000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 14000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 1.0), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 16000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.5, 0.75)},
-            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.5, 1.0)},
-            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
-            {"step": 18000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+            {"step": 1000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 2000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 3000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 4000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 5000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.75)},
+            {"step": 6000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
+
+            {"step": 7000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.75, 0.75)},
+            {"step": 8000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 0.75)},
+            {"step": 9000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
+            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
           ],
         },
       ),
@@ -517,7 +524,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         terrain_generator=TerrainGeneratorCfg(
           curriculum=True, size=(8.0, 8.0), num_rows=10, num_cols=20, border_width=25.0,
           sub_terrains={
-            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.1),
+            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.05),
             "stairs_15": terrain_gen.BoxPyramidStairsTerrainCfg(
               proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
             ),
@@ -539,16 +546,37 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             "inverted_pyramid_stairs_30": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
               proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.30, platform_width=2.0,
             ),
-            "discrete_obstacles": terrain_gen.BoxRandomGridTerrainCfg(
-              proportion = 0.2, grid_width = 0.4, grid_height_range = (0.0, 0.1),
+            # One heightfield per patch avoids hundreds of separate box geoms.
+            # This samples discrete pits/bumps; it is not the old dense box grid.
+            "discrete_obstacles": terrain_gen.HfDiscreteObstaclesTerrainCfg(
+              proportion=0.2,
+              obstacle_width_range=(0.4, 0.4),
+              obstacle_height_range=(0.01, 0.12),
+              obstacle_height_mode="choice",
+              num_obstacles=100,
+              square_obstacles=True,
+              platform_width=1.0,
+              horizontal_scale=0.1,
+              vertical_scale=0.005,
+              border_width=0.4,
             ),
+            "random_uniform":terrain_gen.HfRandomUniformTerrainCfg(
+              proportion=0.05,
+              noise_range=(0.0, 0.06),
+              noise_step=0.005,
+              downsampled_scale=0.3,
+              horizontal_scale=0.1,
+              vertical_scale=0.005,
+              border_width=0.5,
+              scale_with_difficulty=True,
+            )
           },
         ),
-        max_init_terrain_level = 5,
+        max_init_terrain_level = 9,
       ),
         
       sensors = (terrain_scan,),
-      num_envs = 1,
+      num_envs = ri_4438_cfg.env.num_envs,
       extent = 2.0,
     ),
     observations = observations,
@@ -576,10 +604,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         ls_iterations = 20,
       ),
     ),
-    decimation = 4,
+    decimation = ri_4438_cfg.control.decimation,
     episode_length_s = 20.0,
-    # HIM training stores the pre-reset terminal observation before the
-    # dedicated runner partially resets completed environments.  Play mode
-    # overrides this to True in ``config/env_cfgs.py``.
+    # The robot-specific config enables auto-reset with a recorder for fresh
+    # terminal estimator targets. The base config retains manual-reset support.
     auto_reset = False,
   )

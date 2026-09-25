@@ -331,11 +331,26 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
           curriculum=True, size=(8.0, 8.0), num_rows=10, num_cols=20, border_width=25.0,
           sub_terrains={
             "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.1),
-            "stairs": terrain_gen.BoxPyramidStairsTerrainCfg(
-              proportion = 0.3, step_height_range=(0.05, 0.15), step_width = 0.3, platform_width=3.0,
+            "stairs_15": terrain_gen.BoxPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
             ),
-            "inverted_pyramid_stairs": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-              proportion = 0.4, step_height_range=(0.05, 0.15), step_width = 0.3, platform_width=3.0,
+            "stairs_20": terrain_gen.BoxPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
+            ),
+            "stairs_25": terrain_gen.BoxPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs_15": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs-20": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs_25": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
+            ),
+            "inverted_pyramid_stairs_30": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.30, platform_width=2.0,
             ),
             "discrete_obstacles": terrain_gen.BoxRandomGridTerrainCfg(
               proportion = 0.2, grid_width = 0.4, grid_height_range = (0.0, 0.1),

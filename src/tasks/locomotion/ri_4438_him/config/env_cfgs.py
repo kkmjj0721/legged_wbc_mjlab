@@ -24,6 +24,9 @@ from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from src.tasks.locomotion.ri_4438_him.ri_4438_him_env_cfg import (
   make_velocity_env_cfg,
 )
+from src.tasks.locomotion.ri_4438_him.mdp.terminal_observations import (
+  configure_estimator_observations,
+)
 
 import src.tasks.locomotion.ri_4438_him.mdp as mdp
 
@@ -36,20 +39,25 @@ def ri_4438_rough_env_cfg(
   """Create the RI-4438 HIM rough-terrain environment."""
   cfg = make_velocity_env_cfg()
 
-  cfg.sim.mujoco.ccd_iterations = 500
-  cfg.sim.contact_sensor_maxmatch = 500
-  cfg.sim.nconmax = None
+  # Match the smaller capacities used by the measured 1024-env training run.
+  # njmax is per world; nconmax sizes the shared contact/CCD buffers.
+  cfg.sim.mujoco.ccd_iterations = 50
+  cfg.sim.contact_sensor_maxmatch = 64
+  cfg.sim.nconmax = 48
+  cfg.sim.njmax = 600
+  cfg.sim.broadphase = "nxn"
   cfg.scene.entities = {"robot": get_ri_4438_robot_cfg()}
-  # Training keeps true terminal observations; play mode may auto-reset.
-  cfg.auto_reset = bool(play)
+  # The recorder captures fresh estimator targets before the automatic reset.
+  cfg.auto_reset = True
 
   # Set raycast sensor frame to RI-4438 base_link.
   for sensor in cfg.scene.sensors or ():
     if sensor.name == "terrain_scan":
       assert isinstance(sensor, RayCastSensorCfg)
       sensor.frame.name = "base_link"
+      sensor.include_geom_groups = (0,)
 
-  foot_names = ("FR", "FL", "RR", "RL")
+  foot_names = ("FL", "FR", "RL", "RR")
   site_names = ("FL", "FR", "RL", "RR")
 
   feet_height_cfg = TerrainHeightSensorCfg(
@@ -182,14 +190,22 @@ def ri_4438_rough_env_cfg(
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.5,
   }
 
-  cfg.rewards["foot_gait"].params["offset"] = [0.0, 0.5, 0.5, 0.0]
   cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
-  # cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
-  # 抬脚奖励沿用 foot_gait 的相位和命令参数。
+
+  gait_offset = [0.0, 0.5, 0.5, 0.0]
+
+  cfg.rewards["foot_gait"].params["offset"] = list(gait_offset)
+
+  cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = (
+    "base_link",
+  )
+  cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = (
+    "base_link",
+  )
+
   for key in (
     "period",
-    "offset",
     "threshold",
     "command_name",
     "command_threshold",
@@ -197,6 +213,19 @@ def ri_4438_rough_env_cfg(
     cfg.rewards["foot_clearance"].params[key] = (
       cfg.rewards["foot_gait"].params[key]
     )
+
+  cfg.rewards["foot_clearance"].params["offset"] = list(gait_offset)
+
+  foot_gait = cfg.rewards["foot_gait"]
+
+  for group_name in ("actor", "critic"):
+    phase_params = cfg.observations[group_name].terms["phase"].params
+    phase_params["period"] = foot_gait.params["period"]
+    phase_params["command_name"] = foot_gait.params["command_name"]
+    phase_params["command_threshold"] = foot_gait.params[
+      "command_threshold"
+    ]
+
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
@@ -226,6 +255,7 @@ def ri_4438_rough_env_cfg(
         cfg.scene.terrain.terrain_generator.num_rows = 5
         cfg.scene.terrain.terrain_generator.border_width = 10.0
 
+  configure_estimator_observations(cfg, play=play)
   return cfg
 
 
@@ -236,7 +266,7 @@ def ri_4438_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.sim.njmax = 300
   cfg.sim.mujoco.ccd_iterations = 50
   cfg.sim.contact_sensor_maxmatch = 64
-  # cfg.sim.nconmax = None
+  cfg.sim.nconmax = None
 
   assert cfg.scene.terrain is not None
   cfg.scene.terrain.terrain_type = "plane"

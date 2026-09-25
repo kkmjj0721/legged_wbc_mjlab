@@ -50,6 +50,7 @@ class LocomotionFSM:
         self._last_sequence: int | None = None
         self._stale_elapsed = 0.0
         self._fault_reason: str | None = None
+        self._heading_ref: float | None = None
         self._set_backend_mode("DAMPING")
 
     def _set_backend_mode(self, mode_name: str) -> None:
@@ -78,6 +79,55 @@ class LocomotionFSM:
         except (IndexError, ValueError, FloatingPointError):
             return True
 
+    def _apply_heading_hold(
+        self, state: RobotState, operator_command: np.ndarray
+    ) -> np.ndarray:
+        """Hold the current yaw while the operator commands forward motion."""
+
+        command = np.asarray(operator_command, dtype=np.float64).copy()
+        if self.state is not State.RL:
+            self._heading_ref = None
+            return command
+
+        vx = float(command[0])
+        operator_wz = float(command[2])
+        if abs(operator_wz) > 1.0e-4:
+            self._heading_ref = None
+            return command
+
+        min_forward_speed = 0.10 if self._heading_ref is not None else 0.15
+        if vx < min_forward_speed:
+            self._heading_ref = None
+            return command
+
+        quaternion = np.asarray(state.quaternion, dtype=np.float64)
+        if quaternion.shape != (4,) or not np.all(np.isfinite(quaternion)):
+            self._heading_ref = None
+            return command
+        norm = float(np.linalg.norm(quaternion))
+        if not np.isfinite(norm) or norm <= 1.0e-9:
+            self._heading_ref = None
+            return command
+
+        w, x, y, z = quaternion / norm
+        yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        if not np.isfinite(yaw):
+            self._heading_ref = None
+            return command
+
+        if self._heading_ref is None:
+            self._heading_ref = yaw
+            command[2] = 0.0
+            return command
+
+        error = math.atan2(
+            math.sin(self._heading_ref - yaw),
+            math.cos(self._heading_ref - yaw),
+        )
+        yaw_limit = min(0.4, float(self.cfg.command_limit[2]))
+        command[2] = float(np.clip(error, -yaw_limit, yaw_limit))
+        return command
+
     @staticmethod
     def _snapshot(state: RobotState) -> RobotState:
         return RobotState(state.time, state.position.copy(), state.quaternion.copy(), state.joint_position.copy(), state.joint_velocity.copy(), state.angular_velocity_body.copy())
@@ -96,6 +146,7 @@ class LocomotionFSM:
         self._set_backend_mode("POSITION")
 
     def _request_passive(self, state: RobotState) -> None:
+        self._heading_ref = None
         if self.state in (State.PASSIVE, State.DAMPING, State.GETDOWN, State.FAULT):
             return
         self.state, self.state_time = State.GETDOWN, 0.0
@@ -106,6 +157,7 @@ class LocomotionFSM:
         self._set_backend_mode("POSITION")
 
     def _enter_passive(self) -> None:
+        self._heading_ref = None
         self.state, self.state_time = State.PASSIVE, 0.0
         self._transition_start = None
         self._trajectory_destination = self.cfg.lying_joint.copy()
@@ -121,6 +173,7 @@ class LocomotionFSM:
         self._auto_enable_armed = False
 
     def _enter_fault(self, reason: str, state: RobotState | None = None) -> None:
+        self._heading_ref = None
         if self.state == State.FAULT:
             return
         self.state, self.state_time = State.FAULT, 0.0
@@ -143,15 +196,31 @@ class LocomotionFSM:
         self.commands.stop()
         print(f"[WARN] FSM FAULT: {reason}")
 
-    def _consume_any(self, *names: str) -> bool:
-        requested = False
-        for name in names:
-            try:
-                if self.commands.consume(name):
-                    requested = True
-            except (KeyError, AttributeError):
-                pass
-        return requested
+    def _enter_rl(self) -> int:
+        """Enter policy control with no velocity inherited from another mode."""
+
+        self._heading_ref = None
+        stop_generation = self.commands.begin_stop()
+        self.command = self.commands.command()
+        self._auto_enable_armed = False
+        self.state, self.state_time = State.RL, 0.0
+        self._rl_phase_time = 0.0
+        self._rl_step_index = 0
+        self._observation_history.clear()
+        self._set_backend_mode("RL")
+        return stop_generation
+
+    def _leave_rl(self) -> None:
+        """Return to a zero-velocity standing hold."""
+
+        self._heading_ref = None
+        self.commands.stop()
+        self.command = self.commands.command()
+        self._auto_enable_armed = False
+        self.state, self.state_time = State.STAND, 0.0
+        self.last_action.fill(0.0)
+        self.target = self.cfg.default_joint.copy()
+        self._set_backend_mode("STAND")
 
     def _state_stale(self, state: RobotState) -> bool:
         if not bool(getattr(state, "valid", True)) or not bool(getattr(state, "connected", True)):
@@ -238,7 +307,8 @@ class LocomotionFSM:
     def observation(self, state: RobotState) -> np.ndarray:
         gravity_body = rotate_inverse(state.quaternion, np.array([0.0, 0.0, -1.0]))
         phase = np.zeros(2, dtype=np.float64)
-        if np.linalg.norm(self.command) >= 0.1:
+        # Match the training task and real-robot observation builder.
+        if np.linalg.norm(self.command[:2]) + abs(self.command[2]) > 0.1:
             period = max(float(self.cfg.phase_period), 1e-6)
             angle = 2 * math.pi * ((self._rl_phase_time % period) / period)
             phase[:] = [math.sin(angle), math.cos(angle)]
@@ -267,20 +337,40 @@ class LocomotionFSM:
         state = self.backend.read_state()
         dt = float(getattr(self.backend, "timestep", self.cfg.timestep))
         self.command = self.commands.command()
-        reset_requested = self._consume_any("reset")
-        estop_requested = self._consume_any("estop", "emergency_stop")
-        passive_requested = self._consume_any("get_down", "passive")
-        stand_requested = self._consume_any("stand", "get_up")
-        enable_rl = self._consume_any("enable_rl", "rl_enable", "start_rl")
-        disable_rl = self._consume_any("disable_rl", "rl_disable", "stop_rl")
+        events, stop_generation = self.commands.consume_many(
+            "zero_velocity",
+            "estop",
+            "reset",
+            "get_down",
+            "disable_rl",
+            "stand",
+            "enable_rl",
+        )
+        estop_requested = events["estop"]
+        reset_requested = events["reset"]
+        passive_requested = events["get_down"]
+        disable_rl = events["disable_rl"]
+        stand_requested = events["stand"]
+        enable_rl = events["enable_rl"]
+        safety_event = estop_requested or reset_requested or passive_requested or disable_rl
+        transition_stop_generation: int | None = None
+
+        # Global safety priority is strict and independent of the current FSM
+        # state: estop > reset > get-down > disable-RL > stand/enable/auto.
         if estop_requested:
             self._enter_fault("operator emergency stop", state)
         elif reset_requested:
             self.commands.stop(); self.backend.reset(); self._last_state_time = None; self._stale_elapsed = 0.0; self._fault_reason = None
             self._last_sequence = None
             self._enter_passive(); self._auto_stand_armed = bool(self.cfg.auto_stand); self._auto_enable_armed = bool(self.cfg.auto_stand and self.cfg.auto_enable_rl); self.step_index = 0; state = self.backend.read_state(); self.command = self.commands.command()
-        elif passive_requested and self.state not in (State.PASSIVE, State.FAULT):
-            self.commands.stop(); self._request_passive(state)
+        elif passive_requested:
+            self.commands.stop()
+            if self.state not in (State.PASSIVE, State.FAULT):
+                self._request_passive(state)
+        elif disable_rl:
+            self.commands.stop()
+            if self.state is State.RL:
+                self._leave_rl()
         elif stand_requested:
             # A manual stand is deliberately a two-step operator flow: first
             # reach STAND, then wait for an explicit enable_rl request.
@@ -288,6 +378,15 @@ class LocomotionFSM:
             self._request_stand(state)
         elif self.cfg.auto_stand and self._auto_stand_armed and self.state == State.PASSIVE and self.state_time > 0.2:
             self._request_stand(state)
+
+        # A simultaneous reset+disable/get-down keeps reset's backend recovery
+        # semantics while preserving the safer lower-priority cancellation.
+        if disable_rl or passive_requested:
+            self._auto_enable_armed = False
+        if passive_requested:
+            self._auto_stand_armed = False
+        operator_command = self.commands.command()
+        self.command = self._apply_heading_hold(state, operator_command)
 
         stale = self._state_stale(state)
         finite = bool(np.all(np.isfinite(state.joint_position)) and np.all(np.isfinite(state.joint_velocity)))
@@ -342,15 +441,11 @@ class LocomotionFSM:
         elif self.state == State.STAND:
             self.target = self.cfg.default_joint.copy()
             if self.fallen(state): self._enter_fault("fall detected while standing", state)
-            elif enable_rl or self._auto_enable_armed:
-                self._auto_enable_armed = False
-                self.state, self.state_time = State.RL, 0.0; self._rl_phase_time = 0.0; self._rl_step_index = 0; self._observation_history.clear(); self._set_backend_mode("RL")
+            elif not safety_event and (enable_rl or self._auto_enable_armed):
+                transition_stop_generation = self._enter_rl()
             self.last_action.fill(0.0)
         elif self.state == State.RL:
-            if disable_rl:
-                self._auto_enable_armed = False
-                self.state, self.state_time = State.STAND, 0.0; self.last_action.fill(0.0); self.target = self.cfg.default_joint.copy(); self._set_backend_mode("STAND")
-            elif self.fallen(state): self._enter_fault("fall detected during RL", state)
+            if self.fallen(state): self._enter_fault("fall detected during RL", state)
             elif self._rl_step_index % max(1, int(round(self.cfg.control_dt / max(dt, 1e-9)))) == 0:
                 try:
                     self.last_action = np.asarray(self.policy(self.observation(state)), dtype=np.float64)
@@ -376,3 +471,8 @@ class LocomotionFSM:
             self.last_action.fill(0.0); self.target = np.where(np.isfinite(self.target), self.target, self.cfg.lying_joint)
         if not np.all(np.isfinite(self.target)): self._enter_fault("non-finite joint target", state if finite else None)
         self._write_command(); self.backend.step(); self.step_index += 1
+        self.commands.acknowledge_stop(
+            transition_stop_generation
+            if transition_stop_generation is not None
+            else stop_generation
+        )

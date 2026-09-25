@@ -351,9 +351,14 @@ class HIMPPO:
 
         actor: HIMActorModel = actor_class(obs, cfg["obs_groups"], "actor", env.num_actions, **actor_cfg).to(device)
         critic: MLPModel = critic_class(obs, cfg["obs_groups"], "critic", 1, **critic_cfg).to(device)
-        storage = HIMRolloutStorage("rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device)
         if not alg_cfg.get("estimator_obs_groups"):
             alg_cfg["estimator_obs_groups"] = list(cfg["obs_groups"]["critic"])
+        elif isinstance(alg_cfg["estimator_obs_groups"], str):
+            alg_cfg["estimator_obs_groups"] = [alg_cfg["estimator_obs_groups"]]
+        storage = HIMRolloutStorage(
+            "rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device,
+            next_observation_groups=alg_cfg["estimator_obs_groups"],
+        )
         algorithm = alg_class(
             actor,
             critic,
@@ -418,13 +423,25 @@ class HIMPPO:
         extras: dict[str, torch.Tensor],
     ) -> tuple[TensorDict, torch.Tensor]:
         """Resolve true post-step observations and the samples valid for estimator training."""
-        next_observations = obs.clone()
+        # Storage copies these tensors before the runner resets any environments.
+        # Keep only the estimator inputs and avoid cloning the actor's history.
+        next_observations = obs.select(*self.storage.next_observation_groups)
+        terminal_observations = self._get_terminal_observations(extras)
+        if terminal_observations is obs:
+            # The manual-reset runner supplies the unmodified post-step batch.
+            # Every row is valid, including true terminal states; no mask/sync
+            # or intermediate copy is needed before storage.add_transition().
+            valid = torch.ones((dones.numel(), 1), dtype=torch.bool, device=self.device)
+            return next_observations, valid
+
         done_mask = dones.reshape(-1).bool().to(self.device)
         valid = (~done_mask).view(-1, 1)
-        terminal_observations = self._get_terminal_observations(extras)
         if terminal_observations is None or not done_mask.any():
             return next_observations, valid
 
+        # Auto-reset adapters may provide separate full-batch or done-only
+        # terminal observations. Do not overwrite their post-reset input batch.
+        next_observations = next_observations.clone()
         terminal_observations = terminal_observations.to(self.device)
         copied = False
         required_groups = self.estimator_obs_groups or self.actor.obs_groups

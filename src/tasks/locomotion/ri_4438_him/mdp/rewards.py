@@ -5,14 +5,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
+import math
 
 from mjlab.envs.mdp.rewards import *  # noqa: F401, F403
 from mjlab.tasks.velocity.mdp.rewards import *  # noqa: F401, F403
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import BuiltinSensor, ContactSensor, TerrainHeightSensor
-from mjlab.utils.lab_api.math import quat_apply_inverse
+from mjlab.sensor import BuiltinSensor, ContactSensor, TerrainHeightSensor, RayCastSensor
+from mjlab.utils.lab_api.math import quat_apply, quat_apply_inverse, yaw_quat
 from mjlab.utils.lab_api.string import resolve_matching_names_values
 
 if TYPE_CHECKING:
@@ -21,37 +22,60 @@ if TYPE_CHECKING:
 _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
-def track_linear_velocity_l1(
+def track_linear_velocity(
   env: ManagerBasedRlEnv,
+  std: float,
   command_name: str,
-  command_threshold: float = 0.1,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
+  """ 
+  跟踪期望线速度
+
+  数学公式:
+    r = exp( -( ||v*_xy - v^b_xy||^2 + 2 * (v^b_z)^2 ) / std^2 )
+
+  符号说明:
+    v*_xy  : 期望水平线速度 [vx*, vy*] (command[:, :2])
+    v^b_xy : 机器人机体局部系当前水平线速度 (root_link_lin_vel_b[:, :2])
+    v^b_z  : 机器人垂直线速度 (权重为 2，用于抑制躯干跳跃和上下颠簸)
+    std    : 高斯核宽度参数
+  """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
-
+  assert command is not None, f"Command '{command_name}' not found."
   actual = asset.data.root_link_lin_vel_b
-  error = torch.linalg.norm(
-    command[:, :2] - actual[:, :2],
-    dim=1,
-  )
-
-  active = (
-    torch.linalg.norm(command[:, :2], dim=1)
-    + torch.abs(command[:, 2])
-    > command_threshold
-  ).to(error.dtype)
-
-  return error * active
+  xy_error = torch.sum(torch.square(command[:, :2] - actual[:, :2]), dim=1)
+  z_error = torch.square(actual[:, 2])
+  lin_vel_error = xy_error + (2 * z_error)
+  return torch.exp(-lin_vel_error / std**2)
 
 
-def track_angular_velocity(env: ManagerBasedRlEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
+def track_angular_velocity(
+  env: ManagerBasedRlEnv,
+  std: float,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """ 
+  跟踪期望角速度
+
+  数学公式:
+    r = exp( -( (w*_z - w^b_z)^2 + 0.05 * ||w^b_xy||^2 ) / std^2 )
+
+  符号说明:
+    w*_z   : 期望偏航角速度 (command[:, 2])
+    w^b_z  : 机体局部系实际偏航角速度 (root_link_ang_vel_b[:, 2])
+    w^b_xy : 机体横滚与俯仰角速度 [wx, wy] (权重 0.05，抑制机身侧倾晃动)
+    std    : 高斯核宽度参数
+  """
   asset: Entity = env.scene[asset_cfg.name]
   command = env.command_manager.get_command(command_name)
-  assert command is not None
+  assert command is not None, f"Command '{command_name}' not found."
   actual = asset.data.root_link_ang_vel_b
-  error = torch.square(command[:, 2] - actual[:, 2]) + 0.05 * torch.square(actual[:, :2]).sum(dim=1)
-  return torch.exp(-error / std**2)
+  z_error = torch.square(command[:, 2] - actual[:, 2])
+  xy_error = torch.sum(torch.square(actual[:, :2]), dim=1)
+  ang_vel_error = z_error + (0.05 * xy_error)
+  return torch.exp(-ang_vel_error / std**2)
 
 
 def body_orientation_l2(env: ManagerBasedRlEnv, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
@@ -92,53 +116,6 @@ def feet_gait(env: ManagerBasedRlEnv, period: float, offset: list[float], thresh
     active = (torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2]) > command_threshold).float()
     reward *= active
   return reward
-
-
-def feet_clearance(
-  env: ManagerBasedRlEnv, 
-  target_height: float, 
-  height_sensor_name: str,
-  command_name: str | None = None, 
-  command_threshold: float = 0.1, 
-  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG
-  ) -> torch.Tensor:
-  # asset: Entity = env.scene[asset_cfg.name]
-  # heights = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]
-  # velocities = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]
-  # cost = (torch.abs(heights - target_height) * torch.linalg.norm(velocities, dim=-1)).sum(dim=1)
-  # if command_name is not None:
-  #   command = env.command_manager.get_command(command_name)
-  #   if command is not None:
-  #     cost *= (torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2]) > command_threshold).float()
-  # return cost
-  asset: Entity = env.scene[asset_cfg.name]
-  height_sensor: TerrainHeightSensor = env.scene[height_sensor_name]
-
-  # [B, N]，每只脚的脚端中心到局部地形表面的垂直距离
-  foot_clearance = height_sensor.data.heights
-
-  # 与脚端高度保持相同顺序
-  foot_vel_xy = asset.data.site_lin_vel_w[
-    :, asset_cfg.site_ids, :2
-  ]
-  foot_speed = torch.linalg.norm(foot_vel_xy, dim=-1)
-
-  cost = (
-    torch.abs(foot_clearance - target_height) * foot_speed
-  ).sum(dim=1)
-
-  if command_name is not None:
-    command = env.command_manager.get_command(command_name)
-    if command is not None:
-      active = (
-        torch.linalg.norm(command[:, :2], dim=1)
-        + torch.abs(command[:, 2])
-        > command_threshold
-      ).float()
-      cost *= active
-
-  return cost
-
 
 def stand_still(env: ManagerBasedRlEnv, command_name: str, command_threshold: float = 0.1, asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG) -> torch.Tensor:
   asset: Entity = env.scene[asset_cfg.name]
@@ -189,7 +166,8 @@ class variable_posture:
     error = asset.data.joint_pos[:, asset_cfg.joint_ids] - self.default_joint_pos[:, asset_cfg.joint_ids]
     return torch.exp(-torch.mean(torch.square(error) / torch.square(std), dim=1))
 
-def feet_clearance_phase(
+
+def feet_clearance_phase_plateau(
   env: ManagerBasedRlEnv,
   target_height: float,
   height_sensor_name: str,
@@ -199,52 +177,131 @@ def feet_clearance_phase(
   threshold: float = 0.56,
   foot_radius: float = 0.0155,
   command_threshold: float = 0.1,
+  ramp_fraction: float = 0.25,
 ) -> torch.Tensor:
-  """在期望摆动阶段惩罚净空不足，不依赖实际脚速或接触状态。"""
+  """Penalize insufficient terrain-relative clearance during swing."""
+
+  if period <= 0.0:
+    raise ValueError("period must be positive")
   if not 0.0 < threshold < 1.0:
-    raise ValueError("threshold 必须在 0 和 1 之间")
-  if not 0.0 <= foot_radius < target_height:
-    raise ValueError("需要 0 <= foot_radius < target_height")
+    raise ValueError("threshold must be in (0, 1)")
+  if not 0.0 < ramp_fraction <= 0.5:
+    raise ValueError("ramp_fraction must be in (0, 0.5]")
+  if target_height <= foot_radius:
+    raise ValueError("target_height must be greater than foot_radius")
 
+  sensor: TerrainHeightSensor = env.scene[height_sensor_name]
+  data = sensor.data
+  raw_heights = data.heights
+
+  if raw_heights.ndim != 2:
+    raise ValueError("height sensor data must have shape [B, F]")
+
+  num_envs, num_feet = raw_heights.shape
+  if len(offset) != num_feet:
+    raise ValueError("offset length must match number of feet")
+
+  # A foot is valid only if at least one ray really hit terrain.
+  rays_per_foot = sensor.num_rays_per_frame
+  ray_distances = data.distances.reshape(
+    num_envs, num_feet, rays_per_foot
+  )
+  valid = (
+    torch.isfinite(ray_distances)
+    & (ray_distances >= 0.0)
+  ).any(dim=-1)
+  valid &= torch.isfinite(raw_heights)
+
+  heights = torch.where(
+    valid,
+    raw_heights,
+    torch.zeros_like(raw_heights),
+  )
+
+  # Use discrete phase so the last swing sample reaches u=1 exactly.
   period_steps = int(round(period / env.step_dt))
-  if period_steps < 2 or abs(period_steps * env.step_dt - period) > 1e-6:
-    raise ValueError("period 必须是控制步长的整数倍，且至少包含两个控制步")
+  if (
+    period_steps < 3
+    or not math.isclose(
+      period_steps * env.step_dt,
+      period,
+      abs_tol=1.0e-6,
+    )
+  ):
+    raise ValueError("period must be an integer multiple of env.step_dt")
 
-  height_sensor: TerrainHeightSensor = env.scene[height_sensor_name]
-  heights = height_sensor.data.heights
-  if heights.ndim != 2 or heights.shape[1] != len(offset):
-    raise ValueError("高度传感器的脚数量必须与 offset 长度一致")
+  stance_steps = math.ceil(threshold * period_steps)
+  swing_steps = period_steps - stance_steps
+  if swing_steps < 2:
+    raise ValueError("swing phase must contain at least two steps")
 
-  # 与 feet_gait 使用相同的周期计数与相位偏移。
-  phase = (
-    (env.episode_length_buf % period_steps).to(heights.dtype) / period_steps
-  ).unsqueeze(1)
-  offsets = torch.as_tensor(
-    offset, device=heights.device, dtype=heights.dtype
-  ).view(1, -1)
-  leg_phase = (phase + offsets) % 1.0
-  swing = leg_phase >= threshold
+  offset_steps_list = [
+    int(round(value * period_steps)) for value in offset
+  ]
+  offset_steps = torch.tensor(
+    offset_steps_list,
+    device=heights.device,
+    dtype=torch.long,
+  )
 
-  # 摆动进度 0 -> 1；净空要求由脚半径升至 target_height，再下降。
-  swing_phase = ((leg_phase - threshold) / (1.0 - threshold)).clamp(0.0, 1.0)
-  amplitude = target_height - foot_radius
-  required_height = foot_radius + amplitude * torch.sin(
-    torch.pi * swing_phase
-  ).square()
+  leg_step = torch.remainder(
+    env.episode_length_buf.to(torch.long).unsqueeze(1)
+    + offset_steps.unsqueeze(0),
+    period_steps,
+  )
+
+  expected_swing = leg_step >= stance_steps
+  swing_progress = (
+    (leg_step - stance_steps).to(heights.dtype)
+    / float(swing_steps - 1)
+  ).clamp(0.0, 1.0)
+
+  # smoothstep rise -> plateau -> smoothstep fall
+  rise = (swing_progress / ramp_fraction).clamp(0.0, 1.0)
+  fall = (
+    (1.0 - swing_progress) / ramp_fraction
+  ).clamp(0.0, 1.0)
+
+  rise = rise.square() * (3.0 - 2.0 * rise)
+  fall = fall.square() * (3.0 - 2.0 * fall)
+  profile = torch.minimum(rise, fall)
+
+  clearance_range = target_height - foot_radius
+  required_height = foot_radius + clearance_range * profile
 
   command = env.command_manager.get_command(command_name)
-  assert command is not None
-  active = (
-    torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+  command = torch.nan_to_num(command)
+
+  moving = (
+    torch.linalg.vector_norm(command[:, :2], dim=1)
     > command_threshold
   )
-  mask = (swing & active.unsqueeze(1)).to(heights.dtype)
+  moving |= torch.abs(command[:, 2]) > command_threshold
 
-  # 抬得比要求高不扣分；使用无量纲误差，并对四只脚取平均。
-  shortfall = (required_height - heights).clamp_min(0.0)
-  cost = ((shortfall / amplitude).square() * mask).mean(dim=1)
+  mask = expected_swing & valid & moving.unsqueeze(1)
 
-  env.extras["log"]["Metrics/swing_clearance_shortfall_m"] = (
-    (shortfall * mask).sum() / mask.sum().clamp_min(1.0)
-  )
-  return cost
+  # Bounded shortfall penalty in [0, 1] for each foot.
+  shortfall = (
+    (required_height - heights) / clearance_range
+  ).clamp(0.0, 1.0)
+
+  cost = (
+    shortfall.square()
+    * mask.to(heights.dtype)
+  ).mean(dim=1)
+
+  return torch.nan_to_num(cost)
+
+
+def stumble(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  ratio: float = 5.0,
+) -> torch.Tensor:
+  force = env.scene[sensor_name].data.force
+  assert force is not None
+
+  horizontal_force = torch.linalg.norm(force[..., :2], dim=-1)
+  vertical_force = torch.abs(force[..., 2])
+
+  return (horizontal_force > ratio * vertical_force).any(dim=1).float()

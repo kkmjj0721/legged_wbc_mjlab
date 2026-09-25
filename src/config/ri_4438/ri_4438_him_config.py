@@ -5,14 +5,14 @@ actor also contains the two-dimensional sinusoidal gait phase, so the actual
 frame is 47 dimensions and the six-frame history is 282 dimensions.
 """
 
-from src.config.ri_4438.ri_4438_config import Ri4438CfgPPO, Ri4438PiperCfg
+from src.config.ri_4438.ri_4438_config import Ri4438CfgPPO, Ri4438Cfg
 
 
-class Ri4438HimCfg(Ri4438PiperCfg):
+class Ri4438HimCfg(Ri4438Cfg):
     """Environment-side dimensions and robot defaults used by HIM."""
 
-    class env(Ri4438PiperCfg.env):
-        num_envs = 16384
+    class env(Ri4438Cfg.env):
+        num_envs = 1024
         num_actions = 12
         num_one_step_obs = 3 + 3 + 3 + 2 + num_actions * 3  # 47
         history_size = 6

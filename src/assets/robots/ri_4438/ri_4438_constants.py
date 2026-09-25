@@ -9,10 +9,10 @@ from mjlab.utils.actuator import ElectricActuator, reflected_inertia
 from mjlab.utils.spec_config import CollisionCfg
 
 
-from config.ri_4438.ri_4438_config import Ri4438PiperCfg
+from config.ri_4438.ri_4438_config import Ri4438Cfg
 
 
-Ri4438_piper_cfg = Ri4438PiperCfg()
+Ri4438_piper_cfg = Ri4438Cfg()
 
 ##
 # MJCF

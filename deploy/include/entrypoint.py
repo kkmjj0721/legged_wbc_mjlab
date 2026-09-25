@@ -21,6 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gamepad-name", type=str, default=None, help="substring used to select a gamepad")
     parser.add_argument("--gamepad-guid", type=str, default=None, help="SDL GUID used to select a gamepad")
     parser.add_argument("--gamepad-index", type=int, default=None, help="joystick index (0-based) to select")
+    parser.add_argument(
+        "--input-debug",
+        action="store_true",
+        default=None,
+        help="show rate-limited input connection, calibration, owner, and command state",
+    )
     auto_stand = parser.add_mutually_exclusive_group()
     auto_stand.add_argument(
         "--auto-stand",
@@ -53,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
         cfg.gamepad_options["device_guid"] = args.gamepad_guid
     if args.gamepad_index is not None:
         cfg.gamepad_options["device_index"] = args.gamepad_index
+    if args.input_debug is not None:
+        # An explicit CLI flag takes priority over the task configuration.
+        cfg.gamepad_options["input_debug"] = args.input_debug
     if args.auto_stand is not None:
         cfg.auto_stand = args.auto_stand
     if args.no_policy:
@@ -89,7 +98,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"name={options.get('device_name') or 'any'} "
                 f"guid={options.get('device_guid') or 'any'} "
                 f"index={options.get('device_index') if options.get('device_index') is not None else 'any'} "
-                f"deadzone={float(options.get('deadzone', 0.12)):.2f} "
+                f"deadzone={float(options.get('deadzone_enter', options.get('deadzone', 0.12))):.2f}/"
+                f"{float(options.get('deadzone_exit', 0.08)):.2f} "
+                f"input_debug={'on' if options.get('input_debug', False) else 'off'} "
                 "mapping=A:stand X:RL B:disable Y:getdown Start:reset Back:estop+quit"
             )
         runtime.run(headless=args.headless or not cfg.render, max_steps=args.steps)

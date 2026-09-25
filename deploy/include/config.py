@@ -37,6 +37,56 @@ OBSERVATION_TERM_DIMS = {
 }
 
 
+_DEFAULT_GAMEPAD_ENTER_DEADZONE = 0.18
+_DEFAULT_GAMEPAD_EXIT_DEADZONE = 0.15
+_DEFAULT_CALIBRATION_CENTER_LIMIT = 0.15
+_DEFAULT_CALIBRATION_RELEASE_MARGIN = 0.005
+
+
+def _validate_gamepad_center_safety(options: dict[str, Any]) -> None:
+    """Reject calibration settings that can turn stick release into motion."""
+
+    try:
+        enter = float(
+            options.get(
+                "deadzone_enter",
+                options.get("deadzone", _DEFAULT_GAMEPAD_ENTER_DEADZONE),
+            )
+        )
+        exit_deadzone = float(
+            options.get("deadzone_exit", _DEFAULT_GAMEPAD_EXIT_DEADZONE)
+        )
+        center_limit = float(options["calibration_center_limit"])
+        margin = float(options["calibration_release_margin"])
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "gamepad deadzone and calibration center safety values must be numeric"
+        ) from exc
+    if (
+        not np.isfinite(enter)
+        or not np.isfinite(exit_deadzone)
+        or not 0.0 < exit_deadzone <= enter < 1.0
+    ):
+        raise ValueError(
+            "gamepad deadzones must satisfy 0 < deadzone_exit <= deadzone_enter < 1"
+        )
+    if not np.isfinite(center_limit) or not 0.0 < center_limit < 1.0:
+        raise ValueError("gamepad calibration center_limit must be in (0, 1)")
+    if not np.isfinite(margin) or margin <= 0.0:
+        raise ValueError("gamepad calibration release_margin must be finite and positive")
+    # This is the per-axis/yaw configuration bound.  AxisCalibrator applies
+    # the stronger radial translation check to the measured center vector.
+    release_at_limit = center_limit / (1.0 + center_limit)
+    if not release_at_limit + margin < exit_deadzone:
+        raise ValueError(
+            "unsafe gamepad calibration: center_limit/(1+center_limit) + "
+            "release_margin must be strictly below deadzone_exit "
+            f"({release_at_limit:.6f} + {margin:.6f} !< {exit_deadzone:.6f}); "
+            "diagnose the physical center, then lower center_limit or "
+            "explicitly increase both deadzones"
+        )
+
+
 def _array(value: Iterable[float], size: int, name: str) -> np.ndarray:
     array = np.asarray(list(value), dtype=np.float64)
     if array.shape != (size,):
@@ -86,7 +136,7 @@ class SimConfig:
     fall_height: float = 0.055
     fall_tilt: float = 1.20
     command_deadzone: float = 0.08
-    joystick_axes: tuple[int, int, int] = (0, 1, 2)
+    joystick_axes: tuple[int, int, int] = (0, 1, 3)
     input_backend: str = "both"
     auto_stand: bool = False
     render: bool = True
@@ -172,9 +222,11 @@ def load_config(
     policy = None if policy_value is None else Path(policy_value)
     if policy is not None and not policy.is_absolute():
         policy = REPO_ROOT / policy
-    joystick_axes = tuple(int(axis) for axis in input_cfg.get("joystick_axes", [0, 1, 2]))
+    joystick_axes = tuple(int(axis) for axis in input_cfg.get("joystick_axes", [0, 1, 3]))
     if len(joystick_axes) != 3:
         raise ValueError("joystick_axes must contain [left_x, left_y, right_x]")
+    if any(axis < 0 for axis in joystick_axes) or len(set(joystick_axes)) != 3:
+        raise ValueError("joystick_axes must contain three distinct non-negative indices")
     # ``input.gamepad`` is the preferred explicit section.  For compatibility
     # with the original YAML, values may also be provided directly under
     # ``input``.  Filter the mapping so unrelated input keys never reach
@@ -184,20 +236,77 @@ def load_config(
         gamepad_cfg = {}
     if not isinstance(gamepad_cfg, dict):
         raise ValueError("input.gamepad must be a mapping")
+    calibration_cfg = gamepad_cfg.get("calibration", {})
+    if calibration_cfg is None:
+        calibration_cfg = {}
+    if not isinstance(calibration_cfg, dict):
+        raise ValueError("input.gamepad.calibration must be a mapping")
+    neutral_cfg = gamepad_cfg.get("neutral_rearm", {})
+    if neutral_cfg is None:
+        neutral_cfg = {}
+    if not isinstance(neutral_cfg, dict):
+        raise ValueError("input.gamepad.neutral_rearm must be a mapping")
     gamepad_options: dict[str, Any] = {
         "device_name": gamepad_cfg.get("device_name", input_cfg.get("device_name")),
         "device_guid": gamepad_cfg.get("device_guid", input_cfg.get("device_guid")),
         "device_index": gamepad_cfg.get("device_index", input_cfg.get("device_index")),
         "axis_config": gamepad_cfg.get("axis_config", input_cfg.get("axis_config")),
         "button_config": gamepad_cfg.get("button_config", input_cfg.get("button_config")),
-        "deadzone": gamepad_cfg.get("deadzone", input_cfg.get("deadzone", 0.12)),
+        "deadzone": gamepad_cfg.get(
+            "deadzone",
+            input_cfg.get("gamepad_deadzone", _DEFAULT_GAMEPAD_ENTER_DEADZONE),
+        ),
+        "deadzone_enter": gamepad_cfg.get("deadzone_enter"),
+        "deadzone_exit": gamepad_cfg.get(
+            "deadzone_exit",
+            input_cfg.get("gamepad_deadzone_exit", _DEFAULT_GAMEPAD_EXIT_DEADZONE),
+        ),
         "yaw_rescale": gamepad_cfg.get("yaw_rescale", input_cfg.get("yaw_rescale", 1.0)),
         "reconnect_interval": gamepad_cfg.get("reconnect_interval", 1.0),
         "liveness_timeout": gamepad_cfg.get("liveness_timeout", 2.0),
         "prefer_controller": gamepad_cfg.get("prefer_controller", True),
+        "calibration_samples": calibration_cfg.get(
+            "samples", gamepad_cfg.get("calibration_samples", 25)
+        ),
+        "calibration_duration": calibration_cfg.get(
+            "duration", gamepad_cfg.get("calibration_duration", 0.25)
+        ),
+        "calibration_max_mad": calibration_cfg.get(
+            "max_mad", gamepad_cfg.get("calibration_max_mad", 0.01)
+        ),
+        "calibration_max_peak_to_peak": calibration_cfg.get(
+            "max_peak_to_peak",
+            gamepad_cfg.get("calibration_max_peak_to_peak", 0.04),
+        ),
+        "calibration_center_limit": calibration_cfg.get(
+            "center_limit",
+            gamepad_cfg.get(
+                "calibration_center_limit", _DEFAULT_CALIBRATION_CENTER_LIMIT
+            ),
+        ),
+        "calibration_extreme_limit": calibration_cfg.get(
+            "extreme_limit", gamepad_cfg.get("calibration_extreme_limit", 0.90)
+        ),
+        "calibration_release_margin": calibration_cfg.get(
+            "release_margin",
+            gamepad_cfg.get(
+                "calibration_release_margin", _DEFAULT_CALIBRATION_RELEASE_MARGIN
+            ),
+        ),
+        "neutral_rearm_samples": neutral_cfg.get(
+            "samples", gamepad_cfg.get("neutral_rearm_samples", 5)
+        ),
+        "neutral_rearm_duration": neutral_cfg.get(
+            "duration", gamepad_cfg.get("neutral_rearm_duration", 0.10)
+        ),
+        "input_debug": gamepad_cfg.get(
+            "input_debug", input_cfg.get("input_debug", False)
+        ),
+        "debug_interval": gamepad_cfg.get("debug_interval", 0.25),
     }
     # Drop unset optional selectors; JoystickInput treats None as no filter.
     gamepad_options = {key: value for key, value in gamepad_options.items() if value is not None}
+    _validate_gamepad_center_safety(gamepad_options)
     required_policy_keys = ("joint_names", "observation_dim", "action_dim", "command_dim", "observation_terms")
     missing_policy_keys = [key for key in required_policy_keys if key not in policy_cfg]
     if missing_policy_keys:

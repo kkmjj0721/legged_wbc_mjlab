@@ -42,6 +42,8 @@ class HIMOnPolicyRunner(OnPolicyRunner):
             print(f"Synchronizing parameters for rank {self.gpu_global_rank}...")
             self.alg.broadcast_parameters()
         self.logger.init_logging_writer()
+        unwrapped = getattr(self.env, "unwrapped", None)
+        manual_reset = not getattr(getattr(unwrapped, "cfg", None), "auto_reset", True)
 
         start_it = self.current_learning_iteration
         total_it = start_it + num_learning_iterations
@@ -66,12 +68,14 @@ class HIMOnPolicyRunner(OnPolicyRunner):
 
                     # HIMPPO stores next_obs before reset. With auto_reset=False
                     # this is the true terminal physics state for done envs.
-                    step_extras["terminal_observations"] = next_obs
+                    if manual_reset:
+                        step_extras["terminal_observations"] = next_obs
                     self.alg.process_env_step(next_obs, rewards, dones, step_extras)
-                    reset_ids = dones.reshape(-1).nonzero(as_tuple=False).flatten()
                     reset_extras: dict = {}
-                    if reset_ids.numel() > 0:
-                        next_obs, reset_extras = self._reset_done_envs(next_obs, reset_ids)
+                    if manual_reset:
+                        reset_ids = dones.reshape(-1).nonzero(as_tuple=False).flatten()
+                        if reset_ids.numel() > 0:
+                            next_obs, reset_extras = self._reset_done_envs(next_obs, reset_ids)
                     # With auto_reset=False, MjLab emits Episode_Reward/*,
                     # Episode_Metrics/*, and Episode_Termination/* from the
                     # explicit reset call rather than from env.step(). Merge
@@ -114,7 +118,11 @@ class HIMOnPolicyRunner(OnPolicyRunner):
     def _reset_done_envs(
         self, terminal_obs: TensorDict, reset_ids: torch.Tensor
     ) -> tuple[TensorDict, dict]:
-        """Partially reset done MjLab environments and merge their new observations."""
+        """Merge reset rows in place after process_env_step has copied the transition.
+
+        Non-reset rows keep their original noisy/delayed observations. Returning
+        the complete reset() batch would resample their stateless observations.
+        """
         unwrapped = getattr(self.env, "unwrapped", None)
         if unwrapped is None or not hasattr(unwrapped, "reset"):
             raise RuntimeError(
@@ -130,8 +138,7 @@ class HIMOnPolicyRunner(OnPolicyRunner):
         reset_obs = reset_result[0] if isinstance(reset_result, tuple) else reset_result
         reset_extras = reset_result[1] if isinstance(reset_result, tuple) else {}
         reset_obs = TensorDict(reset_obs, batch_size=[self.env.num_envs], device=self.device)
-        merged = terminal_obs.clone()
-        for key in merged.keys():
+        for key in terminal_obs.keys():
             if key in reset_obs:
-                merged[key][reset_ids] = reset_obs[key].to(self.device)[reset_ids]
-        return merged, reset_extras
+                terminal_obs[key][reset_ids] = reset_obs[key].to(self.device)[reset_ids]
+        return terminal_obs, reset_extras
