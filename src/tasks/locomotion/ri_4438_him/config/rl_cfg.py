@@ -10,6 +10,10 @@ from mjlab.rl import (
 )
 
 from src.config.ri_4438.ri_4438_him_config import Ri4438CFGHimPPO
+from src.config.ri_4438.numerics import (
+  ACTION_CLIP, OBSERVATION_CLIP, RAW_ACTION_ABORT, RAW_OBSERVATION_ABORT,
+  ACTION_OBSERVATION_SLICE,
+)
 
 
 ri_4438_him_cfg = Ri4438CFGHimPPO()
@@ -22,6 +26,9 @@ class RslRlHimActorCfg(RslRlModelCfg):
   hidden_dims: tuple[int, ...] = tuple(ri_4438_him_cfg.policy.actor_hidden_dims)
   activation: str = ri_4438_him_cfg.policy.activation
   obs_normalization: bool = ri_4438_him_cfg.policy.obs_normalization
+  observation_clip: float = OBSERVATION_CLIP
+  action_clip: float = ACTION_CLIP
+  action_observation_slice: tuple[int, int] = ACTION_OBSERVATION_SLICE
   distribution_cfg: dict[str, Any] = field(
     default_factory=lambda: {
       "class_name": "rsl_rl.modules.distribution:GaussianDistribution",
@@ -89,8 +96,12 @@ class RslRlHimRunnerCfg(RslRlOnPolicyRunnerCfg):
   )
   algorithm: RslRlHimAlgorithmCfg = field(default_factory=RslRlHimAlgorithmCfg)
   class_name: str = "src.tasks.locomotion.ri_4438_him.rl.runner:HIMOnPolicyRunner"
-
-  # check_for_nan: bool = False
+  clip_actions: float = ACTION_CLIP
+  numerics: dict[str, Any] = field(default_factory=lambda: {
+    "raw_action_abort": RAW_ACTION_ABORT,
+    "raw_observation_abort": RAW_OBSERVATION_ABORT,
+    "history_steps": 8,
+  })
 
 
 def ri_4438_him_runner_cfg() -> RslRlHimRunnerCfg:

@@ -181,6 +181,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         actuator_names = (".*",),
         scale = scale,
         use_default_offset = True,
+        clip={
+            r".*_hip_joint": (-1.50, 1.50),
+            r".*_thigh_joint": (-1.57, 3.49),
+            r".*_calf_joint": (-2.53, -0.84),
+        },
       )
     }
 
@@ -258,7 +263,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
         "operation": "abs",
-        "ranges": (0.3, 1.6),
+        "ranges": (0.25, 1.6),
         "shared_random": True,  # All foot geoms share the same friction.
       },
     ),
@@ -267,7 +272,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dr.encoder_bias,
       params={
         "asset_cfg": SceneEntityCfg("robot"),
-        "bias_range": (-0.015, 0.015),
+        "bias_range": (-0.02, 0.02),
       },
     ),
     "base_com": EventTermCfg(
@@ -349,7 +354,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg(
       func=mdp.variable_posture,
-      weight=1.0,
+      weight = 0.5,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
@@ -357,12 +362,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "std_walking": {},  # Set per-robot.
         "std_running": {},  # Set per-robot.ss
         "walking_threshold": 0.1,
-        "running_threshold": 1.5,
+        "running_threshold": 1.0,
       },
     ),
     "body_ang_vel": RewardTermCfg(
       func = mdp.body_angular_velocity_penalty,
-      weight = -0.1,  # Override per-robot
+      weight = -0.05,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
@@ -390,7 +395,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "period": 0.6,
         "offset": [0.0, 0.5],
         "threshold": 0.56,
-        "command_threshold": 0.1,
+        "command_threshold": 0.2,
         "command_name": "twist",
         "sensor_name": "feet_ground_contact",
       }
@@ -524,7 +529,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         terrain_generator=TerrainGeneratorCfg(
           curriculum=True, size=(8.0, 8.0), num_rows=10, num_cols=20, border_width=25.0,
           sub_terrains={
-            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.05),
+            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.1),
             "stairs_15": terrain_gen.BoxPyramidStairsTerrainCfg(
               proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
             ),
@@ -549,7 +554,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
             # One heightfield per patch avoids hundreds of separate box geoms.
             # This samples discrete pits/bumps; it is not the old dense box grid.
             "discrete_obstacles": terrain_gen.HfDiscreteObstaclesTerrainCfg(
-              proportion=0.2,
+              proportion=0.15,
               obstacle_width_range=(0.4, 0.4),
               obstacle_height_range=(0.01, 0.12),
               obstacle_height_mode="choice",
@@ -560,16 +565,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
               vertical_scale=0.005,
               border_width=0.4,
             ),
-            "random_uniform":terrain_gen.HfRandomUniformTerrainCfg(
-              proportion=0.05,
-              noise_range=(0.0, 0.06),
-              noise_step=0.005,
-              downsampled_scale=0.3,
-              horizontal_scale=0.1,
-              vertical_scale=0.005,
-              border_width=0.5,
-              scale_with_difficulty=True,
-            )
+            # "random_uniform":terrain_gen.HfRandomUniformTerrainCfg(
+            #   proportion=0.05,
+            #   noise_range=(0.0, 0.06),
+            #   noise_step=0.005,
+            #   downsampled_scale=0.3,
+            #   horizontal_scale=0.1,
+            #   vertical_scale=0.005,
+            #   border_width=0.5,
+            #   scale_with_difficulty=True,
+            # )
           },
         ),
         max_init_terrain_level = 9,

@@ -22,6 +22,7 @@ from tensordict import TensorDict
 
 from rsl_rl.algorithms import HIMPPO
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
+from rsl_rl.utils.numerics import TrainingNumericsGuard
 
 
 class HIMOnPolicyRunner(OnPolicyRunner):
@@ -44,16 +45,50 @@ class HIMOnPolicyRunner(OnPolicyRunner):
         self.logger.init_logging_writer()
         unwrapped = getattr(self.env, "unwrapped", None)
         manual_reset = not getattr(getattr(unwrapped, "cfg", None), "auto_reset", True)
+        guard = None
+        if self.cfg.get("numerics"):
+            guard = TrainingNumericsGuard(self.device, self.logger.log_dir, **self.cfg["numerics"])
+            self.alg.numerics_guard = guard
+
+        def check_observations(stage, values):
+            if guard is None:
+                return
+            raw_bad = getattr(unwrapped, "_him_numerics_bad", None)
+            evidence = getattr(unwrapped, "_him_numerics_evidence", {})
+            guard.check(stage, {"observations": values, "pre_clip": evidence},
+                        limit=guard.cfg["raw_observation_abort"], extra_bad=raw_bad)
+            if raw_bad is not None:
+                raw_bad.zero_()
+                for value in evidence.values():
+                    value.zero_()
 
         start_it = self.current_learning_iteration
         total_it = start_it + num_learning_iterations
         for it in range(start_it, total_it):
             start = time.time()
+            action_peak = torch.zeros((), device=self.device)
+            action_counts = torch.zeros(2, device=self.device)
             with torch.inference_mode():
-                for _ in range(self.cfg["num_steps_per_env"]):
+                for step in range(self.cfg["num_steps_per_env"]):
+                    if guard is not None:
+                        guard.iteration, guard.step = it, step
+                        guard.remember(observations=obs)
+                    check_observations("before_action", obs)
                     actions = self.alg.act(obs)
+                    if guard is not None:
+                        guard.remember(actions=actions)
+                        guard.check("raw_action", {"actions": actions, "distribution": self.alg.actor.output_distribution_params},
+                                    limit=guard.cfg["raw_action_abort"])
+                        action_peak = torch.maximum(action_peak, actions.abs().max())
+                        action_counts[0] += (actions.abs() > self.alg.actor.action_clip).sum()
+                        action_counts[1] += actions.numel()
                     next_obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
-                    if self.cfg.get("check_for_nan", True):
+                    check_observations("after_step", {
+                        "next": next_obs, "terminal": extras.get("terminal_observations"),
+                    })
+                    if guard is not None:
+                        guard.check("step_result", {"rewards": rewards, "dones": dones})
+                    elif self.cfg.get("check_for_nan", True):
                         from rsl_rl.utils import check_nan
 
                         check_nan(next_obs, rewards, dones)
@@ -76,6 +111,8 @@ class HIMOnPolicyRunner(OnPolicyRunner):
                         reset_ids = dones.reshape(-1).nonzero(as_tuple=False).flatten()
                         if reset_ids.numel() > 0:
                             next_obs, reset_extras = self._reset_done_envs(next_obs, reset_ids)
+                    if manual_reset:
+                        check_observations("after_reset", next_obs)
                     # With auto_reset=False, MjLab emits Episode_Reward/*,
                     # Episode_Metrics/*, and Episode_Termination/* from the
                     # explicit reset call rather than from env.step(). Merge
@@ -93,6 +130,20 @@ class HIMOnPolicyRunner(OnPolicyRunner):
                 self.alg.compute_returns(obs)
 
             loss_dict = self.alg.update()
+            if guard is not None:
+                # These buffers were created outside inference_mode and can
+                # safely be reduced once per rollout, including with NCCL.
+                action_peak = action_peak.clone()
+                if self.is_distributed:
+                    torch.distributed.all_reduce(action_peak, op=torch.distributed.ReduceOp.MAX)
+                    torch.distributed.all_reduce(action_counts)
+                loss_dict["numerics/raw_action_max"] = action_peak.item()
+                loss_dict["numerics/action_clip_fraction"] = (action_counts[0] / action_counts[1].clamp_min(1)).item()
+                policy = self.alg.get_policy()
+                if policy.obs_normalization and policy.action_observation_slice is not None:
+                    slice_start, slice_stop = policy.action_observation_slice
+                    action_std = policy.obs_normalizer.std.reshape(policy.history_size, -1)[:, slice_start:slice_stop]
+                    loss_dict["numerics/last_action_std_max"] = action_std.max().item()
             learn_time = time.time() - start
             self.current_learning_iteration = it
 

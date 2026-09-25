@@ -18,6 +18,7 @@ from mjlab.managers.observation_manager import ObservationGroupCfg
 from mjlab.managers.recorder_manager import RecorderTerm, RecorderTermCfg
 
 from .observations import phase
+from .numerics import checked_observation
 
 
 ESTIMATOR_TERMS = (
@@ -74,9 +75,12 @@ class TerminalEstimatorRecorder(RecorderTerm):
       mdp.builtin_sensor, mdp.projected_gravity, mdp.generated_commands,
       mdp.joint_pos_rel, mdp.joint_vel_rel, mdp.last_action, phase,
     }
-    self._kinematics_only = all(term.func in supported for term in group.terms.values())
+    def source(term):
+      return term.params["source_func"] if term.func is checked_observation else term.func
+
+    self._kinematics_only = all(source(term) in supported for term in group.terms.values())
     for term in group.terms.values():
-      if term.func is mdp.builtin_sensor:
+      if source(term) is mdp.builtin_sensor:
         sensor = env.sim.mj_model.sensor(term.params["sensor_name"])
         if sensor.type[0] not in (
           mujoco.mjtSensor.mjSENS_GYRO, mujoco.mjtSensor.mjSENS_VELOCIMETER,

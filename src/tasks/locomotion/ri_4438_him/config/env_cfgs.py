@@ -27,6 +27,7 @@ from src.tasks.locomotion.ri_4438_him.ri_4438_him_env_cfg import (
 from src.tasks.locomotion.ri_4438_him.mdp.terminal_observations import (
   configure_estimator_observations,
 )
+from src.tasks.locomotion.ri_4438_him.mdp.numerics import configure_numerical_observations
 
 import src.tasks.locomotion.ri_4438_him.mdp as mdp
 
@@ -255,6 +256,7 @@ def ri_4438_rough_env_cfg(
         cfg.scene.terrain.terrain_generator.num_rows = 5
         cfg.scene.terrain.terrain_generator.border_width = 10.0
 
+  configure_numerical_observations(cfg)
   configure_estimator_observations(cfg, play=play)
   return cfg
 

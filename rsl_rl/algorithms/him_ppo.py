@@ -65,6 +65,7 @@ class HIMPPO:
         del kwargs
 
         self.device = device
+        self.numerics_guard = None
         self.is_multi_gpu = multi_gpu_cfg is not None
         self.gpu_global_rank = int(multi_gpu_cfg.get("global_rank", 0)) if multi_gpu_cfg else 0
         self.gpu_world_size = int(multi_gpu_cfg.get("world_size", 1)) if multi_gpu_cfg else 1
@@ -178,6 +179,14 @@ class HIMPPO:
 
     def update(self) -> dict[str, float]:
         """Optimize PPO and HIM losses over the collected rollout."""
+        guard = self.numerics_guard
+        if guard is not None:
+            guard.check("rollout", {
+                "obs": self.storage.observations, "next_obs": self.storage.next_observations,
+                "actions": self.storage.actions, "rewards": self.storage.rewards,
+                "returns": self.storage.returns, "advantages": self.storage.advantages,
+                "values": self.storage.values, "log_prob": self.storage.actions_log_prob,
+            })
         mean_value_loss = 0.0
         mean_surrogate_loss = 0.0
         mean_entropy = 0.0
@@ -195,6 +204,9 @@ class HIMPPO:
             values = self.critic(batch.observations)
             distribution_params = self.actor.output_distribution_params
             entropy = self.actor.output_entropy
+            if guard is not None:
+                guard.check("ppo_forward", {"values": values, "log_prob": actions_log_prob, "entropy": entropy})
+                guard.check("ppo_distribution", distribution_params, limit=guard.cfg["raw_action_abort"])
 
             if self.desired_kl is not None and self.schedule == "adaptive":
                 self._update_learning_rate(batch.old_distribution_params, distribution_params)
@@ -217,6 +229,7 @@ class HIMPPO:
                     # with the adaptive PPO learning rate at every update.
                     learning_rate=self.learning_rate,
                     gradient_reducer=self._reduce_estimator_gradients if self.is_multi_gpu else None,
+                    numerics_guard=guard,
                 )
             else:
                 estimation_loss = 0.0
@@ -238,12 +251,22 @@ class HIMPPO:
                 value_loss = (batch.returns - values).pow(2).mean()
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy.mean()
+            if guard is not None:
+                guard.check("ppo_loss", {"loss": loss, "ratio": ratio}, limit=1e8)
             self.optimizer.zero_grad()
             loss.backward()
+            if guard is not None:
+                guard.gradients("ppo_gradients", self._all_parameters())
             if self.is_multi_gpu:
                 self.reduce_parameters()
-            nn.utils.clip_grad_norm_(self._all_parameters(), self.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(self._all_parameters(), self.max_grad_norm)
+            if guard is not None:
+                guard.check("ppo_gradient_norm", grad_norm, limit=1e8)
             self.optimizer.step()
+            if guard is not None:
+                guard.check("ppo_parameters", {
+                    "parameters": list(self._all_parameters()), "optimizer": self.optimizer.state,
+                })
 
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
@@ -255,8 +278,13 @@ class HIMPPO:
         if num_updates < 1:
             raise ValueError("num_learning_epochs and num_mini_batches must be positive")
         observations = self.storage.observations.flatten(0, 1)
-        self.actor.update_normalization(observations)
-        self.critic.update_normalization(observations)
+        try:
+            self.actor.update_normalization(observations)
+            self.critic.update_normalization(observations)
+        except FloatingPointError:
+            if guard is not None:
+                guard.fail("normalization", observations)
+            raise
         self.storage.clear()
         return {
             "value": mean_value_loss / num_updates,
