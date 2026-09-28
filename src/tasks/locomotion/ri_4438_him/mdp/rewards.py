@@ -175,7 +175,7 @@ def feet_clearance_phase_plateau(
   period: float,
   offset: list[float],
   threshold: float = 0.56,
-  foot_radius: float = 0.0155,
+  foot_radius: float = 0.01573,
   command_threshold: float = 0.1,
   rise_fraction: float = 0.20,
   fall_fraction: float = 0.50,

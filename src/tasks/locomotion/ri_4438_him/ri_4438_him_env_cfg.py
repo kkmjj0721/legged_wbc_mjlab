@@ -335,9 +335,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight = 3.0,
       params = {
         "command_name": "twist", 
-        # "command_threshold": 0.1,
         "std": math.sqrt(0.25)
-        },
+      },
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
@@ -408,7 +407,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
         "threshold": 0.56,
-        "foot_radius": 0.01625,
+        "foot_radius": 0.01573,  # Site to the lowest vertex of the foot mesh.
         "rise_fraction": 0.20,
         "fall_fraction": 0.50,
       },
