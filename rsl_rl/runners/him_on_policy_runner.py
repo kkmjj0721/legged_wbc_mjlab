@@ -67,7 +67,7 @@ class HIMOnPolicyRunner(OnPolicyRunner):
         for it in range(start_it, total_it):
             start = time.time()
             action_peak = torch.zeros((), device=self.device)
-            action_counts = torch.zeros(2, device=self.device)
+            action_counts = torch.zeros(3, device=self.device)
             with torch.inference_mode():
                 for step in range(self.cfg["num_steps_per_env"]):
                     if guard is not None:
@@ -77,11 +77,11 @@ class HIMOnPolicyRunner(OnPolicyRunner):
                     actions = self.alg.act(obs)
                     if guard is not None:
                         guard.remember(actions=actions)
-                        guard.check("raw_action", {"actions": actions, "distribution": self.alg.actor.output_distribution_params},
-                                    limit=guard.cfg["raw_action_abort"])
+                        guard.check("raw_action", {"actions": actions, "distribution": self.alg.actor.output_distribution_params})
                         action_peak = torch.maximum(action_peak, actions.abs().max())
                         action_counts[0] += (actions.abs() > self.alg.actor.action_clip).sum()
                         action_counts[1] += actions.numel()
+                        action_counts[2] += (actions.abs() > guard.cfg["raw_action_warn"]).sum()
                     next_obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
                     check_observations("after_step", {
                         "next": next_obs, "terminal": extras.get("terminal_observations"),
@@ -139,6 +139,7 @@ class HIMOnPolicyRunner(OnPolicyRunner):
                     torch.distributed.all_reduce(action_counts)
                 loss_dict["numerics/raw_action_max"] = action_peak.item()
                 loss_dict["numerics/action_clip_fraction"] = (action_counts[0] / action_counts[1].clamp_min(1)).item()
+                loss_dict["numerics/raw_action_warn_fraction"] = (action_counts[2] / action_counts[1].clamp_min(1)).item()
                 policy = self.alg.get_policy()
                 if policy.obs_normalization and policy.action_observation_slice is not None:
                     slice_start, slice_stop = policy.action_observation_slice

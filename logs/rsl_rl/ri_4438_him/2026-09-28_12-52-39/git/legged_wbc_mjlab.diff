@@ -1,0 +1,432 @@
+--- git commit ---
+6d6e4b47d959264887c726b846ecbafc3f71d7cb
+
+
+--- git status ---
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   README.md
+	modified:   "docs/RI4438-HIM\346\225\260\345\200\274\344\277\235\346\212\244\344\270\216\347\273\255\350\256\255.md"
+	modified:   rsl_rl/algorithms/him_ppo.py
+	modified:   rsl_rl/runners/him_on_policy_runner.py
+	modified:   rsl_rl/utils/numerics.py
+	modified:   src/config/ri_4438/numerics.py
+	modified:   src/config/ri_4438/ri_4438_config.py
+	modified:   src/tasks/locomotion/ri_4438_him/config/env_cfgs.py
+	modified:   src/tasks/locomotion/ri_4438_him/config/rl_cfg.py
+	modified:   src/tasks/locomotion/ri_4438_him/ri_4438_him_env_cfg.py
+	modified:   src/tasks/locomotion/ri_4438_him/rl/runner.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	logs/
+	rsl_rl/__pycache__/
+	rsl_rl/algorithms/__pycache__/
+	rsl_rl/env/__pycache__/
+	rsl_rl/extensions/__pycache__/
+	rsl_rl/models/__pycache__/
+	rsl_rl/modules/__pycache__/
+	rsl_rl/rsl_rl_lib.egg-info/
+	rsl_rl/runners/__pycache__/
+	rsl_rl/storage/__pycache__/
+	rsl_rl/utils/__pycache__/
+	scripts/__pycache__/
+	src/__pycache__/
+	src/assets/__pycache__/
+	src/assets/robots/__pycache__/
+	src/assets/robots/go2/__pycache__/
+	src/assets/robots/go2_piper/__pycache__/
+	src/assets/robots/ri_4438/__pycache__/
+	src/assets/robots/ri_plus_4438/__pycache__/
+	src/config/base/__pycache__/
+	src/config/go2/__pycache__/
+	src/config/go2_piper/__pycache__/
+	src/config/ri_4438/__pycache__/
+	src/config/ri_plus_4438/__pycache__/
+	src/legged_wbc_mjlab.egg-info/
+	src/tasks/__pycache__/
+	src/tasks/locomotion/__pycache__/
+	src/tasks/locomotion/go2_him/__pycache__/
+	src/tasks/locomotion/go2_him/config/__pycache__/
+	src/tasks/locomotion/go2_him/mdp/__pycache__/
+	src/tasks/locomotion/go2_him/rl/__pycache__/
+	src/tasks/locomotion/go2_ppo/__pycache__/
+	src/tasks/locomotion/go2_ppo/config/__pycache__/
+	src/tasks/locomotion/go2_ppo/mdp/__pycache__/
+	src/tasks/locomotion/go2_ppo/rl/__pycache__/
+	src/tasks/locomotion/ri_4438_him/__pycache__/
+	src/tasks/locomotion/ri_4438_him/config/__pycache__/
+	src/tasks/locomotion/ri_4438_him/mdp/__pycache__/
+	src/tasks/locomotion/ri_4438_him/rl/__pycache__/
+	src/tasks/locomotion/ri_4438_ppo/__pycache__/
+	src/tasks/locomotion/ri_4438_ppo/config/__pycache__/
+	src/tasks/locomotion/ri_4438_ppo/mdp/__pycache__/
+	src/tasks/locomotion/ri_4438_ppo/rl/__pycache__/
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/README.md b/README.md
+index 14dff35..8c438d6 100644
+--- a/README.md
++++ b/README.md
+@@ -117,7 +117,7 @@ uv run python scripts/train.py Ri-4438-HIM-Rough \
+ 
+ RI-4438 HIM 训练默认自动复位，并在复位前保存经过运动学刷新后的终止目标，避免重复执行整批碰撞计算和地形射线检测。HIM 的下一步监督只保存 50 维 `estimator` 观测，actor/critic 网络输入保持不变。原训练命令即可使用；用 `--env.auto-reset False` 可切回手动复位路径作对比。性能实测与验证边界见 [性能优化验证](docs/RI4438-HIM性能优化验证.md)。
+ 
+-RI-4438 HIM Rough 的随机障碍现采用 mjlab 内置高度场：保留 20% 采样比例、0.4 m 障碍尺寸和 0.01–0.12 m 的高度幅值课程，每块地形随机放置 100 次凸起或凹坑（允许重叠），保留中央 1 m 平台。7 种楼梯配置保持原样。高度场的障碍分布和边缘形状与原方块网格不同，训练难度需要重新评估。
++RI-4438 HIM Rough 使用平地、上楼梯、下楼梯和随机粗糙高度场，基于 mjlab 的 `ROUGH_TERRAINS_CFG` 独立复制后移除坡地和波浪地形。楼梯踏面宽 0.3 m、中央平台宽 3 m，每级台阶高度范围为 0.05–0.15 m；四类地形权重依次为 0.2、0.2、0.2、0.1。求解器使用 `cg`，`njmax=300`。此配置替换了原来的 7 种楼梯和离散障碍，历史性能报告中的耗时不能直接作为当前配置的基准。
+ 
+ ### 训练输出
+ 
+diff --git "a/docs/RI4438-HIM\346\225\260\345\200\274\344\277\235\346\212\244\344\270\216\347\273\255\350\256\255.md" "b/docs/RI4438-HIM\346\225\260\345\200\274\344\277\235\346\212\244\344\270\216\347\273\255\350\256\255.md"
+index caa5347..bcc5f4f 100644
+--- "a/docs/RI4438-HIM\346\225\260\345\200\274\344\277\235\346\212\244\344\270\216\347\273\255\350\256\255.md"
++++ "b/docs/RI4438-HIM\346\225\260\345\200\274\344\277\235\346\212\244\344\270\216\347\273\255\350\256\255.md"
+@@ -12,7 +12,7 @@
+ |---|---:|---|
+ | `ACTION_CLIP` | 10 | 原始策略动作裁剪；不是 10 rad 的关节限位 |
+ | `OBSERVATION_CLIP` | 100 | 各观测项在噪声之后、scale/历史之前的边界 |
+-| `RAW_ACTION_ABORT` | 20 | 原始动作 sample 或分布参数绝对值超过此值，停训 |
++| `RAW_ACTION_WARN` | 20 | 统计原始动作 sample 绝对值超过此值的比例；有限值不再因此停训 |
+ | `RAW_OBSERVATION_ABORT` | 1000 | 裁剪前原始观测绝对值超过此值，停训 |
+ | `ACTION_OBSERVATION_SLICE` | 35:47 | 每帧 `last_action` 的位置 |
+ 
+@@ -29,7 +29,7 @@
+ - Normalizer 用 float64 计算局部和全局候选统计，按样本数加权合并；空局部 batch 仍参与 collective。输入或候选统计非法时，不修改 `count/mean/var/std`。正常统计更新仍在 PPO 更新结束后，避免改变本轮 old/new log probability 的尺度关系。
+ - 保留累计统计和旧 checkpoint 的 tensor key，不自动清零受到污染的 normalizer。
+ 
+-TensorBoard 增加 `Loss/numerics/raw_action_max`、`Loss/numerics/action_clip_fraction`、`Loss/numerics/last_action_std_max`。保护检查与诊断缓存有额外计算、同步和显存开销；实际多 GPU 吞吐需要在目标机器上测量。
++TensorBoard 增加 `Loss/numerics/raw_action_max`、`Loss/numerics/action_clip_fraction`、`Loss/numerics/raw_action_warn_fraction`、`Loss/numerics/last_action_std_max`。原始动作和 PPO 分布参数保留 NaN/Inf 检查，移除绝对值超过 20 的停训条件；环境执行动作仍裁剪到 ±10。保护检查与诊断缓存有额外计算、同步和显存开销；实际多 GPU 吞吐需要在目标机器上测量。
+ 
+ ## 加载、导出与续训
+ 
+diff --git a/rsl_rl/algorithms/him_ppo.py b/rsl_rl/algorithms/him_ppo.py
+index ce48eee..f70d97e 100644
+--- a/rsl_rl/algorithms/him_ppo.py
++++ b/rsl_rl/algorithms/him_ppo.py
+@@ -206,7 +206,7 @@ class HIMPPO:
+             entropy = self.actor.output_entropy
+             if guard is not None:
+                 guard.check("ppo_forward", {"values": values, "log_prob": actions_log_prob, "entropy": entropy})
+-                guard.check("ppo_distribution", distribution_params, limit=guard.cfg["raw_action_abort"])
++                guard.check("ppo_distribution", distribution_params)
+ 
+             if self.desired_kl is not None and self.schedule == "adaptive":
+                 self._update_learning_rate(batch.old_distribution_params, distribution_params)
+diff --git a/rsl_rl/runners/him_on_policy_runner.py b/rsl_rl/runners/him_on_policy_runner.py
+index 46e60a7..8566087 100644
+--- a/rsl_rl/runners/him_on_policy_runner.py
++++ b/rsl_rl/runners/him_on_policy_runner.py
+@@ -67,7 +67,7 @@ class HIMOnPolicyRunner(OnPolicyRunner):
+         for it in range(start_it, total_it):
+             start = time.time()
+             action_peak = torch.zeros((), device=self.device)
+-            action_counts = torch.zeros(2, device=self.device)
++            action_counts = torch.zeros(3, device=self.device)
+             with torch.inference_mode():
+                 for step in range(self.cfg["num_steps_per_env"]):
+                     if guard is not None:
+@@ -77,11 +77,11 @@ class HIMOnPolicyRunner(OnPolicyRunner):
+                     actions = self.alg.act(obs)
+                     if guard is not None:
+                         guard.remember(actions=actions)
+-                        guard.check("raw_action", {"actions": actions, "distribution": self.alg.actor.output_distribution_params},
+-                                    limit=guard.cfg["raw_action_abort"])
++                        guard.check("raw_action", {"actions": actions, "distribution": self.alg.actor.output_distribution_params})
+                         action_peak = torch.maximum(action_peak, actions.abs().max())
+                         action_counts[0] += (actions.abs() > self.alg.actor.action_clip).sum()
+                         action_counts[1] += actions.numel()
++                        action_counts[2] += (actions.abs() > guard.cfg["raw_action_warn"]).sum()
+                     next_obs, rewards, dones, extras = self.env.step(actions.to(self.env.device))
+                     check_observations("after_step", {
+                         "next": next_obs, "terminal": extras.get("terminal_observations"),
+@@ -139,6 +139,7 @@ class HIMOnPolicyRunner(OnPolicyRunner):
+                     torch.distributed.all_reduce(action_counts)
+                 loss_dict["numerics/raw_action_max"] = action_peak.item()
+                 loss_dict["numerics/action_clip_fraction"] = (action_counts[0] / action_counts[1].clamp_min(1)).item()
++                loss_dict["numerics/raw_action_warn_fraction"] = (action_counts[2] / action_counts[1].clamp_min(1)).item()
+                 policy = self.alg.get_policy()
+                 if policy.obs_normalization and policy.action_observation_slice is not None:
+                     slice_start, slice_stop = policy.action_observation_slice
+diff --git a/rsl_rl/utils/numerics.py b/rsl_rl/utils/numerics.py
+index a661392..225c503 100644
+--- a/rsl_rl/utils/numerics.py
++++ b/rsl_rl/utils/numerics.py
+@@ -32,8 +32,9 @@ def tensor_items(value, prefix=""):
+ class TrainingNumericsGuard:
+     """Stop all ranks before using corrupt data and save bounded diagnostics.
+ 
+-    Raw action/observation limits are fault thresholds, not normalization rules.
+-    A fault never skips one rank's optimizer step or exports a new policy.
++    Non-finite policy values and out-of-range observations are fault thresholds,
++    not normalization rules. A fault never skips one rank's optimizer step or
++    exports a new policy.
+     """
+ 
+     def __init__(self, device, log_dir=None, **cfg):
+diff --git a/src/config/ri_4438/numerics.py b/src/config/ri_4438/numerics.py
+index cae7354..a8118d2 100644
+--- a/src/config/ri_4438/numerics.py
++++ b/src/config/ri_4438/numerics.py
+@@ -2,7 +2,8 @@
+ 
+ ACTION_CLIP = 10.0
+ OBSERVATION_CLIP = 100.0
+-RAW_ACTION_ABORT = 20.0
++# The environment clips executed actions to ACTION_CLIP. Larger finite samples
++# are diagnostic signals; only non-finite policy values should abort training.
++RAW_ACTION_WARN = 20.0
+ RAW_OBSERVATION_ABORT = 1000.0
+ ACTION_OBSERVATION_SLICE = (35, 47)
+-
+diff --git a/src/config/ri_4438/ri_4438_config.py b/src/config/ri_4438/ri_4438_config.py
+index f761871..5f4e58f 100644
+--- a/src/config/ri_4438/ri_4438_config.py
++++ b/src/config/ri_4438/ri_4438_config.py
+@@ -9,10 +9,10 @@ class Ri4438Cfg( BaseConfig ):
+         curriculum = True
+         max_curriculum = 1.0
+         num_commands = 4  # [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
+-        resampling_time = [4.0, 12.0]  # [s] time before new command is given
++        resampling_time = [1.0, 12.0]  # [s] time before new command is given
+         heading_command = False  # if true: compute ang vel command from heading error
+-        rel_standing_envs = 0.5
+-        rel_forward_envs = 0.01
++        rel_standing_envs = 0.1
++        rel_forward_envs = 0.0
+         class ranges:
+             lin_vel_x = [-1.0, 1.0]  # min max [m/s]
+             lin_vel_y = [-1.0, 1.0]  # min max [m/s]
+@@ -24,7 +24,7 @@ class Ri4438Cfg( BaseConfig ):
+         damping   = {"hip":  2.0694, "thigh":  2.0694, "calf":  2.0694}
+         action_scale = 0.5
+         decimation = 4  # control frequency = sim frequency / decimation
+-        hip_reduction = 0.25
++        hip_reduction = 0.5
+         effort_limit = {"hip": 10.0, "thigh": 10.0, "calf": 10.0 }
+         armature = 0.008234
+         friction = 0.01
+@@ -71,7 +71,7 @@ class Ri4438Cfg( BaseConfig ):
+         }
+    
+     class domain_rand:
+-        link_mass_range = [0.75, 1.1]
++        link_mass_range = [0.7, 1.05]
+         KpKd_factor_range = [0.8, 1.2]
+         com_displacement_range = [-0.05, 0.05]
+         motor_offset_range = [-0.02, 0.02]
+diff --git a/src/tasks/locomotion/ri_4438_him/config/env_cfgs.py b/src/tasks/locomotion/ri_4438_him/config/env_cfgs.py
+index f7bf85c..0b50dc5 100644
+--- a/src/tasks/locomotion/ri_4438_him/config/env_cfgs.py
++++ b/src/tasks/locomotion/ri_4438_him/config/env_cfgs.py
+@@ -40,13 +40,14 @@ def ri_4438_rough_env_cfg(
+   """Create the RI-4438 HIM rough-terrain environment."""
+   cfg = make_velocity_env_cfg()
+ 
+-  # Match the smaller capacities used by the measured 1024-env training run.
++  # Keep the collision and constraint buffers bounded for rough-terrain training.
+   # njmax is per world; nconmax sizes the shared contact/CCD buffers.
+   cfg.sim.mujoco.ccd_iterations = 50
+   cfg.sim.contact_sensor_maxmatch = 64
+   cfg.sim.nconmax = 48
+-  cfg.sim.njmax = 600
++  cfg.sim.njmax = 300
+   cfg.sim.broadphase = "nxn"
++  cfg.sim.mujoco.solver = "cg"
+   cfg.scene.entities = {"robot": get_ri_4438_robot_cfg()}
+   # The recorder captures fresh estimator targets before the automatic reset.
+   cfg.auto_reset = True
+diff --git a/src/tasks/locomotion/ri_4438_him/config/rl_cfg.py b/src/tasks/locomotion/ri_4438_him/config/rl_cfg.py
+index cd8b56d..8866cae 100644
+--- a/src/tasks/locomotion/ri_4438_him/config/rl_cfg.py
++++ b/src/tasks/locomotion/ri_4438_him/config/rl_cfg.py
+@@ -11,7 +11,7 @@ from mjlab.rl import (
+ 
+ from src.config.ri_4438.ri_4438_him_config import Ri4438CFGHimPPO
+ from src.config.ri_4438.numerics import (
+-  ACTION_CLIP, OBSERVATION_CLIP, RAW_ACTION_ABORT, RAW_OBSERVATION_ABORT,
++  ACTION_CLIP, OBSERVATION_CLIP, RAW_ACTION_WARN, RAW_OBSERVATION_ABORT,
+   ACTION_OBSERVATION_SLICE,
+ )
+ 
+@@ -98,7 +98,7 @@ class RslRlHimRunnerCfg(RslRlOnPolicyRunnerCfg):
+   class_name: str = "src.tasks.locomotion.ri_4438_him.rl.runner:HIMOnPolicyRunner"
+   clip_actions: float = ACTION_CLIP
+   numerics: dict[str, Any] = field(default_factory=lambda: {
+-    "raw_action_abort": RAW_ACTION_ABORT,
++    "raw_action_warn": RAW_ACTION_WARN,
+     "raw_observation_abort": RAW_OBSERVATION_ABORT,
+     "history_steps": 8,
+   })
+diff --git a/src/tasks/locomotion/ri_4438_him/ri_4438_him_env_cfg.py b/src/tasks/locomotion/ri_4438_him/ri_4438_him_env_cfg.py
+index 279ba7c..96a7276 100644
+--- a/src/tasks/locomotion/ri_4438_him/ri_4438_him_env_cfg.py
++++ b/src/tasks/locomotion/ri_4438_him/ri_4438_him_env_cfg.py
+@@ -5,6 +5,7 @@ Robot-specific configurations call the factory and customize as needed.
+ """
+ 
+ import math
++from copy import deepcopy
+ from dataclasses import replace
+ 
+ from mjlab.envs import ManagerBasedRlEnvCfg
+@@ -20,8 +21,6 @@ from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationT
+ from mjlab.managers.reward_manager import RewardTermCfg
+ from mjlab.managers.scene_entity_config import SceneEntityCfg
+ from mjlab.managers.termination_manager import TerminationTermCfg
+-import mjlab.terrains as terrain_gen
+-from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
+ from mjlab.scene import SceneCfg
+ from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
+ from mjlab.sim import MujocoCfg, SimulationCfg
+@@ -282,9 +281,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
+         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+         "operation": "add",
+         "ranges": {
+-          0: (-0.05, 0.05),
+-          1: (-0.05, 0.05),
+-          2: (-0.05, 0.05),
++          0: (-0.08, 0.08),
++          1: (-0.08, 0.08),
++          2: (-0.08, 0.08),
+         },
+       },
+     ),
+@@ -298,7 +297,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
+         "operation": "scale",
+       },
+     ),
+-
+     "effort_limits": EventTermCfg(
+       func = dr.effort_limits,
+       mode = "startup",
+@@ -308,7 +306,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
+         "effort_limit_range": tuple(ri_4438_cfg.domain_rand.motor_strength_range)
+       }  
+     ),
+-    # 你觉得我的训练怎么样，现在部署的时候前进走的很好，但是vel\_y和后腿还有，ang就不太好，你觉得是什么问题？要不要我改改一些东西，然后重新训练一版，你目前只分析就行了，你再检查一下部署的代码，看看是不是部署的问题（/home/sunteng/Sim2real\_master），分析即可，不要修改代码，详细看看
+     "pseudo_inertia": EventTermCfg(
+       func = dr.pseudo_inertia,
+       mode = "startup",
+@@ -497,18 +494,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
+         params = {
+           "command_name": "twist",
+           "velocity_stages": [
+-            {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+-            {"step": 1000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+-            {"step": 2000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+-            {"step": 3000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
+-            {"step": 4000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.5)},
+-            {"step": 5000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.75)},
+-            {"step": 6000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
+-
+-            {"step": 7000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.75, 0.75)},
+-            {"step": 8000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 0.75)},
+-            {"step": 9000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
+-            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
++            {"step": 0, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+           ],
+         },
+       ),
+@@ -521,65 +507,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
+   # Assemble and return
+   ##
+ 
++  terrain_cfg = deepcopy(ROUGH_TERRAINS_CFG)
++  for name in ("hf_pyramid_slope", "hf_pyramid_slope_inv", "wave_terrain"):
++    terrain_cfg.sub_terrains.pop(name)
++  for name in ("pyramid_stairs", "pyramid_stairs_inv"):
++    terrain_cfg.sub_terrains[name].step_height_range = (0.05, 0.15)
++
+   return ManagerBasedRlEnvCfg(
+     scene = SceneCfg(
+       terrain = TerrainEntityCfg(
+         terrain_type = "generator",
+-      #   terrain_generator = replace(ROUGH_TERRAINS_CFG),
+-        terrain_generator=TerrainGeneratorCfg(
+-          curriculum=True, size=(8.0, 8.0), num_rows=10, num_cols=20, border_width=25.0,
+-          sub_terrains={
+-            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.1),
+-            "stairs_15": terrain_gen.BoxPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
+-            ),
+-            "stairs_20": terrain_gen.BoxPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
+-            ),
+-            "stairs_25": terrain_gen.BoxPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
+-            ),
+-            "inverted_pyramid_stairs_15": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
+-            ),
+-            "inverted_pyramid_stairs-20": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
+-            ),
+-            "inverted_pyramid_stairs_25": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
+-            ),
+-            "inverted_pyramid_stairs_30": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
+-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.30, platform_width=2.0,
+-            ),
+-            # One heightfield per patch avoids hundreds of separate box geoms.
+-            # This samples discrete pits/bumps; it is not the old dense box grid.
+-            "discrete_obstacles": terrain_gen.HfDiscreteObstaclesTerrainCfg(
+-              proportion=0.15,
+-              obstacle_width_range=(0.4, 0.4),
+-              obstacle_height_range=(0.01, 0.12),
+-              obstacle_height_mode="choice",
+-              num_obstacles=100,
+-              square_obstacles=True,
+-              platform_width=1.0,
+-              horizontal_scale=0.1,
+-              vertical_scale=0.005,
+-              border_width=0.4,
+-            ),
+-            # "random_uniform":terrain_gen.HfRandomUniformTerrainCfg(
+-            #   proportion=0.05,
+-            #   noise_range=(0.0, 0.06),
+-            #   noise_step=0.005,
+-            #   downsampled_scale=0.3,
+-            #   horizontal_scale=0.1,
+-            #   vertical_scale=0.005,
+-            #   border_width=0.5,
+-            #   scale_with_difficulty=True,
+-            # )
+-          },
+-        ),
+-        max_init_terrain_level = 9,
++        terrain_generator = terrain_cfg,
+       ),
+-        
+       sensors = (terrain_scan,),
+       num_envs = ri_4438_cfg.env.num_envs,
+       extent = 2.0,
+diff --git a/src/tasks/locomotion/ri_4438_him/rl/runner.py b/src/tasks/locomotion/ri_4438_him/rl/runner.py
+index 325fea6..5d3f20c 100644
+--- a/src/tasks/locomotion/ri_4438_him/rl/runner.py
++++ b/src/tasks/locomotion/ri_4438_him/rl/runner.py
+@@ -16,7 +16,6 @@ from mjlab.rl.runner import MjlabOnPolicyRunner
+ from rsl_rl.runners.him_on_policy_runner import HIMOnPolicyRunner as RslRlHIMOnPolicyRunner
+ from rsl_rl.utils.wandb_log_writer import WandbLogWriter
+ from rsl_rl.utils.numerics import tensor_items
+-from src.config.ri_4438.numerics import ACTION_OBSERVATION_SLICE
+ 
+ 
+ def _single_file_onnx_kwargs() -> dict:
+@@ -85,7 +84,9 @@ class HIMOnPolicyRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
+         continue
+       if (normalizer._var < 0).any() or (normalizer._std < 0).any() or normalizer.count < 0:
+         raise ValueError(f"Invalid {label} normalizer variance/std")
+-      start, stop = ACTION_OBSERVATION_SLICE
++      if actor.action_observation_slice is None:
++        continue
++      start, stop = actor.action_observation_slice
+       mean, std = normalizer.mean, normalizer.std
+       if label == "actor":
+         mean, std = mean.reshape(actor.history_size, -1), std.reshape(actor.history_size, -1)

@@ -16,7 +16,6 @@ from mjlab.rl.runner import MjlabOnPolicyRunner
 from rsl_rl.runners.him_on_policy_runner import HIMOnPolicyRunner as RslRlHIMOnPolicyRunner
 from rsl_rl.utils.wandb_log_writer import WandbLogWriter
 from rsl_rl.utils.numerics import tensor_items
-from src.config.ri_4438.numerics import ACTION_OBSERVATION_SLICE
 
 
 def _single_file_onnx_kwargs() -> dict:
@@ -85,7 +84,9 @@ class HIMOnPolicyRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         continue
       if (normalizer._var < 0).any() or (normalizer._std < 0).any() or normalizer.count < 0:
         raise ValueError(f"Invalid {label} normalizer variance/std")
-      start, stop = ACTION_OBSERVATION_SLICE
+      if actor.action_observation_slice is None:
+        continue
+      start, stop = actor.action_observation_slice
       mean, std = normalizer.mean, normalizer.std
       if label == "actor":
         mean, std = mean.reshape(actor.history_size, -1), std.reshape(actor.history_size, -1)

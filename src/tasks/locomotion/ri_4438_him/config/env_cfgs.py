@@ -40,13 +40,14 @@ def ri_4438_rough_env_cfg(
   """Create the RI-4438 HIM rough-terrain environment."""
   cfg = make_velocity_env_cfg()
 
-  # Match the smaller capacities used by the measured 1024-env training run.
+  # Keep the collision and constraint buffers bounded for rough-terrain training.
   # njmax is per world; nconmax sizes the shared contact/CCD buffers.
   cfg.sim.mujoco.ccd_iterations = 50
   cfg.sim.contact_sensor_maxmatch = 64
   cfg.sim.nconmax = 48
-  cfg.sim.njmax = 600
+  cfg.sim.njmax = 300
   cfg.sim.broadphase = "nxn"
+  cfg.sim.mujoco.solver = "cg"
   cfg.scene.entities = {"robot": get_ri_4438_robot_cfg()}
   # The recorder captures fresh estimator targets before the automatic reset.
   cfg.auto_reset = True

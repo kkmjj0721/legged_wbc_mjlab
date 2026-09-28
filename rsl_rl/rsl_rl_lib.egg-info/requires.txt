@@ -1,0 +1,16 @@
+torch>=2.6.0
+tensordict>=0.7.0
+numpy>=1.16.4
+tensorboard
+GitPython
+onnx
+onnxscript>=0.5.4
+
+[neptune]
+neptune
+
+[test]
+pytest
+
+[wandb]
+wandb

@@ -32,8 +32,9 @@ def tensor_items(value, prefix=""):
 class TrainingNumericsGuard:
     """Stop all ranks before using corrupt data and save bounded diagnostics.
 
-    Raw action/observation limits are fault thresholds, not normalization rules.
-    A fault never skips one rank's optimizer step or exports a new policy.
+    Non-finite policy values and out-of-range observations are fault thresholds,
+    not normalization rules. A fault never skips one rank's optimizer step or
+    exports a new policy.
     """
 
     def __init__(self, device, log_dir=None, **cfg):

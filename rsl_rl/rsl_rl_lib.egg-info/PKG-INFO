@@ -1,0 +1,27 @@
+Metadata-Version: 2.4
+Name: rsl-rl-lib
+Version: 5.4.2
+Summary: Fast and simple RL algorithms implemented in PyTorch
+Author-email: Clemens Schwarke <cschwarke@ethz.ch>, Mayank Mittal <mittalma@ethz.ch>, Nikita Rudin <rudinn@ethz.ch>, David Hoeller <holler.david78@gmail.com>
+Maintainer-email: Clemens Schwarke <cschwarke@ethz.ch>, Mayank Mittal <mittalma@ethz.ch>
+License-Expression: BSD-3-Clause
+Project-URL: Homepage, https://github.com/leggedrobotics/rsl_rl
+Project-URL: Issues, https://github.com/leggedrobotics/rsl_rl/issues
+Keywords: reinforcement-learning,robotics
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: torch>=2.6.0
+Requires-Dist: tensordict>=0.7.0
+Requires-Dist: numpy>=1.16.4
+Requires-Dist: tensorboard
+Requires-Dist: GitPython
+Requires-Dist: onnx
+Requires-Dist: onnxscript>=0.5.4
+Provides-Extra: test
+Requires-Dist: pytest; extra == "test"
+Provides-Extra: wandb
+Requires-Dist: wandb; extra == "wandb"
+Provides-Extra: neptune
+Requires-Dist: neptune; extra == "neptune"

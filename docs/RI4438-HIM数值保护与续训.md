@@ -12,7 +12,7 @@
 |---|---:|---|
 | `ACTION_CLIP` | 10 | 原始策略动作裁剪；不是 10 rad 的关节限位 |
 | `OBSERVATION_CLIP` | 100 | 各观测项在噪声之后、scale/历史之前的边界 |
-| `RAW_ACTION_ABORT` | 20 | 原始动作 sample 或分布参数绝对值超过此值，停训 |
+| `RAW_ACTION_WARN` | 20 | 统计原始动作 sample 绝对值超过此值的比例；有限值不再因此停训 |
 | `RAW_OBSERVATION_ABORT` | 1000 | 裁剪前原始观测绝对值超过此值，停训 |
 | `ACTION_OBSERVATION_SLICE` | 35:47 | 每帧 `last_action` 的位置 |
 
@@ -29,7 +29,7 @@
 - Normalizer 用 float64 计算局部和全局候选统计，按样本数加权合并；空局部 batch 仍参与 collective。输入或候选统计非法时，不修改 `count/mean/var/std`。正常统计更新仍在 PPO 更新结束后，避免改变本轮 old/new log probability 的尺度关系。
 - 保留累计统计和旧 checkpoint 的 tensor key，不自动清零受到污染的 normalizer。
 
-TensorBoard 增加 `Loss/numerics/raw_action_max`、`Loss/numerics/action_clip_fraction`、`Loss/numerics/last_action_std_max`。保护检查与诊断缓存有额外计算、同步和显存开销；实际多 GPU 吞吐需要在目标机器上测量。
+TensorBoard 增加 `Loss/numerics/raw_action_max`、`Loss/numerics/action_clip_fraction`、`Loss/numerics/raw_action_warn_fraction`、`Loss/numerics/last_action_std_max`。原始动作和 PPO 分布参数保留 NaN/Inf 检查，移除绝对值超过 20 的停训条件；环境执行动作仍裁剪到 ±10。保护检查与诊断缓存有额外计算、同步和显存开销；实际多 GPU 吞吐需要在目标机器上测量。
 
 ## 加载、导出与续训
 

@@ -5,6 +5,7 @@ Robot-specific configurations call the factory and customize as needed.
 """
 
 import math
+from copy import deepcopy
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -20,8 +21,6 @@ from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationT
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
-import mjlab.terrains as terrain_gen
-from mjlab.terrains.terrain_generator import TerrainGeneratorCfg
 from mjlab.scene import SceneCfg
 from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
@@ -282,9 +281,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
         "operation": "add",
         "ranges": {
-          0: (-0.05, 0.05),
-          1: (-0.05, 0.05),
-          2: (-0.05, 0.05),
+          0: (-0.08, 0.08),
+          1: (-0.08, 0.08),
+          2: (-0.08, 0.08),
         },
       },
     ),
@@ -298,7 +297,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "operation": "scale",
       },
     ),
-
     "effort_limits": EventTermCfg(
       func = dr.effort_limits,
       mode = "startup",
@@ -308,7 +306,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "effort_limit_range": tuple(ri_4438_cfg.domain_rand.motor_strength_range)
       }  
     ),
-    # 你觉得我的训练怎么样，现在部署的时候前进走的很好，但是vel\_y和后腿还有，ang就不太好，你觉得是什么问题？要不要我改改一些东西，然后重新训练一版，你目前只分析就行了，你再检查一下部署的代码，看看是不是部署的问题（/home/sunteng/Sim2real\_master），分析即可，不要修改代码，详细看看
     "pseudo_inertia": EventTermCfg(
       func = dr.pseudo_inertia,
       mode = "startup",
@@ -497,18 +494,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         params = {
           "command_name": "twist",
           "velocity_stages": [
-            {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 1000 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 2000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 3000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 4000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 5000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.75)},
-            {"step": 6000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
-
-            {"step": 7000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.75, 0.75)},
-            {"step": 8000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 0.75)},
-            {"step": 9000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
-            {"step": 10000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+            {"step": 0, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
           ],
         },
       ),
@@ -521,65 +507,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # Assemble and return
   ##
 
+  terrain_cfg = deepcopy(ROUGH_TERRAINS_CFG)
+  for name in ("hf_pyramid_slope", "hf_pyramid_slope_inv", "wave_terrain"):
+    terrain_cfg.sub_terrains.pop(name)
+  for name in ("pyramid_stairs", "pyramid_stairs_inv"):
+    terrain_cfg.sub_terrains[name].step_height_range = (0.05, 0.15)
+
   return ManagerBasedRlEnvCfg(
     scene = SceneCfg(
       terrain = TerrainEntityCfg(
         terrain_type = "generator",
-      #   terrain_generator = replace(ROUGH_TERRAINS_CFG),
-        terrain_generator=TerrainGeneratorCfg(
-          curriculum=True, size=(8.0, 8.0), num_rows=10, num_cols=20, border_width=25.0,
-          sub_terrains={
-            "flat": terrain_gen.BoxFlatTerrainCfg(proportion=0.1),
-            "stairs_15": terrain_gen.BoxPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
-            ),
-            "stairs_20": terrain_gen.BoxPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
-            ),
-            "stairs_25": terrain_gen.BoxPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
-            ),
-            "inverted_pyramid_stairs_15": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.15, platform_width=2.0,
-            ),
-            "inverted_pyramid_stairs-20": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.20, platform_width=2.0,
-            ),
-            "inverted_pyramid_stairs_25": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.25, platform_width=2.0,
-            ),
-            "inverted_pyramid_stairs_30": terrain_gen.BoxInvertedPyramidStairsTerrainCfg(
-              proportion = 0.1, step_height_range=(0.05, 0.15), step_width = 0.30, platform_width=2.0,
-            ),
-            # One heightfield per patch avoids hundreds of separate box geoms.
-            # This samples discrete pits/bumps; it is not the old dense box grid.
-            "discrete_obstacles": terrain_gen.HfDiscreteObstaclesTerrainCfg(
-              proportion=0.15,
-              obstacle_width_range=(0.4, 0.4),
-              obstacle_height_range=(0.01, 0.12),
-              obstacle_height_mode="choice",
-              num_obstacles=100,
-              square_obstacles=True,
-              platform_width=1.0,
-              horizontal_scale=0.1,
-              vertical_scale=0.005,
-              border_width=0.4,
-            ),
-            # "random_uniform":terrain_gen.HfRandomUniformTerrainCfg(
-            #   proportion=0.05,
-            #   noise_range=(0.0, 0.06),
-            #   noise_step=0.005,
-            #   downsampled_scale=0.3,
-            #   horizontal_scale=0.1,
-            #   vertical_scale=0.005,
-            #   border_width=0.5,
-            #   scale_with_difficulty=True,
-            # )
-          },
-        ),
-        max_init_terrain_level = 9,
+        terrain_generator = terrain_cfg,
       ),
-        
       sensors = (terrain_scan,),
       num_envs = ri_4438_cfg.env.num_envs,
       extent = 2.0,

@@ -206,7 +206,7 @@ class HIMPPO:
             entropy = self.actor.output_entropy
             if guard is not None:
                 guard.check("ppo_forward", {"values": values, "log_prob": actions_log_prob, "entropy": entropy})
-                guard.check("ppo_distribution", distribution_params, limit=guard.cfg["raw_action_abort"])
+                guard.check("ppo_distribution", distribution_params)
 
             if self.desired_kl is not None and self.schedule == "adaptive":
                 self._update_learning_rate(batch.old_distribution_params, distribution_params)
