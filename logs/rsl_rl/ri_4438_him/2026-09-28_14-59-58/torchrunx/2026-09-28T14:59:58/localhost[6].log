@@ -1,0 +1,144 @@
+2026-09-28 15:00:24:WARNING: py.warnings:/data/hupeiyan/legged_wbc_mjlab/.venv/lib/python3.11/site-packages/mujoco_warp/_src/io.py:713: UserWarning: MULTICCD is enabled, but the scene contains CCD pairs without multicontact support: [('HFIELD', 'CYLINDER'), ('HFIELD', 'BOX'), ('CYLINDER', 'CYLINDER'), ('CYLINDER', 'BOX')]. At most 1 contact will be generated for these pairs.
+  warnings.warn(
+
+2026-09-28 15:00:30:INFO: [INFO] Training with: device=cuda:6, seed=48, rank=6
+2026-09-28 15:00:30:INFO: Setting seed: 48
+2026-09-28 15:00:30:INFO: Warp 1.17.0 initialized:
+2026-09-28 15:00:30:INFO:    CUDA Toolkit 12.9, Driver 12.8
+2026-09-28 15:00:30:INFO:    Devices:
+2026-09-28 15:00:30:INFO:      "cpu"      : "x86_64"
+2026-09-28 15:00:30:INFO:      "cuda:0"   : "NVIDIA GeForce RTX 4090" (24 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:1"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:2"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:3"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:4"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:5"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:6"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:      "cuda:7"   : "NVIDIA GeForce RTX 4090" (22 GiB, sm_89, mempool enabled)
+2026-09-28 15:00:30:INFO:    CUDA peer access:
+2026-09-28 15:00:30:INFO:      Not supported
+2026-09-28 15:00:30:INFO:    Kernel cache:
+2026-09-28 15:00:30:INFO:      /data/hupeiyan/.cache/warp/1.17.0
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.smooth b9cc505 load on device 'cuda:6' took 0.98 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _nxn_broadphase__locals__kernel_3a0c7ab9 3a0c7ab load on device 'cuda:6' took 0.32 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_hfield_kernel_builder__locals__ccd_hfield_kernel_d1b69379 d1b6937 load on device 'cuda:6' took 0.56 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_hfield_kernel_builder__locals__ccd_hfield_kernel_7d2bce0d 7d2bce0 load on device 'cuda:6' took 0.51 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_hfield_kernel_builder__locals__ccd_hfield_kernel_a62aa848 a62aa84 load on device 'cuda:6' took 0.50 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_kernel_builder__locals__ccd_kernel_87398314 8739831 load on device 'cuda:6' took 0.49 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_kernel_builder__locals__ccd_kernel_87398314 d507066 load on device 'cuda:6' took 0.44 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_kernel_builder__locals__ccd_kernel_38e95353 38e9535 load on device 'cuda:6' took 0.53 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_kernel_builder__locals__ccd_kernel_38e95353 69f5a5a load on device 'cuda:6' took 0.43 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_kernel_builder__locals__ccd_kernel_3c7cf233 3c7cf23 load on device 'cuda:6' took 0.49 ms  (cached)
+2026-09-28 15:00:30:INFO: Module ccd_kernel_builder__locals__ccd_kernel_3c7cf233 79f77df load on device 'cuda:6' took 0.47 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _primitive_narrowphase__locals__primitive_narrowphase_876f8340 876f834 load on device 'cuda:6' took 0.57 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.constraint 9435a53 load on device 'cuda:6' took 0.30 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _friction_dof__locals__kernel_35a89db9 35a89db load on device 'cuda:6' took 0.36 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _limit_slide_hinge__locals__kernel_6395e840 6395e84 load on device 'cuda:6' took 0.39 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _efc_contact_init__locals__kernel_81f4db55 81f4db5 load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _efc_contact_jac_dense__locals__kernel_32331963 0e566b8 load on device 'cuda:6' took 0.37 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _efc_contact_update__locals__kernel_1a7e7f98 1a7e7f9 load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.forward f44d3e1 load on device 'cuda:6' took 0.43 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.passive 80f3681 load on device 'cuda:6' took 0.41 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.sensor 764597f load on device 'cuda:6' took 0.63 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.forward 0a75030 load on device 'cuda:6' took 0.41 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _qfrc_smooth__locals__kernel_2c4e0694 2c4e069 load on device 'cuda:6' took 0.28 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.support f39c2de load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _tile_cholesky_factorize_solve_block__locals__kernel_a304cbc7 092260f load on device 'cuda:6' took 35.47 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _solve_init_dof__locals__kernel_618a11c7 618a11c load on device 'cuda:6' took 0.42 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.solver c97221b load on device 'cuda:6' took 0.57 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _solve_init_jaref_kernel__locals__kernel_4396b4dc 4396b4d load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mul_m_kernel__locals___mul_m_74986a16 74986a1 load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _update_constraint_efc__locals__kernel_ed085732 ed08573 load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _update_constraint_init_qfrc_constraint_dense__locals__kernel_bd324b86 bd324b8 load on device 'cuda:6' took 0.29 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.solver f0bc1e4 load on device 'cuda:6' took 0.76 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _tile_cholesky_solve_block__locals__kernel_5a7cc7d4 19d341e load on device 'cuda:6' took 25.87 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _linesearch_iterative_kernel__locals__kernel_f63d8d11 d0eecfd load on device 'cuda:6' took 0.63 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _contact_sort__locals__contact_sort_adeecb09 788a659 load on device 'cuda:6' took 0.41 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.derivative 1d93a53 load on device 'cuda:6' took 0.43 ms  (cached)
+2026-09-28 15:00:30:INFO: Module _next_time_builder__locals___next_time_cc50a46c cc50a46 load on device 'cuda:6' took 0.35 ms  (cached)
+2026-09-28 15:00:30:INFO: Module reset_data__locals__reset_xfrc_applied_c7eeecfb c7eeecf load on device 'cuda:6' took 0.32 ms  (cached)
+2026-09-28 15:00:30:INFO: Module reset_data__locals__reset_M_d1ea7a8e d1ea7a8 load on device 'cuda:6' took 0.30 ms  (cached)
+2026-09-28 15:00:30:INFO: Module reset_data__locals__reset_mocap_b017f38a b017f38 load on device 'cuda:6' took 0.30 ms  (cached)
+2026-09-28 15:00:30:INFO: Module reset_data__locals__reset_contact_757d9bde 757d9bd load on device 'cuda:6' took 0.30 ms  (cached)
+2026-09-28 15:00:30:INFO: Module reset_data__locals__reset_sleep_6b3be194 6b3be19 load on device 'cuda:6' took 0.30 ms  (cached)
+2026-09-28 15:00:30:INFO: Module reset_data__locals__reset_nworld_e471a890 e471a89 load on device 'cuda:6' took 0.30 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.render_util 9978d2d load on device 'cuda:6' took 0.51 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.bvh 7dab8b4 load on device 'cuda:6' took 0.71 ms  (cached)
+2026-09-28 15:00:30:INFO: Module mujoco_warp._src.ray cba3709 load on device 'cuda:6' took 0.72 ms  (cached)
+2026-09-28 15:00:30:INFO: 
+2026-09-28 15:00:30:INFO: +---------------------------------+
+2026-09-28 15:00:30:INFO: |         Base Environment        |
+2026-09-28 15:00:30:INFO: +------------------------+--------+
+2026-09-28 15:00:30:INFO: | Property               | Value  |
+2026-09-28 15:00:30:INFO: +------------------------+--------+
+2026-09-28 15:00:30:INFO: | Number of environments | 8192   |
+2026-09-28 15:00:30:INFO: | Environment device     | cuda:6 |
+2026-09-28 15:00:30:INFO: | Environment seed       | 48     |
+2026-09-28 15:00:30:INFO: | Physics step-size      | 0.005  |
+2026-09-28 15:00:30:INFO: | Environment step-size  | 0.02   |
+2026-09-28 15:00:30:INFO: +------------------------+--------+
+2026-09-28 15:00:30:INFO: 
+2026-09-28 15:00:30:INFO: [INFO] <EventManager> contains 3 active terms.
+2026-09-28 15:00:30:INFO: +-------------------------------------+
+2026-09-28 15:00:30:INFO: | Active Event Terms in Mode: 'reset' |
+2026-09-28 15:00:30:INFO: +--------+----------------------------+
+2026-09-28 15:00:30:INFO: | Index  | Name                       |
+2026-09-28 15:00:30:INFO: +--------+----------------------------+
+2026-09-28 15:00:30:INFO: |   0    | reset_base                 |
+2026-09-28 15:00:30:INFO: |   1    | reset_robot_joints         |
+2026-09-28 15:00:30:INFO: +--------+----------------------------+
+2026-09-28 15:00:30:INFO: +----------------------------------------------+
+2026-09-28 15:00:30:INFO: |    Active Event Terms in Mode: 'interval'    |
+2026-09-28 15:00:30:INFO: +-------+------------+-------------------------+
+2026-09-28 15:00:30:INFO: | Index | Name       | Interval time range (s) |
+2026-09-28 15:00:30:INFO: +-------+------------+-------------------------+
+2026-09-28 15:00:30:INFO: |   0   | push_robot |        (5.0, 6.0)       |
+2026-09-28 15:00:30:INFO: +-------+------------+-------------------------+
+2026-09-28 15:00:30:INFO: +---------------------------------------+
+2026-09-28 15:00:30:INFO: | Active Event Terms in Mode: 'startup' |
+2026-09-28 15:00:30:INFO: +----------+----------------------------+
+2026-09-28 15:00:30:INFO: |  Index   | Name                       |
+2026-09-28 15:00:30:INFO: +----------+----------------------------+
+2026-09-28 15:00:30:INFO: |    0     | foot_friction              |
+2026-09-28 15:00:30:INFO: |    1     | encoder_bias               |
+2026-09-28 15:00:30:INFO: |    2     | base_com                   |
+2026-09-28 15:00:30:INFO: |    3     | pd_gains                   |
+2026-09-28 15:00:30:INFO: |    4     | effort_limits              |
+2026-09-28 15:00:30:INFO: |    5     | pseudo_inertia             |
+2026-09-28 15:00:30:INFO: +----------+----------------------------+
+2026-09-28 15:00:30:INFO: +-----------------------------+
+2026-09-28 15:00:30:INFO: | Domain Randomization Fields |
+2026-09-28 15:00:30:INFO: +-------+---------------------+
+2026-09-28 15:00:30:INFO: | Index | Field Name          |
+2026-09-28 15:00:30:INFO: +-------+---------------------+
+2026-09-28 15:00:30:INFO: |   0   | geom_friction       |
+2026-09-28 15:00:30:INFO: |   1   | body_ipos           |
+2026-09-28 15:00:30:INFO: |   2   | body_subtreemass    |
+2026-09-28 15:00:30:INFO: |   3   | dof_invweight0      |
+2026-09-28 15:00:30:INFO: |   4   | body_invweight0     |
+2026-09-28 15:00:30:INFO: |   5   | tendon_length0      |
+2026-09-28 15:00:30:INFO: |   6   | tendon_invweight0   |
+2026-09-28 15:00:30:INFO: |   7   | actuator_acc0       |
+2026-09-28 15:00:30:INFO: |   8   | actuator_gainprm    |
+2026-09-28 15:00:30:INFO: |   9   | actuator_biasprm    |
+2026-09-28 15:00:30:INFO: |   10  | actuator_forcerange |
+2026-09-28 15:00:30:INFO: |   11  | jnt_actfrcrange     |
+2026-09-28 15:00:30:INFO: |   12  | tendon_actfrcrange  |
+2026-09-28 15:00:30:INFO: |   13  | body_mass           |
+2026-09-28 15:00:30:INFO: |   14  | body_inertia        |
+2026-09-28 15:00:30:INFO: |   15  | body_iquat          |
+2026-09-28 15:00:30:INFO: +-------+---------------------+
+2026-09-28 15:00:30:INFO: 
+2026-09-28 15:00:30:INFO: Module repeat_array_kernel_31f1cdc7 ab09835 load on device 'cuda:6' took 0.44 ms  (cached)
+2026-09-28 15:00:30:INFO: Module repeat_array_kernel_31f1cdc7 94f3776 load on device 'cuda:6' took 0.36 ms  (cached)
+2026-09-28 15:00:30:INFO: Module repeat_array_kernel_31f1cdc7 e3ba551 load on device 'cuda:6' took 0.44 ms  (cached)
+2026-09-28 15:01:00:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:01:17:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:01:49:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:04:07:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:04:24:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:06:04:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:06:04:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 15:17:59:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 16:38:48:INFO: Warning: EPA horizon = 24 isn't large enough.
+2026-09-28 16:43:29:INFO: Warning: EPA horizon = 24 isn't large enough.
