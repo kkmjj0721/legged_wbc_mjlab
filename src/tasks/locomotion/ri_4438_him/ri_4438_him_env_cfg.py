@@ -387,7 +387,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.3,
+      weight = 0.1,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5],
@@ -409,7 +409,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "offset": [0.0, 0.5, 0.5, 0.0],
         "threshold": 0.56,
         "foot_radius": 0.01625,
-        "ramp_fraction": 0.20,
+        "rise_fraction": 0.20,
+        "fall_fraction": 0.50,
       },
     ),
     "foot_slip": RewardTermCfg(

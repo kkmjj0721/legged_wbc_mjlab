@@ -177,7 +177,8 @@ def feet_clearance_phase_plateau(
   threshold: float = 0.56,
   foot_radius: float = 0.0155,
   command_threshold: float = 0.1,
-  ramp_fraction: float = 0.25,
+  rise_fraction: float = 0.20,
+  fall_fraction: float = 0.50,
 ) -> torch.Tensor:
   """Penalize insufficient terrain-relative clearance during swing."""
 
@@ -185,8 +186,12 @@ def feet_clearance_phase_plateau(
     raise ValueError("period must be positive")
   if not 0.0 < threshold < 1.0:
     raise ValueError("threshold must be in (0, 1)")
-  if not 0.0 < ramp_fraction <= 0.5:
-    raise ValueError("ramp_fraction must be in (0, 0.5]")
+  if not 0.0 < rise_fraction < 1.0:
+    raise ValueError("rise_fraction must be in (0, 1)")
+  if not 0.0 < fall_fraction < 1.0:
+    raise ValueError("fall_fraction must be in (0, 1)")
+  if rise_fraction + fall_fraction > 1.0:
+    raise ValueError("rise_fraction + fall_fraction must be <= 1")
   if target_height <= foot_radius:
     raise ValueError("target_height must be greater than foot_radius")
 
@@ -256,12 +261,13 @@ def feet_clearance_phase_plateau(
     / float(swing_steps - 1)
   ).clamp(0.0, 1.0)
 
-  # smoothstep rise -> plateau -> smoothstep fall
-  rise = (swing_progress / ramp_fraction).clamp(0.0, 1.0)
+  # 快速上升 -> 平台 -> 较长的下降段
+  rise = (swing_progress / rise_fraction).clamp(0.0, 1.0)
   fall = (
-    (1.0 - swing_progress) / ramp_fraction
+    (1.0 - swing_progress) / fall_fraction
   ).clamp(0.0, 1.0)
 
+  # smoothstep：让各段连接处的斜率平滑
   rise = rise.square() * (3.0 - 2.0 * rise)
   fall = fall.square() * (3.0 - 2.0 * fall)
   profile = torch.minimum(rise, fall)
