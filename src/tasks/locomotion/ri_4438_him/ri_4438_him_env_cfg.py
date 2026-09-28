@@ -374,7 +374,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -10.0),
     "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -10.0),
+    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -20.0),
     "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01),
     "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.02),
     "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight = -2.0e-5),
@@ -387,12 +387,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.5,
+      weight = 0.3,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5],
         "threshold": 0.56,
-        "command_threshold": 0.2,
+        "command_threshold": 0.1,
         "command_name": "twist",
         "sensor_name": "feet_ground_contact",
       }
@@ -401,15 +401,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=him_mdp.feet_clearance_phase_plateau,
       weight=-0.1,
       params={
-        "target_height": 0.15,
+        "target_height": 0.10,
         "height_sensor_name": "feet_terrain_height",
         "command_name": "twist",
         "command_threshold": 0.1,
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
         "threshold": 0.56,
-        "foot_radius": 0.0155,
-        "ramp_fraction": 0.25,
+        "foot_radius": 0.01625,
+        "ramp_fraction": 0.20,
       },
     ),
     "foot_slip": RewardTermCfg(
@@ -494,7 +494,18 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         params = {
           "command_name": "twist",
           "velocity_stages": [
-            {"step": 0, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
+            {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 200 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 400 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 600 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 800 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.5)},
+            {"step": 1000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.75)},
+            {"step": 1200 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
+
+            {"step": 1400 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.75, 0.75)},
+            {"step": 1600 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 0.75)},
+            {"step": 1800 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
+            {"step": 2000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
           ],
         },
       ),

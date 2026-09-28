@@ -1,7 +1,0 @@
-pyproject.toml
-setup.py
-rsl_rl_lib.egg-info/PKG-INFO
-rsl_rl_lib.egg-info/SOURCES.txt
-rsl_rl_lib.egg-info/dependency_links.txt
-rsl_rl_lib.egg-info/requires.txt
-rsl_rl_lib.egg-info/top_level.txt

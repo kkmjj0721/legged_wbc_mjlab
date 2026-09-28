@@ -60,7 +60,7 @@
             <!-- Distal shank is shorter and tilted with the lower STL section. -->
             <geom name="FL_calf1_collision" type="cylinder" size="0.011 0.025" pos="0.0183 0 -0.111" quat="0.996297 0 0.085980 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="FL_foot" material="visual_body" />
-            <geom size="0.01625" pos="0 0 -0.1506" rgba="1 1 1 1" name="FL_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            <geom size="0.01625" pos="0 0 -0.15" rgba="1 1 1 1" name="FL_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="FL" pos="0 0 -0.15" size="0.01" />
           </body>
         </body>
@@ -83,7 +83,7 @@
             <geom name="FR_calf2_collision" type="cylinder" size="0.0105 0.043" pos="0.0125 0 -0.046" quat="0.991408 0 -0.130803 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom name="FR_calf1_collision" type="cylinder" size="0.011 0.025" pos="0.0183 0 -0.111" quat="0.996297 0 0.085980 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="FR_foot" material="visual_body" />
-            <geom size="0.01625" pos="0 0 -0.1506" rgba="1 1 1 1" name="FR_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            <geom size="0.01625" pos="0 0 -0.15" rgba="1 1 1 1" name="FR_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="FR" pos="0 0 -0.15" size="0.01" />
           </body>
         </body>
@@ -106,7 +106,7 @@
             <geom name="RL_calf2_collision" type="cylinder" size="0.0105 0.043" pos="0.0125 0 -0.046" quat="0.991408 0 -0.130803 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom name="RL_calf1_collision" type="cylinder" size="0.011 0.025" pos="0.0183 0 -0.111" quat="0.996297 0 0.085980 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="RL_foot" material="visual_body" />
-            <geom size="0.01625" pos="0 0 -0.1506" rgba="1 1 1 1" name="RL_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            <geom size="0.01625" pos="0 0 -0.15" rgba="1 1 1 1" name="RL_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="RL" pos="0 0 -0.15" size="0.01" />
           </body>
         </body>
@@ -129,7 +129,7 @@
             <geom name="RR_calf2_collision" type="cylinder" size="0.0105 0.043" pos="0.0125 0 -0.046" quat="0.991408 0 -0.130803 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom name="RR_calf1_collision" type="cylinder" size="0.011 0.025" pos="0.0183 0 -0.111" quat="0.996297 0 0.085980 0" group="3" material="collision_debug" rgba="0.95 0.65 0.12 0.35" />
             <geom pos="0 0 -0.15" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="RR_foot" material="visual_body" />
-            <geom size="0.01625" pos="0 0 -0.1506" rgba="1 1 1 1" name="RR_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
+            <geom size="0.01625" pos="0 0 -0.15" rgba="1 1 1 1" name="RR_foot_collision" type="sphere" group="3" friction="1.0 0.005 0.0001" material="collision_debug" />
             <site name="RR" pos="0 0 -0.15" size="0.01" />
           </body>
         </body>
