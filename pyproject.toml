@@ -12,6 +12,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+analysis = [
+    "matplotlib>=3.8",
+    "pyyaml>=6.0",
+    "onnxruntime>=1.17",
+]
 sim2sim = [
     "mujoco>=3.1",
     "onnxruntime>=1.17",

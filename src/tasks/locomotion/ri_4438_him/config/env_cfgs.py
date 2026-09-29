@@ -14,10 +14,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
-  ObjRef,
   RayCastSensorCfg,
-  RingPatternCfg,
-  TerrainHeightSensorCfg,
 )
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
@@ -61,33 +58,6 @@ def ri_4438_rough_env_cfg(
 
   foot_names = ("FL", "FR", "RL", "RR")
   site_names = ("FL", "FR", "RL", "RR")
-
-  feet_height_cfg = TerrainHeightSensorCfg(
-    name="feet_terrain_height",
-    frame=tuple(
-      ObjRef(
-        type="site",
-        name=name,
-        entity="robot",
-      )
-      for name in site_names
-    ),
-    pattern=RingPatternCfg.single_ring(
-      radius=0.02,
-      num_samples=4,
-      include_center=True,
-    ),
-    ray_alignment="world",
-    max_distance=1.0,
-    exclude_parent_body=True,
-
-    # 地形几何体默认是 group=0，
-    # 排除机器人自身的 visual/collision 几何体。
-    include_geom_groups=(0,),
-
-    # 取脚下局部地形中最高的点，作为保守 clearance。
-    reduction="min",
-  )
 
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
 
@@ -158,7 +128,6 @@ def ri_4438_rough_env_cfg(
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
     nonfoot_ground_cfg,
-    feet_height_cfg,
     leg_ground_cfg,
     self_collision_cfg
   )
@@ -207,16 +176,12 @@ def ri_4438_rough_env_cfg(
   )
 
   for key in (
-    "period",
-    "threshold",
     "command_name",
     "command_threshold",
   ):
     cfg.rewards["foot_clearance"].params[key] = (
       cfg.rewards["foot_gait"].params[key]
     )
-
-  cfg.rewards["foot_clearance"].params["offset"] = list(gait_offset)
 
   foot_gait = cfg.rewards["foot_gait"]
 
@@ -228,6 +193,7 @@ def ri_4438_rough_env_cfg(
       "command_threshold"
     ]
 
+  cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(

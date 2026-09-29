@@ -139,6 +139,224 @@ RI-4438 HIM runner 每次保存检查点时都会更新同目录下的 `policy.o
 uv run tensorboard --logdir logs/rsl_rl
 ```
 
+### 选择 best 模型与检查收敛
+
+完整操作步骤见 [best_model 工具使用](docs/tool使用.md)：包含当前日志的可复制命令、续训用法、并行与种子设置、报告位置和模型回放。
+
+仿真 best 表示本轮第一名，尚不能认定为唯一最优。相同输出目录再次评测时，HTML 会核对上次的模型、测试条件和逐回合成绩，报告排名是否变化；固定种子不能保证 GPU 物理仿真逐位一致。复测方法见上述文档的“常见问题”。
+
+`--run` 支持**实验总目录或具体 run**。传 `logs/rsl_rl/ri_4438_him` 时自动选中最新 run，再追溯原始训练和历次续训，读取各目录的 `params/*.yaml`、TensorBoard
+事件和数字 checkpoint。支持当前 HIM/PPO 格式；默认生成完整训练曲线，不启动仿真。
+加 `--evaluate` 后统一测试整条训练链的全部有效模型。同名模型按来源区分，页面只显示前 10 名。
+历史来源不明确时用 `--runs 原始run 续训run ...` 显式指定；`--single-run` 可仅分析传入的 `--run`。
+
+```bash
+# 安装画图与导出验证所需的附加依赖
+uv sync --extra analysis
+
+# 生成分析报告，不复制或导出模型
+uv run python scripts/best_model.py --run /path/to/logs/rsl_rl/ri_4438_him/<run>
+
+# 最新 run 自动追溯历史，统一仿真比较全部模型
+uv run --extra analysis python scripts/best_model.py --run /path/to/<latest_run> --evaluate --eval-parallel 8
+
+# 直接传实验总目录；以后新增续训 run，无需修改路径
+uv run --extra analysis python scripts/best_model.py \
+  --run '/home/sunteng/Downloads/legged_wbc_mjlab/logs/rsl_rl/ri_4438_him' --evaluate --eval-parallel 8
+
+# 旧日志仅保存了正则来源时，按原始训练到最新续训的顺序指定
+uv run --extra analysis python scripts/best_model.py --runs /path/to/<original_run> /path/to/<resumed_run> --evaluate
+
+# 复制当前阶段 best，并从选中的 checkpoint 重新导出 ONNX（CPU）
+uv run python scripts/best_model.py --run /path/to/<run> --write-best --export-onnx
+
+# 调整统计窗口，并添加明确的任务目标；不指定目标时最多判为平台期
+uv run python scripts/best_model.py --run /path/to/<run> \
+  --window 100 --min-samples 50 --top-k 3 \
+  --goal 'survival_ratio>=0.95' \
+  --goal 'track_linear_velocity_index>=0.7' \
+  --goal 'track_angular_velocity_index>=0.7'
+```
+
+上述目标只是语法示例，需要按任务要求设置。`survival_ratio` 是平均 episode 步数与上限
+之比，不是成功率。`track_*_index` 是对应 `Episode_Reward/*` 除以正奖励权重得到的
+固定时长积分指标，仍受提前终止影响，不是速度跟踪准确率；奖励未按 dt 缩放或跟踪权重
+随课程变化时不生成这些指数。也可通过 `--goal 'TensorBoard标签>=阈值'` 或 `<=` 指定原始指标。
+
+默认评分为窗口内 `Train/mean_reward` 的 **中位数 − MAD**；MAD 是相对中位数的绝对偏差
+中位数，惩罚系数由 `--penalty` 控制。这是候选排名启发式，不是统计置信区间。
+只比较同一日志分段、同一课程阶段的已保存模型，排除阶段切换后的前 20 轮，并要求至少
+50 个有效样本。评分相同优先较新的 checkpoint；未达任务目标的候选仍可成为该阶段 best，
+但会单独记录达标结果。NaN/Inf、损坏的 checkpoint、文件编号与内部 iteration 不一致等会被排除。
+
+课程进度优先从 checkpoint 的 `infos.env_state.common_step_counter` 还原；没有该字段时，
+只对确认从零开始的训练推断。未知课程不会静默跨阶段排名。续训日志 iteration 回退时分段，
+最新 run 的主分析默认选择最后一段，可用 `--segment N` 选择；完整报告另保留各 run 所有分段。
+同一分段重复标签/iteration 取时间较晚的值。
+多分段的 checkpoint 归属依赖文件 mtime，复制后不能确定归属的模型会被排除。必要时可明确
+传入 `--env-step-offset N`，其定义为保存 iteration k 时的环境步数
+`N + (k + 1) * num_steps_per_env`；仅在已核对续训计数时使用。
+
+收敛检查独立使用日志末尾的数据，默认要求最终课程适应期之后至少 3 个连续的 100 轮窗口，
+每窗覆盖率至少 80%。检查总回报、episode 长度、已有的跟踪奖励和任务目标的原始指标；
+地形课程仍变化、关键数据缺失或窗口指标仍变化时不会宣称收敛。
+
+| 状态 | 含义 |
+| --- | --- |
+| `curriculum_in_progress` | 指令/奖励课程未完成，或地形难度仍在变化 |
+| `improving` / `degrading` | 回报持续改善 / 退化 |
+| `unstable` | 指标仍在变化、波动偏大或有健康告警 |
+| `plateau` | 曲线稳定，但任务目标未指定、未达标或观察不完整 |
+| `converged_candidate` | 曲线稳定、跟踪指标可用且显式目标达标，属于疑似收敛 |
+| `insufficient_data` / `unknown_curriculum` | 样本不足 / 无法确定课程阶段 |
+
+结果默认写到选中 run 的 `best/`（传总目录也一样），可用 `--output` 指定其他目录。总目录只扫描直接子目录中的 run：按目录名的训练开始时间选择最新一个，自定义名称用 `params/agent.yaml` 修改时间作为备用依据。终端会打印选中的目录，只追溯它的续训链，不自动混合其他独立训练。
+
+```text
+best/
+├── training_history.html  # 原始训练和历次续训的完整曲线、来源、各段状态
+├── history.png            # 完整曲线；原始 iteration，分别平滑并标记恢复点
+├── training_chain.json    # 所有 run 的配置及各段分析
+├── chain_candidates.csv   # 所有 run 的日志候选
+├── selection.json         # 规则、配置哈希、阶段、所有候选、收敛依据
+├── candidates.csv         # 窗口指标及排除原因
+├── report.png             # 曲线、阶段边界、当前阶段 Top K（--no-plot 跳过）
+├── model_best.pt           # --write-best 或 --export-onnx 时生成
+├── model_manifest.json    # 已发布模型来源、SHA256、配套 ONNX 信息
+└── policy.onnx            # --export-onnx 时重新导出
+```
+
+`selection.json` 的 `top_by_stage` 保留各阶段候选；当前阶段样本不足时 `best_current_stage`
+为 null，不自动用早期简单任务的模型替代。`published` 为 null 表示这次只生成报告，已有发布
+文件以 `model_manifest.json` 为准。重新发布模型但不导出 ONNX 时会移除输出目录中旧的
+`policy.onnx`，避免配错模型；run 根目录的训练 checkpoint 和 ONNX 不受影响。
+
+导出复用 runner 使用的 `actor.as_onnx()`，严格加载历史网络配置与参数。HIM 导出包含
+观测归一化、估计器及动作裁剪，并要求 checkpoint 有匹配的数值契约。当前只支持现代
+`HIMActorModel` / `MLPModel` 和 GaussianDistribution，旧格式或其他网络会明确报错。
+导出文件包含模型来源与 HIM 契约；关节、PD、动作缩放等部署配置仍需使用对应任务的配置。
+
+训练窗口包含更新前采样及跨更新的 episode，评分只能近似反映 checkpoint 表现。
+日志评分不保证统计收敛或实机表现；跨 run 的训练分数不用于直接排名。
+各段收敛使用各自配置，当前不跨续训边界拼接统计窗口。仿真比较使用统一场景和兼容的控制接口。
+新训练会保存 `params/lineage.json`，记录实际加载的 checkpoint 及哈希，以便后续自动追溯。
+
+#### 实际仿真对比与中文报告
+
+在项目根目录执行（`--run` 可传实验总目录，或任意一次训练、续训的具体目录）：
+
+```bash
+uv run --extra analysis python scripts/best_model.py \
+  --run /path/to/logs/rsl_rl/ri_4438_him/<run> --evaluate
+
+# 指定要比较的模型编号；降低并行环境数可以节省显存
+uv run --extra analysis python scripts/best_model.py \
+  --run /path/to/<run> --evaluate --eval-checkpoints 500 700 900 \
+  --eval-num-envs 12 --eval-seeds 0 1 2 --eval-duration 12
+
+# 默认已评测整条续训链的全部有效 checkpoint；也可显式指定 8 个模型并行
+uv run --extra analysis python scripts/best_model.py \
+  --run /path/to/<run> --evaluate --eval-parallel 8
+
+# 全部模型、3 组种子；上下楼梯均包含固定的 5、10、15 cm 台阶
+uv run --extra analysis python scripts/best_model.py \
+  --run /path/to/<run> --evaluate --eval-seeds 0 1 2 \
+  --eval-terrains flat rough stairs_up stairs_down
+```
+
+`--evaluate` 默认评测 **选中 run 及其续训祖先中全部有效的数值 checkpoint**，包含较早日志分段的模型。
+所有模型完成同一套仿真后再排名，**HTML、Markdown、对比图、场景筛选和单模型诊断只显示前 10 名**。
+全部模型排名及逐场景/逐回合结果保留在 CSV、JSON 中；报告中的 best 从全部已测模型中产生。
+`--eval-count` 默认 `0`，表示全部；仅在主动进行小规模诊断时，才用正整数限制模型数量，
+或用 `--eval-checkpoints` 显式指定编号。HTML 会显示已测/可用数量，数据中记录无效 checkpoint 的原因。
+续训 run 的最早 checkpoint 通常就是续训起点，完整数据可用于比较续训前后表现。
+即使当前日志窗口不足以选出 best，也能评测有效 checkpoint；完整曲线包含已解析的续训历史，收敛仍按各日志分段独立判断。
+每次运行固定本轮 checkpoint 快照，不会持续后台监控；训练新增模型后再次运行即可更新分析。
+
+默认配置为 **每模型 24 个环境、3 个种子、每回合 12 秒，8 个地形场景**：平地、±2 cm 起伏，
+以及 **5、10、15 cm 每个高度分别上楼梯、下楼梯**。每模型共 **576 个首次回合**。
+种子默认 **0、1、2**；`--eval-seeds` 必须提供恰好 3 个互不相同的非负整数。
+平地/起伏各有 6 组指令：站立、前进 0.5/1.0 m/s、后退、侧移、转向；
+每个楼梯场景有 3 组向前指令：0.3/0.5/0.8 m/s。每个地形场景样本数相同，默认各占总分的 1/8，
+场景内部各指令等权。新增高度改变了评测范围，总分不能直接与旧版单一高度报告比较。
+楼梯高度固定在工具中，不提供高度参数；`stairs_up` / `stairs_down` 每个方向均展开全部三个高度。
+每段 6 级，累计高差分别为 **30、60、90 cm**，踏面均为 30 cm；出生点距第一台阶 1 m。
+楼梯通过要求越过 3.15 m 通过线、到达对应高度（容差 12 cm），且存活至回合结束；
+站在原地、未走完、偏出 ±1.2 m 测试通道、越过后跌倒均不算任务通过。
+
+`--eval-parallel 0` 默认根据可用显存估计同时运行 **1～8 个模型**，预留 1.5 GiB；可显式设为 `1`～`16`。
+各模型保留各自的权重和归一化参数，通过 `torch.vmap` 并行推理，各自的独立物理环境在同一个 GPU 批次步进。
+例如 8 个模型 × 每模型 24 个环境 = **192 个并行环境**，其余模型分批处理；尾批空位不参与计分。
+显存估计不是绝对保证，繁忙 GPU 上可用 `--eval-parallel 1 --eval-num-envs 12` 降低占用。
+`--eval-num-envs` 必须是 6 的倍数；`--eval-terrains flat` 可仅测平地；
+`--eval-device cuda:0` 选择设备；`--eval-task` 可指定 `Ri-4438-HIM-Rough/Flat` 或 `Ri-4438-Rough/Flat`。
+任务默认由保存的 experiment_name 推断，目前仿真评测仅支持 RI-4438 HIM/PPO。
+
+评测使用当前工作区的统一机器人资产和终止规则，检查历史观测顺序、缩放、动作接口，
+加载保存的 actor、归一化参数及控制周期。课程、推扰、参数随机化、观测噪声、观测与执行器延迟关闭，
+同一种子/测试编号的初始姿态与关节状态不依赖模型顺序或并行数量，并须通过哈希一致性检查。
+发生跌倒时先记录终止状态，重置后的片段不再计入该次评测。该协议测量名义条件下的运动和楼梯能力，尚未覆盖抗推扰能力。
+
+推荐顺序依次比较：任务通过率、存活至结束比例、存活时长、平面速度误差、转向速度误差、机身倾斜。
+每回合计算指标后平均，不使用训练 reward 混合排名；完整跑完不等于跟踪达标。
+相近成绩只提供候选顺序，当前没有显著性检验。样本偏少时报告会提示复核。
+稳定性分析包括横滚/俯仰时间标准差、倾角 P95/峰值、机身角速度与垂直速度 RMS、动作一阶/二阶变化、
+力矩、机械功率代理、失败原因、最差场景及不同种子的误差范围。`--eval-tilt-limit 20` 设置倾角占比诊断阈值，
+不改变仿真终止规则。种子范围不称为置信区间；机械功率代理不等于电池功耗。
+
+报告末尾附上 **排名前 3 名在全部 8 个地形场景中的真实仿真截图**，每个场景一张对比拼图。
+每个模型统一记录首个种子、前进 0.5 m/s、首个对应环境，在 2 秒、6 秒和回合结束时的状态；
+若提前失败，则保留首次终止状态，之后不再取图。截图使用本次计分回合记录的状态和原始编译场景，
+由 MuJoCo 离屏渲染，不重新运行策略，不选择成功回合代替失败回合。图片仅展示单个回合，统计成绩仍以 3 组种子为准。
+
+`best/` 新增以下文件，直接用浏览器打开 `report.html` 即可：
+
+```text
+best/
+├── report.html               # 中文报告、交互场景筛选、单模型诊断、指标解释
+├── report.md                 # 可随图片一起分享的 Markdown 报告
+├── comparison.png            # 成功比例、速度误差、姿态、动作变化、存活时间
+├── scenarios.png             # 每种地形/指令的对比热图
+├── stability.png             # 姿态波动、倾角 P95/峰值、动作二阶变化
+├── repeatability.png         # 种子误差范围、跟踪与动作平滑性的取舍
+├── stairs.png                # 5/10/15 cm 楼梯剖面与各模型上下楼通过率
+├── stairs_progress.png       # 三个高度 × 上下楼梯的真实行进进度
+├── tracking.png              # 目标速度与实际速度的时间曲线
+├── evaluation.json           # 协议、模型/配置哈希、指标、采样轨迹
+├── evaluation.csv            # 每个模型、种子、场景的逐回合结果
+├── evaluation_cases.csv      # 各模型/地形/指令的汇总指标
+├── evaluation_ranking.csv    # 全部模型的完整排名及汇总指标
+├── simulation/              # 真实仿真图片、拼图、采样状态、场景 MJB 和图片索引
+├── eval_env_flat.json        # 实际采用的统一平地环境描述
+├── eval_env_rough.json       # 实际采用的统一起伏环境描述
+├── eval_env_stairs_up_5cm.json     # 5 cm 上楼梯；另有 10cm、15cm
+├── eval_env_stairs_down_5cm.json   # 5 cm 下楼梯；另有 10cm、15cm
+├── model_best_eval.pt        # 本次仿真推荐模型
+└── eval_model_manifest.json  # 仿真推荐模型的来源与 SHA256
+```
+
+仿真执行期间会写 `evaluation.partial.json`，成功完成后移除；失败时不会发布新的仿真推荐模型。
+HTML / Markdown 包含分高度的上下楼梯通过率表，场景筛选、稳定性指标和 CSV 同样区分三个高度。
+`model_best_eval.pt` 和日志选出的 `model_best.pt` 含义不同，报告明确标注两者。
+`--write-best` / `--export-onnx` 仍针对日志 best；`policy.onnx` 不代表仿真 best。
+`--no-plot` 跳过统计图，但仍保留真实仿真截图、HTML、Markdown 和数值报告。
+
+若要交互查看推荐模型的动作，可使用现有回放入口（这是 play 环境，条件与上面的固定评测不同）：
+
+```bash
+uv run python scripts/play.py Ri-4438-HIM-Rough \
+  --checkpoint-file /path/to/<run>/best/model_best_eval.pt --num-envs 1
+```
+
+**平台期**指最近几个训练窗口的主要指标变化很小。它可能意味着学得稳定，也可能意味着卡住，
+因此报告把训练趋势和实际仿真表现分开展示。课程还在升级、刚续训样本不足时，不会宣布最终收敛。
+
+验证工具：
+
+```bash
+uv run --extra analysis python -m unittest discover -s tests -v
+```
+
 ## 策略回放
 
 加载本地检查点：

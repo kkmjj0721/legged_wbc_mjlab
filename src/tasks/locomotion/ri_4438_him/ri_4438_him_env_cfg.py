@@ -345,7 +345,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
-      weight = -0.2,
+      weight = -0.25,
       params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "pose": RewardTermCfg(
@@ -363,7 +363,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "body_ang_vel": RewardTermCfg(
       func = mdp.body_angular_velocity_penalty,
-      weight = -0.05,  # Override per-robot
+      weight = -0.08,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
@@ -386,7 +386,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.1,
+      weight = 0.5,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5],
@@ -397,21 +397,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       }
     ),
     "foot_clearance": RewardTermCfg(
-      func=him_mdp.feet_clearance_phase_plateau,
-      weight=-0.2,
+      func=him_mdp.feet_clearance,
+      weight=-0.5,
       params={
-        # Plateau foot-site heights above terrain; subtract foot_radius for
-        # approximate sole clearance (4.43--8.43 cm with the current radius).
-        "height_range": (0.08, 0.16),
-        "height_sensor_name": "feet_terrain_height",
+        # Foot-site world-z interval (meters); no cost inside the interval.
+        "height_range": (0.10, 0.16),
         "command_name": "twist",
         "command_threshold": 0.1,
-        "period": 0.6,
-        "offset": [0.0, 0.5, 0.5, 0.0],
-        "threshold": 0.56,
-        "foot_radius": 0.01573,  # Site to the lowest vertex of the foot mesh.
-        "rise_fraction": 0.35,
-        "fall_fraction": 0.50,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
     "foot_slip": RewardTermCfg(

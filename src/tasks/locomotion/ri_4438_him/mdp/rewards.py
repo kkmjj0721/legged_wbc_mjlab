@@ -12,7 +12,7 @@ from mjlab.tasks.velocity.mdp.rewards import *  # noqa: F401, F403
 from mjlab.entity import Entity
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import BuiltinSensor, ContactSensor, TerrainHeightSensor, RayCastSensor
+from mjlab.sensor import BuiltinSensor, ContactSensor, RayCastSensor
 from mjlab.utils.lab_api.math import quat_apply, quat_apply_inverse, yaw_quat
 from mjlab.utils.lab_api.string import resolve_matching_names_values
 
@@ -167,155 +167,49 @@ class variable_posture:
     return torch.exp(-torch.mean(torch.square(error) / torch.square(std), dim=1))
 
 
-def feet_clearance_phase_plateau(
+def feet_clearance(
   env: ManagerBasedRlEnv,
   height_range: tuple[float, float],
-  height_sensor_name: str,
-  command_name: str,
-  period: float,
-  offset: list[float],
-  threshold: float = 0.56,
-  foot_radius: float = 0.01573,
+  command_name: str | None = None,
   command_threshold: float = 0.1,
-  rise_fraction: float = 0.20,
-  fall_fraction: float = 0.50,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Penalize swing heights outside a phase-dependent clearance band.
+  """惩罚足端高度超出区间的偏差，由水平移动速度加权。
 
-  ``height_range`` gives the plateau's minimum and maximum foot-site heights
-  above local terrain, in meters (including ``foot_radius``). Both bounds
-  smoothly return to ``foot_radius`` at lift-off and touchdown. Heights inside
-  the band incur no cost; undershoot and overshoot incur bounded squared costs.
-  Errors use the constant ``height_range[1] - foot_radius`` scale, so narrowing
-  the band at swing endpoints does not amplify the penalty.
+  c = I(||v_cmd,xy|| + |w_cmd,z| > command_threshold)
+      * Σ_i (max(h_min - z_i, 0) + max(z_i - h_max, 0)) * ||v_i,xy||
+
+  height_range 为足端 site 的世界系高度区间（米），不减去地形高度。
+  区间内（含边界）不惩罚；没有水平移动的脚不惩罚。
+  不使用步态相位或接触状态筛选摆动足。
   """
-
-  if period <= 0.0:
-    raise ValueError("period must be positive")
-  if not 0.0 < threshold < 1.0:
-    raise ValueError("threshold must be in (0, 1)")
-  if not 0.0 < rise_fraction < 1.0:
-    raise ValueError("rise_fraction must be in (0, 1)")
-  if not 0.0 < fall_fraction < 1.0:
-    raise ValueError("fall_fraction must be in (0, 1)")
-  if rise_fraction + fall_fraction > 1.0:
-    raise ValueError("rise_fraction + fall_fraction must be <= 1")
   min_height, max_height = height_range
   if (
-    not all(math.isfinite(value) for value in (foot_radius, min_height, max_height))
-    or not 0.0 <= foot_radius < min_height <= max_height
+    not all(math.isfinite(value) for value in height_range)
+    or min_height > max_height
   ):
     raise ValueError(
       "height_range must contain finite heights satisfying "
-      "0 <= foot_radius < min_height <= max_height"
+      "min_height <= max_height"
     )
 
-  sensor: TerrainHeightSensor = env.scene[height_sensor_name]
-  data = sensor.data
-  raw_heights = data.heights
+  asset: Entity = env.scene[asset_cfg.name]
+  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
+  foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]
+  vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
+  delta = (min_height - foot_z).clamp_min(0.0) + (
+    foot_z - max_height
+  ).clamp_min(0.0)
+  cost = torch.sum(delta * vel_norm, dim=1)  # [B]
 
-  if raw_heights.ndim != 2:
-    raise ValueError("height sensor data must have shape [B, F]")
-
-  num_envs, num_feet = raw_heights.shape
-  if len(offset) != num_feet:
-    raise ValueError("offset length must match number of feet")
-
-  # A foot is valid only if at least one ray really hit terrain.
-  rays_per_foot = sensor.num_rays_per_frame
-  ray_distances = data.distances.reshape(
-    num_envs, num_feet, rays_per_foot
-  )
-  valid = (
-    torch.isfinite(ray_distances)
-    & (ray_distances >= 0.0)
-  ).any(dim=-1)
-  valid &= torch.isfinite(raw_heights)
-
-  heights = torch.where(
-    valid,
-    raw_heights,
-    torch.zeros_like(raw_heights),
-  )
-
-  # Use discrete phase so the last swing sample reaches u=1 exactly.
-  period_steps = int(round(period / env.step_dt))
-  if (
-    period_steps < 3
-    or not math.isclose(
-      period_steps * env.step_dt,
-      period,
-      abs_tol=1.0e-6,
-    )
-  ):
-    raise ValueError("period must be an integer multiple of env.step_dt")
-
-  stance_steps = math.ceil(threshold * period_steps)
-  swing_steps = period_steps - stance_steps
-  if swing_steps < 2:
-    raise ValueError("swing phase must contain at least two steps")
-
-  offset_steps_list = [
-    int(round(value * period_steps)) for value in offset
-  ]
-  offset_steps = torch.tensor(
-    offset_steps_list,
-    device=heights.device,
-    dtype=torch.long,
-  )
-
-  leg_step = torch.remainder(
-    env.episode_length_buf.to(torch.long).unsqueeze(1)
-    + offset_steps.unsqueeze(0),
-    period_steps,
-  )
-
-  expected_swing = leg_step >= stance_steps
-  swing_progress = (
-    (leg_step - stance_steps).to(heights.dtype)
-    / float(swing_steps - 1)
-  ).clamp(0.0, 1.0)
-
-  # 快速上升 -> 平台 -> 较长的下降段
-  rise = (swing_progress / rise_fraction).clamp(0.0, 1.0)
-  fall = (
-    (1.0 - swing_progress) / fall_fraction
-  ).clamp(0.0, 1.0)
-
-  # smoothstep：让各段连接处的斜率平滑
-  rise = rise.square() * (3.0 - 2.0 * rise)
-  fall = fall.square() * (3.0 - 2.0 * fall)
-  profile = torch.minimum(rise, fall)
-
-  clearance_range = max_height - foot_radius
-  lower_height = foot_radius + (min_height - foot_radius) * profile
-  upper_height = foot_radius + clearance_range * profile
-
-  command = env.command_manager.get_command(command_name)
-  command = torch.nan_to_num(command)
-
-  moving = (
-    torch.linalg.vector_norm(command[:, :2], dim=1)
-    > command_threshold
-  )
-  moving |= torch.abs(command[:, 2]) > command_threshold
-
-  mask = expected_swing & valid & moving.unsqueeze(1)
-
-  # Only one side can be violated, keeping each foot's total cost in [0, 1].
-  shortfall = (
-    (lower_height - heights) / clearance_range
-  ).clamp(0.0, 1.0)
-  excess = (
-    (heights - upper_height) / clearance_range
-  ).clamp(0.0, 1.0)
-
-  cost = (
-    (shortfall.square() + excess.square())
-    * mask.to(heights.dtype)
-  ).mean(dim=1)
-
-  return torch.nan_to_num(cost)
+  if command_name is not None:
+    command = env.command_manager.get_command(command_name)
+    if command is not None:
+      linear_norm = torch.norm(command[:, :2], dim=1)
+      angular_norm = torch.abs(command[:, 2])
+      active = (linear_norm + angular_norm > command_threshold).to(cost.dtype)
+      cost = cost * active
+  return cost
 
 
 def stumble(
