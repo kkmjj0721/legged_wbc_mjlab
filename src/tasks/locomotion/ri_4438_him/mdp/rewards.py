@@ -169,7 +169,7 @@ class variable_posture:
 
 def feet_clearance_phase_plateau(
   env: ManagerBasedRlEnv,
-  target_height: float,
+  height_range: tuple[float, float],
   height_sensor_name: str,
   command_name: str,
   period: float,
@@ -180,7 +180,15 @@ def feet_clearance_phase_plateau(
   rise_fraction: float = 0.20,
   fall_fraction: float = 0.50,
 ) -> torch.Tensor:
-  """Penalize insufficient terrain-relative clearance during swing."""
+  """Penalize swing heights outside a phase-dependent clearance band.
+
+  ``height_range`` gives the plateau's minimum and maximum foot-site heights
+  above local terrain, in meters (including ``foot_radius``). Both bounds
+  smoothly return to ``foot_radius`` at lift-off and touchdown. Heights inside
+  the band incur no cost; undershoot and overshoot incur bounded squared costs.
+  Errors use the constant ``height_range[1] - foot_radius`` scale, so narrowing
+  the band at swing endpoints does not amplify the penalty.
+  """
 
   if period <= 0.0:
     raise ValueError("period must be positive")
@@ -192,8 +200,15 @@ def feet_clearance_phase_plateau(
     raise ValueError("fall_fraction must be in (0, 1)")
   if rise_fraction + fall_fraction > 1.0:
     raise ValueError("rise_fraction + fall_fraction must be <= 1")
-  if target_height <= foot_radius:
-    raise ValueError("target_height must be greater than foot_radius")
+  min_height, max_height = height_range
+  if (
+    not all(math.isfinite(value) for value in (foot_radius, min_height, max_height))
+    or not 0.0 <= foot_radius < min_height <= max_height
+  ):
+    raise ValueError(
+      "height_range must contain finite heights satisfying "
+      "0 <= foot_radius < min_height <= max_height"
+    )
 
   sensor: TerrainHeightSensor = env.scene[height_sensor_name]
   data = sensor.data
@@ -272,8 +287,9 @@ def feet_clearance_phase_plateau(
   fall = fall.square() * (3.0 - 2.0 * fall)
   profile = torch.minimum(rise, fall)
 
-  clearance_range = target_height - foot_radius
-  required_height = foot_radius + clearance_range * profile
+  clearance_range = max_height - foot_radius
+  lower_height = foot_radius + (min_height - foot_radius) * profile
+  upper_height = foot_radius + clearance_range * profile
 
   command = env.command_manager.get_command(command_name)
   command = torch.nan_to_num(command)
@@ -286,13 +302,16 @@ def feet_clearance_phase_plateau(
 
   mask = expected_swing & valid & moving.unsqueeze(1)
 
-  # Bounded shortfall penalty in [0, 1] for each foot.
+  # Only one side can be violated, keeping each foot's total cost in [0, 1].
   shortfall = (
-    (required_height - heights) / clearance_range
+    (lower_height - heights) / clearance_range
+  ).clamp(0.0, 1.0)
+  excess = (
+    (heights - upper_height) / clearance_range
   ).clamp(0.0, 1.0)
 
   cost = (
-    shortfall.square()
+    (shortfall.square() + excess.square())
     * mask.to(heights.dtype)
   ).mean(dim=1)
 

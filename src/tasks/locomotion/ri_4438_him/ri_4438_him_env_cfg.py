@@ -247,11 +247,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       interval_range_s = (5.0, 6.0),
       params = {
         "velocity_range": {
-          "x": (-0.5, 0.5),
-          "y": (-0.5, 0.5),
+          "x": (-1.0, 1.0),
+          "y": (-1.0, 1.0),
           "z": (-0.4, 0.4),
-          "roll": (-0.52, 0.52),
-          "pitch": (-0.52, 0.52),
+          "roll": (-0.6, 0.6),
+          "pitch": (-0.6, 0.6),
           "yaw": (-0.78, 0.78),
         },
       },
@@ -398,9 +398,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_clearance": RewardTermCfg(
       func=him_mdp.feet_clearance_phase_plateau,
-      weight=-0.1,
+      weight=-0.2,
       params={
-        "target_height": 0.10,
+        # Plateau foot-site heights above terrain; subtract foot_radius for
+        # approximate sole clearance (4.43--8.43 cm with the current radius).
+        "height_range": (0.08, 0.16),
         "height_sensor_name": "feet_terrain_height",
         "command_name": "twist",
         "command_threshold": 0.1,
@@ -408,7 +410,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "offset": [0.0, 0.5, 0.5, 0.0],
         "threshold": 0.56,
         "foot_radius": 0.01573,  # Site to the lowest vertex of the foot mesh.
-        "rise_fraction": 0.20,
+        "rise_fraction": 0.35,
         "fall_fraction": 0.50,
       },
     ),
