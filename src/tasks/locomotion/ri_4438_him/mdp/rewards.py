@@ -173,42 +173,57 @@ def feet_clearance(
   command_name: str | None = None,
   command_threshold: float = 0.1,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  period: float = 0.6,
+  offset: tuple[float, ...] = (0.0, 0.5, 0.5, 0.0),
+  threshold: float = 0.56,
+  height_sensor_name: str = "feet_terrain_height",
 ) -> torch.Tensor:
-  """惩罚足端高度超出区间的偏差，由水平移动速度加权。
-
-  c = I(||v_cmd,xy|| + |w_cmd,z| > command_threshold)
-      * Σ_i (max(h_min - z_i, 0) + max(z_i - h_max, 0)) * ||v_i,xy||
-
-  height_range 为足端 site 的世界系高度区间（米），不减去地形高度。
-  区间内（含边界）不惩罚；没有水平移动的脚不惩罚。
-  不使用步态相位或接触状态筛选摆动足。
-  """
+  # 保留 asset_cfg 参数，兼容现有配置。
   min_height, max_height = height_range
   if (
-    not all(math.isfinite(value) for value in height_range)
-    or min_height > max_height
+    not all(math.isfinite(v) for v in height_range)
+    or not 0.0 < min_height <= max_height
   ):
-    raise ValueError(
-      "height_range must contain finite heights satisfying "
-      "min_height <= max_height"
-    )
+    raise ValueError("height_range must satisfy 0 < min <= max")
 
-  asset: Entity = env.scene[asset_cfg.name]
-  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
-  foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]
-  vel_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
-  delta = (min_height - foot_z).clamp_min(0.0) + (
-    foot_z - max_height
-  ).clamp_min(0.0)
-  cost = torch.sum(delta * vel_norm, dim=1)  # [B]
+  # 与 foot_gait 使用相同的步态时钟。
+  period_steps = int(round(period / env.step_dt))
+  phase = (
+    (env.episode_length_buf % period_steps) / period_steps
+  ).unsqueeze(1)
+  offsets = torch.as_tensor(
+    offset, device=env.device, dtype=phase.dtype
+  ).view(1, -1)
+  leg_phase = (phase + offsets) % 1.0
+
+  # 按预期摆动相位计算，不使用实际接触状态或足端速度筛选。
+  swing = leg_phase >= threshold
+  progress = (
+    (leg_phase - threshold) / (1.0 - threshold)
+  ).clamp(0.0, 1.0)
+
+  # 足端 site 相对脚下地面的高度。
+  height = env.scene[height_sensor_name].data.heights
+
+  # 起落脚时最低要求为零，摆动中段达到 min_height。
+  lower = min_height * torch.sin(torch.pi * progress)
+  error = (
+    (lower - height).clamp_min(0.0)
+    + (height - max_height).clamp_min(0.0)
+  )
+  cost = (
+    (error / min_height).clamp(max=1.0) * swing
+  ).sum(dim=1)
 
   if command_name is not None:
     command = env.command_manager.get_command(command_name)
     if command is not None:
-      linear_norm = torch.norm(command[:, :2], dim=1)
-      angular_norm = torch.abs(command[:, 2])
-      active = (linear_norm + angular_norm > command_threshold).to(cost.dtype)
+      active = (
+        torch.linalg.norm(command[:, :2], dim=1)
+        + command[:, 2].abs()
+      ) > command_threshold
       cost = cost * active
+
   return cost
 
 

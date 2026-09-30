@@ -278,7 +278,7 @@ def evaluate(run: Run, result: dict, output: Path, options: EvalOptions) -> dict
     total_envs = parallel * samples
     scenarios = {terrain: STAIR_COMMANDS if terrain in STAIR_PRESETS else COMMANDS for terrain in expand_terrains(options.terrains)}
     available = [c for c in run.checkpoints if c["valid"]]
-    data = {"schema_version": 6, "complete": False, "options": asdict(options),
+    data = {"schema_version": 7, "complete": False, "options": asdict(options),
             "runtime": runtime_description(options.device),
             "parallel_models": parallel, "total_parallel_envs": total_envs,
             "selection": {"available": len(available), "selected": len(candidates), "all_tested": len(available) == len(candidates),
@@ -440,6 +440,8 @@ def evaluate(run: Run, result: dict, output: Path, options: EvalOptions) -> dict
         finally:
             env.close()
     data["summary"] = summarize(data["rows"])
+    from .evaluation_readiness import apply_recommendation_ranking
+    apply_recommendation_ranking(data)
     data["best_iteration"] = data["summary"][0]["iteration"]
     data["best_model_id"] = model_key(data["summary"][0])
     data["best_label"] = model_label(data["summary"][0])

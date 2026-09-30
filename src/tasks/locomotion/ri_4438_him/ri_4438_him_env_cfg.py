@@ -22,7 +22,7 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
-from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
+from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg, TerrainHeightSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from src.tasks.locomotion.ri_4438_him.mdp.velocity_command import (
@@ -55,6 +55,20 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     exclude_parent_body = True,
     debug_vis = True,
     viz = RayCastSensorCfg.VizCfg(show_normals = True),
+  )
+
+  feet_terrain_height = TerrainHeightSensorCfg(
+    name="feet_terrain_height",
+    frame=tuple(
+      ObjRef(type="site", name=name, entity="robot")
+      for name in ("FL", "FR", "RL", "RR")
+    ),
+    pattern=GridPatternCfg(size=(0.0, 0.0), resolution=0.1),
+    ray_alignment="world",
+    max_distance=2.0,
+    exclude_parent_body=True,
+    include_geom_groups=(0,),
+    reduction="min",
   )
 
   ##
@@ -350,7 +364,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "pose": RewardTermCfg(
       func=mdp.variable_posture,
-      weight = 0.5,
+      weight = 0.65,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
@@ -386,7 +400,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.5,
+      weight = 0.25,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5],
@@ -398,13 +412,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_clearance": RewardTermCfg(
       func=him_mdp.feet_clearance,
-      weight=-0.5,
+      weight=-0.25,
       params={
-        # Foot-site world-z interval (meters); no cost inside the interval.
-        "height_range": (0.10, 0.16),
+        "height_range": (0.10, 0.20),
+        "period": 0.6,
+        "offset": [0.0, 0.5, 0.5, 0.0],
+        "threshold": 0.56,
         "command_name": "twist",
         "command_threshold": 0.1,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+        "height_sensor_name": "feet_terrain_height",
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),
       },
     ),
     "foot_slip": RewardTermCfg(
@@ -525,7 +542,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         terrain_type = "generator",
         terrain_generator = terrain_cfg,
       ),
-      sensors = (terrain_scan,),
+      sensors=(terrain_scan, feet_terrain_height),
       num_envs = ri_4438_cfg.env.num_envs,
       extent = 2.0,
     ),

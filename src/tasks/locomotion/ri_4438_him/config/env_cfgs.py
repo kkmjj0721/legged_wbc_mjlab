@@ -176,6 +176,9 @@ def ri_4438_rough_env_cfg(
   )
 
   for key in (
+    "period",
+    "offset",
+    "threshold",
     "command_name",
     "command_threshold",
   ):

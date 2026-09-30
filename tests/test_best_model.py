@@ -208,6 +208,8 @@ class IntegrationTests(unittest.TestCase):
             for i in (100, 200, 300):
                 torch.save({"iter": i, "actor_state_dict": {"weight": torch.ones(2)},
                             "infos": {"env_state": {"common_step_counter": (i+1)*100}}}, root/f"model_{i}.pt")
+            (root/"best").mkdir()
+            (root/"best/training_history.html").write_text('<title>完整训练与续训</title>legacy report')
             command = [sys.executable, "-B", "scripts/best_model.py", "--run", str(root), "--write-best", "--no-plot"]
             completed = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -216,6 +218,12 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(sha256(root/"best/model_best.pt"), sha256(root/"model_300.pt"))
             self.assertTrue((root/"best/candidates.csv").exists())
             self.assertFalse((root/"model_best.pt").exists())
+            self.assertEqual([p.name for p in (root/"best").glob("*.html")], ["report.html"])
+            html = (root/"best/report.html").read_text()
+            self.assertIn("本次未进行仿真评测", html)
+            self.assertIn("日志评分候选（训练曲线参考）：model_300", html)
+            self.assertNotIn("training_history.html", completed.stdout)
+            self.assertNotIn("当前阶段 best", completed.stdout)
             # Re-reading must not include the best alias as a numeric candidate.
             loaded = read_run(root)
             self.assertEqual(len(loaded.checkpoints), 3)

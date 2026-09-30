@@ -1,0 +1,31 @@
+{
+  "variant": "baseline_interval",
+  "task": "Ri-4438-HIM-Rough",
+  "num_envs": 1024,
+  "num_steps_per_env": 100,
+  "iters": 200,
+  "clearance_weight": -0.25,
+  "tracking": "off",
+  "resume": "/home/sunteng/Downloads/legged_wbc_mjlab/logs/rsl_rl/ri_4438_him/2026-09-29_21-37-06/model_4500.pt",
+  "build_seconds": 2.03,
+  "gpu_allocated_MiB_after_build": 18.4,
+  "loaded_iteration": 4500,
+  "train_seconds": 689.9,
+  "gpu_peak_MiB": 968.8,
+  "summary": {
+    "Train/mean_reward": 37.80833,
+    "Train/mean_episode_length": 954.25033,
+    "Curriculum/terrain_levels": 2.96024,
+    "Metrics/twist/error_vel_xy": 0.92494,
+    "Metrics/twist/error_vel_yaw": 1.36943,
+    "Episode_Reward/track_linear_velocity": 1.64233,
+    "Episode_Reward/track_angular_velocity": 0.69625,
+    "Episode_Reward/foot_clearance": -0.11273,
+    "Episode_Reward/foot_gait": 0.32088,
+    "Episode_Reward/stumble": -0.00092,
+    "Episode_Termination/fell_over": 0.12791,
+    "Metrics/slip_velocity_mean": 0.2794,
+    "Diag/Clearance/raw_cost": 0.46584,
+    "Perf/total_fps": 30502.16667
+  }
+}

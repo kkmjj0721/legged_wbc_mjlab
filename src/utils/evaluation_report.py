@@ -15,9 +15,10 @@ import tempfile
 import numpy as np
 
 from .training_logs import sha256, model_key, model_label, model_origin
-from .training_report import _atomic_text
+from .training_report import _atomic_text, recommendation, log_candidate_label
 from .evaluation_scenarios import REPORT_MODEL_LIMIT, TERRAIN_LABELS, stair_sections
 from .evaluation_repeatability import repeatability_notes
+from .evaluation_readiness import assess_hardware_readiness, readiness_notes
 
 
 STATUSES = {
@@ -59,6 +60,26 @@ def _plot_setup():
 
 def _plots(data, output):
     plt = _plot_setup()
+    from .evaluation_readiness import WEIGHTS
+    ranked = data["summary"][:REPORT_MODEL_LIMIT]
+    if all("score_components" in r for r in ranked):
+        fig, ax = plt.subplots(figsize=(13, 6))
+        left = np.zeros(len(ranked))
+        for key, label in (("tracking", "基础跟踪 45%"), ("stability", "稳定性 25%"),
+                           ("smoothness", "动作平滑 10%"), ("stairs", "楼梯能力 20%")):
+            values = np.array([100 * WEIGHTS[key] * r["score_components"][key] for r in ranked])
+            ax.barh([model_label(r) for r in ranked], values, left=left, label=label)
+            left += values
+        for i, value in enumerate(left):
+            ax.text(value + .5, i, f"{value:.2f}", va="center")
+        ax.invert_yaxis()
+        ax.set(xlim=(0, 100), xlabel="相对推荐分（不是实机成功概率）", title="推荐依据 · 固定参考尺度与权重；允许任务存在短板")
+        ax.legend(loc="lower right")
+        fig.tight_layout()
+        fig.savefig(output / "recommendation.png", dpi=150)
+        plt.close(fig)
+    else:
+        (output / "recommendation.png").unlink(missing_ok=True)
     summaries = sorted(data["summary"][:REPORT_MODEL_LIMIT], key=lambda r: (r.get("source_index", 0), r["iteration"]))
     colors = {model_key(r): plt.get_cmap("tab10")(i % 10) for i, r in enumerate(summaries)}
     labels = [f"{model_label(r)}" for r in summaries]
@@ -73,7 +94,7 @@ def _plots(data, output):
         ax.grid(axis="y", alpha=0.2)
         ax.tick_params(axis="x", rotation=35 if len(labels) > 4 else 15, labelsize=8 if len(labels) > 4 else 10)
     fig.suptitle(f"统一仿真对比 · 本轮第一 {data.get('best_label', 'model_'+str(data['best_iteration']))}\n"
-                 "先比较任务通过率；楼梯须越过终点且存活到回合结束；每种地形等权", fontsize=15)
+                 "分项性能与推荐取舍：任务通过率保留地形等权统计，推荐分另计跟踪、稳定性、动作平滑和楼梯", fontsize=15)
     fig.tight_layout()
     fig.savefig(output / "comparison.png", dpi=150)
     plt.close(fig)
@@ -154,7 +175,7 @@ def _stability_plots(data, summaries, colors, output, plt):
     axes[1].set(title="速度跟踪与动作平滑性的取舍", xlabel="速度误差 (m/s) ↓", ylabel="动作变化率 (1/s) ↓")
     for ax in axes:
         ax.grid(alpha=0.2)
-    fig.suptitle("先确认任务通过率，再比较误差和平滑性；相近结果不能仅凭一次排名认定显著优劣")
+    fig.suptitle("综合比较任务能力、误差和平滑性；相近结果不能仅凭一次排名认定显著优劣")
     fig.tight_layout()
     fig.savefig(output / "repeatability.png", dpi=150)
     plt.close(fig)
@@ -215,9 +236,15 @@ def _stability_plots(data, summaries, colors, output, plt):
 
 
 def write_evaluation_report(result, data, output: Path, plot=True):
+    selected = recommendation(result, data)
+    hardware = assess_hardware_readiness(data)
+    if hardware["hardware_recommendation"] and hardware["hardware_recommendation"]["model_id"] != selected["model_id"]:
+        raise ValueError("report ranking is stale; apply the recommendation ranking before publication")
+    hardware_notes = readiness_notes(hardware)
+    _atomic_text(output / "hardware_readiness.json", lambda f: json.dump(hardware, f, indent=2, ensure_ascii=False, allow_nan=False))
     displayed = data["summary"][:REPORT_MODEL_LIMIT]
     displayed_ids = {model_key(r) for r in displayed}
-    images = [("comparison.png", "性能总览"), ("scenarios.png", "分场景通过率与误差"),
+    images = [("recommendation.png", "推荐分项与取舍"), ("comparison.png", "性能总览"), ("scenarios.png", "分场景通过率与误差"),
               ("stability.png", "姿态与动作稳定性"), ("repeatability.png", "种子差异与性能取舍"),
               ("stairs.png", "5 / 10 / 15 cm 楼梯几何与通过率"), ("stairs_progress.png", "各高度上下楼梯行进进度"),
               ("tracking.png", "目标与实际速度"), ("history.png", "完整训练与续训曲线"), ("report.png", "最新 run 训练趋势")]
@@ -238,10 +265,10 @@ def write_evaluation_report(result, data, output: Path, plot=True):
     status = STATUSES.get(result["convergence"]["status"], result["convergence"]["status"])
     reliability_notes = repeatability_notes(data)
     command_labels = {(t, c["name"]): c["label"] for t, commands in data["scenarios"].items() for c in commands}
-    heading = ["排名 / 模型", "任务通过", "存活至结束", "速度误差 m/s", "转向误差 rad/s", "倾角 P95 °", "动作变化率 1/s", "最差场景通过"]
+    heading = ["排名 / 模型", "相对推荐分", "任务通过", "存活至结束", "速度误差 m/s", "转向误差 rad/s", "倾角 P95 °", "动作变化率 1/s", "最差场景通过"]
     table = []
     for rank, r in enumerate(displayed, 1):
-        table.append([f"{rank} / {model_label(r)}", f"{r['task_success']:.1%}", f"{r['success']:.1%}",
+        table.append([f"{rank} / {model_label(r)}", f"{r['deployment_score']:.2f}" if 'deployment_score' in r else "未计算", f"{r['task_success']:.1%}", f"{r['success']:.1%}",
                       f"{r['linear_rmse']:.3f}", f"{r['yaw_rmse']:.3f}", f"{r['tilt_p95_deg']:.2f}",
                       f"{r['action_rate_rms']:.2f}", f"{r['worst_case_success']:.1%}"])
     baseline = min(displayed, key=lambda r: (r.get("source_index", 0), r["iteration"]))
@@ -253,14 +280,16 @@ def write_evaluation_report(result, data, output: Path, plot=True):
         f"推荐模型的各种子平均速度误差为 {winner['seed_linear_min']:.3f}～{winner['seed_linear_max']:.3f} m/s；这是重复试验的范围，不是统计置信区间。",
         f"推荐模型所有回合最大倾角 {winner['tilt_peak_max_deg']:.1f}°；超过 {data['options']['tilt_limit']:.0f}° 的时间占比平均 {winner['tilt_exceed_fraction']:.2%}；该阈值仅用于诊断，不改变跌倒终止条件。",
     ]
+    if data.get("ranking_revision"):
+        observations.insert(0, "本次复用已有仿真记录，按更新后的相对推荐规则重新排序；没有重新运行物理仿真。旧规则的推荐与分数保存在 evaluation.before_relative_ranking.json。")
     if model_key(baseline) != model_key(winner):
         observations.append(f"相对本页展示模型中最早的 {model_label(baseline)}：任务通过率变化 {(winner['task_success']-baseline['task_success'])*100:+.1f} 个百分点；速度误差变化 {winner['linear_rmse']-baseline['linear_rmse']:+.4f} m/s；动作变化率变化 {winner['action_rate_rms']-baseline['action_rate_rms']:+.2f} 1/s。")
     if winner["task_success"] < 0.95:
         observations.append("当前推荐模型仍有未通过场景，best 只代表本次排序靠前，不能视为能力已经达标。")
-    near = [r for r in displayed[1:] if abs(r["task_success"]-winner["task_success"]) < 1e-8
-            and r["linear_rmse"] <= winner["linear_rmse"]*1.02]
-    if near:
-        observations.append("接近推荐模型的候选（通过率相同、速度误差相差不超过 2%）：" + "、".join(f"{model_label(r)}" for r in near) + "。这是提示复核的启发式，不代表统计等效。")
+    if "deployment_score" in winner:
+        near = [r for r in displayed[1:] if winner["deployment_score"] - r["deployment_score"] <= 1.0]
+        if near:
+            observations.append("接近推荐模型的备选（推荐分相差不超过 1 分）：" + "、".join(model_label(r) for r in near) + "。这是提示复核的启发式，不代表统计等效。")
     if data["options"]["duration"] < 10 or len(data["options"]["seeds"]) < 3:
         observations.insert(0, "本次是短时或少种子评测，仅用于快速筛选；楼梯可能来不及走完。正式比较建议至少 3 个种子、每回合 12 秒。")
     terrain_text = "、".join(TERRAIN_LABELS[t] for t in data["scenarios"])
@@ -270,13 +299,13 @@ def write_evaluation_report(result, data, output: Path, plot=True):
         f"平地/起伏测试站立、前进、后退、侧移和转向；上下楼梯仅测试向前 0.3/0.5/0.8 m/s。每个地形场景（楼梯按高度和方向区分）样本数相同、权重相同，本轮各占 1/{len(data['scenarios'])}，场景内各指令等权。新增高度改变了评测范围，总分不能直接与旧版单一高度报告比较。",
         "平地/起伏的任务通过仅要求没有失败并跑满时长，尚未设置速度精度门槛；跟踪误差另列，不能把 100% 存活理解为速度已达标。",
         f"楼梯每级高度固定为 5、10、15 cm，每个方向均测试全部三个高度，不接受高度参数。每段 6 级，总高差分别为 30、60、90 cm，踏面 30 cm；第一台阶在出生点前 1 m。机器人必须越过 x={data['stair_goal_m']:.2f} m 的通过线、达到相应高度（容差 12 cm），且存活到回合结束。绕出 ±1.2 m 通道会终止。单纯站住不算通过。",
-        "排序依次比较任务通过率、存活至结束比例、存活时长、平面速度误差、转向误差、倾斜角。通过率相同后才比较误差，不把不同单位的指标混成一个任意加权分数。",
+        "完整评测按相对推荐分排序：基础跟踪 45%、稳定性 25%、动作平滑 10%、楼梯能力 20%。先用固定参考尺度归一化，再加权；权重是明确的工程取舍，不是实机成功概率或安全门槛。缺少基础行走/楼梯等可比指标时保留原始任务通过率排序并标明未计算推荐分。",
         "各模型使用相同的局部测试编号/种子生成初始姿态和关节状态，并校验哈希。随机初始状态与并行模型数量、模型顺序无关。GPU 接触求解不保证逐位复现，相近成绩需要更多种子复核。",
         "速度误差是 sqrt(mean((vx−目标vx)²+(vy−目标vy)²))；姿态标准差反映摆动，倾角 P95/峰值反映极端状态。所有指标包含启动和失败前状态，按首次回合计算后平均；重置后的片段不参与统计。早期失败的低抖动不能单独解释为稳定。",
         "动作变化率和二阶变化分别是策略输出的一阶、二阶差分 RMS。机械功率代理是 sum(abs(关节执行器力矩×关节速度))，不是电池功耗。各指标和逐回合数据分别展示。",
         "使用当前工作区的统一机器人、终止规则和物理参数；保存的网络、观测/动作接口和控制周期严格匹配。课程、参数随机化、推扰、观测噪声及观测/执行器延迟关闭；尚未测试抗推扰或真实硬件鲁棒性。",
         "训练收敛状态仍根据训练日志判断；这里的多模型性能趋势和稳定性是辅助证据，不会自动把一次仿真通过认定为训练收敛。平台期只表示近期曲线不再明显改善。",
-        "model_best_eval.pt 是全部已测模型中的仿真推荐模型。model_best.pt / policy.onnx（若生成）仍对应日志 best；数值 checkpoint 原文件不变。HTML、Markdown 和图表只展示前 10 名，evaluation_ranking.csv / evaluation_cases.csv / evaluation.csv / evaluation.json 保留全部模型。",
+        "model_best_eval.pt 是本轮仿真推荐模型。model_best.pt / policy.onnx（若生成）对应独立的日志评分候选，用于训练曲线分析。HTML、Markdown 和图表只展示前 10 名，evaluation_ranking.csv / evaluation_cases.csv / evaluation.csv / evaluation.json 保留全部模型。",
         "末尾的仿真图片来自排名前 3 名在本次计分回合中的真实状态，并非重新运行或挑选成功回合。统一取首个种子、前进 0.5 m/s、首个对应环境，在 2 s / 6 s / 回合结束采样；提前失败则保留首次终止画面，终止后不再截图。单个回合图片不能代表全部种子的通过率。",
     ]
     failures = []
@@ -289,6 +318,23 @@ def write_evaluation_report(result, data, output: Path, plot=True):
 
     def html_table(headers, rows, ident=""):
         return f'<div class="scroll"><table id="{ident}"><thead><tr>' + ''.join(f'<th>{escape(h)}</th>' for h in headers) + '</tr></thead><tbody>' + ''.join('<tr>' + ''.join(f'<td>{escape(str(c))}</td>' for c in row) + '</tr>' for row in rows) + '</tbody></table></div>'
+
+    hardware_headers = ["地形", "推荐模型任务通过", "提前终止", "存活但未完成", "全部已测模型中的最高通过率"]
+    hardware_rows = []
+    if hardware["models"]:
+        for terrain, limit in zip(hardware["models"][0]["terrains"], hardware["terrain_limits"]):
+            total = terrain["episodes"]
+            rate = limit["best_observed_pass_rate"]
+            hardware_rows.append([terrain["label"], f"{terrain['passed']}/{total}" if total else "未测试",
+                                  str(terrain["terminated"]), str(terrain["survived_but_incomplete"]),
+                                  f"{rate:.1%}" if rate is not None else "未测试"])
+    hardware_html = ('<section id="hardware-readiness"><h2>实机优先模型：相对推荐与能力边界</h2><ul>'
+                     + ''.join('<li>' + escape(n) + '</li>' for n in hardware_notes) + '</ul>'
+                     + html_table(hardware_headers, hardware_rows, "hardware-terrain-results")
+                     + '<details><summary>评分公式、参考尺度与验证范围</summary><p>基础跟踪：平地/起伏各回合的存活标记 × max(0, 1−线速度误差/max(指令平移速度, 0.3 m/s)) × max(0, 1−转向误差/0.5 rad/s)，再取平均。稳定性：全场景存活率与平地/起伏姿态质量各占一半。姿态质量为 1/(1+(倾角 RMS/20°)²)。动作平滑：1/(1+(动作变化率/10)²) 和 1/(1+(动作二阶变化/400)²) 各占一半，取平地/起伏均值。楼梯能力为楼梯回合完成率。四项按 45/25/10/20 加权后乘 100。尺度为比较用参考值，不是硬件限制；分数与候选数量无关。</p><ul>'
+                     + ''.join('<li>' + escape(n) + '</li>' for n in hardware["evidence_gaps"])
+                     + '</ul></details><p>模型可以带有能力短板而被推荐。推荐表示当前取舍下优先选择，并不表示已经测得实机表现。'
+                     '<a href="hardware_readiness.json">全部模型的评分分项、种子分数和权重对照</a></p></section>')
 
     repeat_headers = ["模型（本轮前 10 名）", "上次排名 → 本轮排名", "上次通过率", "本轮通过率", "变化（百分点）"]
     repeat_rows = [[f"{model_label(r)}", f"{r['previous_rank']} → {r['current_rank']}",
@@ -331,7 +377,7 @@ def write_evaluation_report(result, data, output: Path, plot=True):
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader(); writer.writerows(rows)
     _atomic_text(output / "evaluation_ranking.csv", write_ranking)
-    image_html = ''.join(f'<section><h2>{escape(label)}</h2><a href="{name}"><img loading="lazy" src="{name}" alt="{escape(label)}"></a></section>' for name, label in images if (output/name).exists())
+    image_html = ''.join(f'<section><h2>{escape(label)}</h2><a href="{name}"><img loading="lazy" src="{name}" alt="{escape(label)}"></a></section>' for name, label in images if name not in ("history.png", "report.png") and (output/name).exists())
     model_options = ''.join(f'<option value="{model_key(r)}">{escape(model_label(r))}</option>' for r in displayed)
     terrain_options = ''.join(f'<option value="{t}">{TERRAIN_LABELS[t]}</option>' for t in data["scenarios"])
     case_json = json.dumps([r for r in case_rows if model_key(r) in displayed_ids], ensure_ascii=False, allow_nan=False).replace('<', r'\u003c')
@@ -352,17 +398,20 @@ table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}th,t
 img{width:100%;height:auto}small{color:#5a6c7e}li{margin:9px 0}a{color:#006c76}.scroll{overflow:auto;max-height:680px}details{padding:14px;border-bottom:1px solid #e0e7ef}summary{cursor:pointer}select{padding:8px;margin:0 12px 10px 4px}
 nav{display:flex;gap:18px;flex-wrap:wrap;margin:16px 0}.warn{color:#a64713}button{padding:7px;margin:8px;cursor:pointer}
 </style><h1>RI-4438 多模型性能与稳定性报告</h1><small>__RUN__ · __TIME__</small>
-<nav><a href="#findings">结果解读</a><a href="#repeatability-section">复跑核对</a><a href="#rank-section">前 10 名</a>__STAIRS_NAV__<a href="#case-section">场景筛选</a><a href="#details">单模型诊断</a><a href="#protocol">测试条件</a>__GALLERY_NAV__</nav>
-<div class="cards"><div class="card">本轮第一 · 唯一最优未确认<strong>__BEST__</strong></div><div class="card">评测覆盖<strong>__COVERAGE__</strong></div><div class="card">任务通过<strong>__PASS__</strong></div><div class="card">模型并行数<strong>__PARALLEL__</strong></div></div>
+<nav><a href="#hardware-readiness">推荐依据与能力边界</a><a href="#recommendation">推荐模型</a><a href="#findings">结果解读</a><a href="#repeatability-section">复跑核对</a><a href="#rank-section">前 10 名</a>__STAIRS_NAV__<a href="#case-section">场景筛选</a><a href="#training-history">完整训练曲线</a><a href="#details">单模型诊断</a><a href="#protocol">测试条件</a>__GALLERY_NAV__</nav>
+<div class="cards"><div class="card">本轮推荐 · 实机表现未验证<strong>__BEST__</strong></div><div class="card">评测覆盖<strong>__COVERAGE__</strong></div><div class="card">任务通过<strong>__PASS__</strong></div><div class="card">模型并行数<strong>__PARALLEL__</strong></div></div>
+__HARDWARE__
+<section id="recommendation"><h2>本轮推荐模型</h2><p><b>本轮推荐：__BEST__</b> · <a href="model_best_eval.pt">下载推荐模型 model_best_eval.pt</a> · <a href="eval_model_manifest.json">模型来源与 SHA256</a></p><p>用途：按当前表现优先进行实机验证。完整评测综合基础跟踪、稳定性、动作平滑和楼梯能力；允许能力存在短板，实机表现尚未验证。</p><p><b>日志评分候选（训练曲线参考）：__LOG_CANDIDATE__</b></p><p>日志候选依据最新 run 当前课程阶段的训练回报窗口评分，用于观察训练趋势。它与仿真评测的条件和排序指标不同，因此可能是另一个模型。</p></section>
 __CHAIN__
 <section id="findings"><h2>本次结果怎么读</h2><ul>__FINDINGS__</ul><p><b>训练状态：</b>__STATUS__</p></section>
 <section id="repeatability-section"><h2>重复运行后，第一名可靠吗？</h2><ul>__RELIABILITY__</ul>__REPEAT_TABLE____PREVIOUS_LINK__<p>本工具未启用能保证逐位一致的物理求解后端；仅设置相同随机种子不能消除数值波动。model_best_eval.pt 保存本轮候选，不代表已证明它优于所有其他模型。</p></section>
-<section id="rank-section"><h2>模型排名 · 前 10 名</h2><p>全部已测模型参与排名，此处仅显示前 10 名。先比较任务通过率；楼梯需走完且存活至结束，再比较速度误差等指标。<a href="evaluation_ranking.csv">下载全部模型排名</a></p>__RANK__</section>
+<section id="rank-section"><h2>模型排名 · 前 10 名</h2><p>全部已测模型参与相对推荐，此处仅显示前 10 名。推荐分兼顾跟踪、稳定性、动作平滑及楼梯能力，不要求全部任务通过；公式和权重见页首。未计算推荐分时仅保留任务通过率排序。<a href="evaluation_ranking.csv">下载全部模型排名</a></p>__RANK__</section>
 __STAIRS__
 <section id="case-section"><h2>前 10 名：按模型和地形查看表现</h2><label>模型<select id="model-filter"><option value="">全部展示模型</option>__MODELS__</select></label><label>地形<select id="terrain-filter"><option value="">全部地形</option>__TERRAINS__</select></label>
 <label>排序<select id="sort-filter"><option value="task_success">任务通过率从低到高（定位弱项）</option><option value="linear_rmse">速度误差从高到低</option><option value="tilt_p95_deg">倾角 P95 从高到低</option><option value="action_rate_rms">动作变化率从高到低</option></select></label>
 <p id="case-count"></p><div class="scroll"><table><thead><tr><th>模型</th><th>地形</th><th>指令</th><th>回合数</th><th>任务通过</th><th>存活至结束</th><th>速度误差 m/s</th><th>倾角 P95 °</th><th>动作变化率 1/s</th></tr></thead><tbody id="case-rows"></tbody></table></div><noscript>筛选需要浏览器启用 JavaScript；也可下载下方场景 CSV。</noscript></section>
 __IMAGES__
+__TRAINING_FIGURES__
 <section id="details"><h2>单模型诊断与选入原因</h2>__DETAILS__</section>
 <section><h2>失败类型、力矩和机械功率代理</h2><p>同一回合触发多个终止条件时，此表按首个原因计数，完整原因见 CSV。未走完楼梯与跌倒分开记录。</p>__FAILURES__</section>
 <section id="protocol"><h2>评测协议与指标含义</h2><ul>__NOTES__</ul><p><a href="evaluation_ranking.csv">全部模型排名 CSV</a> · <a href="evaluation.csv">逐回合 CSV</a> · <a href="evaluation_cases.csv">场景汇总 CSV</a> · <a href="evaluation.json">完整 JSON</a> · <a href="report.md">Markdown</a></p></section>
@@ -375,8 +424,9 @@ const body=document.getElementById('case-rows');body.replaceChildren();document.
 for(const r of selected){const tr=document.createElement('tr');for(const v of [r.label || 'model_'+r.iteration,r.terrain_label,r.command_label,r.episodes,(100*r.task_success).toFixed(1)+'%',(100*r.success).toFixed(1)+'%',r.linear_rmse.toFixed(3),r.tilt_p95_deg.toFixed(2),r.action_rate_rms.toFixed(2)]){const td=document.createElement('td');td.textContent=v;tr.appendChild(td);}body.appendChild(tr);}}
 for(const id of ['model-filter','terrain-filter','sort-filter'])document.getElementById(id).addEventListener('change',renderCases);renderCases();
 </script></html>'''
-    from .training_chain_report import chain_html
-    replacements = {"CHAIN": chain_html(result), "RUN": escape(data["run"]), "TIME": timestamp, "BEST": model_label(winner),
+    from .training_chain_report import chain_html, training_figures_html, remove_legacy_training_page
+    replacements = {"CHAIN": chain_html(result), "HARDWARE": hardware_html, "RUN": escape(data["run"]), "TIME": timestamp, "BEST": escape(selected["label"]),
+        "LOG_CANDIDATE": escape(log_candidate_label(result)), "TRAINING_FIGURES": training_figures_html(output),
         "COVERAGE": f"{data['selection']['selected']} / {data['selection']['available']}", "PASS": f"{winner['task_success']:.1%}",
         "PARALLEL": str(data["parallel_models"]), "FINDINGS": ''.join('<li>'+escape(n)+'</li>' for n in observations),
         "RELIABILITY": ''.join('<li>'+escape(n)+'</li>' for n in reliability_notes),
@@ -391,7 +441,15 @@ for(const id of ['model-filter','terrain-filter','sort-filter'])document.getElem
     for key, value in replacements.items():
         html = html.replace('__'+key+'__', value)
     _atomic_text(output / "report.html", lambda f: f.write(html))
-    markdown = [f"# RI-4438 多模型评测：本轮第一 {model_label(winner)}", "", f"训练状态：{status}", "", *['- '+n for n in observations], "",
+    markdown = [f"# RI-4438 多模型评测：本轮推荐 {selected['label']}", "",
+                "## 实机优先推荐与能力边界", "", *['- '+n for n in hardware_notes], "",
+                '| '+' | '.join(hardware_headers)+' |', '| '+' | '.join(['---']*len(hardware_headers))+' |',
+                *['| '+' | '.join(row)+' |' for row in hardware_rows], "",
+                *['- '+n for n in hardware['evidence_gaps']], "",
+                "全部模型的评分依据见 [hardware_readiness.json](hardware_readiness.json)。", "",
+                f"本轮推荐：**{selected['label']}**；模型文件：[model_best_eval.pt](model_best_eval.pt)。",
+                f"日志评分候选（训练曲线参考）：**{log_candidate_label(result)}**。日志回报与仿真性能的排序依据不同。",
+                "", f"训练状态：{status}", "", *['- '+n for n in observations], "",
                 "## 复跑核对与第一名的可靠性", "", *['- '+n for n in reliability_notes]]
     if result.get("chain"):
         markdown += ["", "完整训练来源和各段判断见 [training_chain.json](training_chain.json)。"]
@@ -413,6 +471,7 @@ for(const id of ['model-filter','terrain-filter','sort-filter'])document.getElem
         for item in gallery:
             markdown += ["", f"### {item['label']}", "", f"![{item['label']}]({item['image']})"]
     _atomic_text(output / "report.md", lambda f: f.write('\n'.join(markdown)+'\n'))
+    remove_legacy_training_page(output)
     # These two filenames belonged to the previous single-height protocol.
     # Remove only those obsolete generated descriptions after the report succeeds.
     for terrain in ("stairs_up", "stairs_down"):
@@ -430,6 +489,8 @@ def publish_evaluation_best(run, data, output: Path):
         os.replace(copied, output / "model_best_eval.pt")
     manifest = {**model, "model": str(output / "model_best_eval.pt"), "selection_policy": data["ranking_policy"],
                 "unique_best_established": False,
+                "intended_use": "hardware_trial_priority" if data.get("hardware_assessment", {}).get("hardware_recommendation") else "simulation_screening",
+                "hardware_validated": False, "hardware_recommendation": data.get("hardware_assessment", {}).get("hardware_recommendation"),
                 "repeatability_status": data.get("repeatability", {}).get("status", "not_checked"),
                 "saved_config_sha256": run.fingerprints, "evaluation": "evaluation.json",
                 "generated_at": datetime.now(timezone.utc).isoformat()}

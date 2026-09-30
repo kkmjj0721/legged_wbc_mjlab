@@ -147,7 +147,10 @@ def repeatability_notes(data):
     status = audit.get("status", "not_checked")
     notes = ["本轮第一名是单次评测的候选，不表示已经确认唯一最优。固定 3 组种子控制初始抽样，但不能保证 GPU 接触求解的浮点运算逐位一致。"]
     if "lead_success_episodes" in audit:
-        notes.append(f"本轮第一名比第二名多通过 {audit['lead_success_episodes']} 个回合（{audit['lead_success_percentage_points']:.2f} 个百分点）；微小领先需要复测。")
+        if "deployment_score" in data.get("summary", [{}])[0]:
+            notes.append(f"推荐第一名相对第二名的任务通过回合差为 {audit['lead_success_episodes']:+d}（{audit['lead_success_percentage_points']:+.2f} 个百分点）；当前按综合推荐分排序，通过回合数不是唯一依据。")
+        else:
+            notes.append(f"本轮第一名比第二名多通过 {audit['lead_success_episodes']} 个回合（{audit['lead_success_percentage_points']:.2f} 个百分点）；是否稳定领先还需在相同条件下复测。")
     if status == "not_checked":
         notes.append("尚无上次完成的评测可比较；本次未验证排名重复性。相同命令再次运行后会自动核对。")
     elif status == "insufficient_metadata":

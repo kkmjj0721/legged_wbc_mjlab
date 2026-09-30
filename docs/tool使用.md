@@ -2,6 +2,8 @@
 
 入口是 `scripts/best_model.py`。日常使用指定**实验总目录或某次训练的 run 目录**，再加 `--evaluate`：传总目录时自动选择最新 run，再追溯原始训练和历次续训，显示完整训练记录，仿真比较整条训练链的全部有效模型，在选中 run 的 `best/` 中生成中文报告。
 
+**目标是在现有模型中选出优先实机验证的一个，允许有能力短板。** 推荐依据为仿真中的相对表现，`hardware_validated=false` 表示尚未测得实机表现，不会因此把推荐设为空。
+
 ## 1. 直接运行：使用当前这份日志
 
 在项目根目录执行。首次使用时安装分析依赖：
@@ -33,7 +35,7 @@ uv run --extra analysis python scripts/best_model.py \
 
 后续续训时，把 `EVAL_RUN_DIR` 改成最新 run 路径，再执行上面的命令。旧 run 应保留，工具会沿保存的续训来源向前查找；无需把 checkpoint 复制到同一目录。仿真使用项目的 MuJoCo/mjlab 环境，默认设备为 `cuda:0`。
 
-终端先列出 `R1、R2…` 对应的 run，再用 `[eval]` 显示当前模型批次、地形和种子；`[images]` 表示正在生成截图。看到 `仿真推荐: R2 / model_... | 报告: .../report.html` 后，本轮评测和报告生成已完成。
+终端先列出 `R1、R2…` 对应的 run，再用 `[eval]` 显示当前模型批次、地形和种子；`[images]` 表示正在生成截图。完成时，终端最后显示 `本轮推荐（基于仿真）: R3 / model_... | 模型: .../model_best_eval.pt` 和 `统一报告（含完整训练曲线）: .../report.html`。
 
 完成后打开报告：
 
@@ -81,7 +83,7 @@ xdg-open "$EVAL_RUN_DIR/best/report.html"
 
 楼梯高度 **固定为 5、10、15 cm**，无需输入高度参数。每段 6 级，踏面宽 30 cm，总高差分别为 30、60、90 cm。每个高度都分别测上楼、下楼；楼梯指令速度为向前 `0.3、0.5、0.8 m/s`。
 
-楼梯通过要求走过终点、达到对应高度并存活至回合结束。停在台阶前，即使没有跌倒，也不算通过。总排名先比较任务通过率，再依次比较存活比例、存活时间、速度误差、转向误差和机身倾斜。
+楼梯通过要求走过终点、达到对应高度并存活至回合结束。停在台阶前，即使没有跌倒，也不算通过。完整评测按基础跟踪、稳定性、动作平滑和楼梯能力的相对推荐分排序；具体公式见第 5 节，未全部通过不会取消推荐。
 
 截图统一取首个种子、前进 `0.5 m/s`、同一个局部环境编号，在 2 秒、6 秒和回合结束采样；提前失败则保存首次终止画面。图片用于直观看姿态与台阶位置，完整通过率仍按 3 组种子的所有回合统计。
 
@@ -131,22 +133,27 @@ uv run --extra analysis python scripts/best_model.py \
 
 | 文件或目录 | 用途 |
 | --- | --- |
-| `report.html` | 用浏览器打开：前 10 名排名、地形筛选、稳定性、训练趋势及仿真截图 |
+| `report.html` | 唯一 HTML 入口：完整训练曲线、来源及各段状态；加 `--evaluate` 后还包含仿真推荐、前 10 名、地形筛选、稳定性及仿真截图 |
 | `report.md` | 可随图片一起分享的 Markdown 报告 |
-| `training_history.html` / `history.png` | 原始训练和历次续训的完整曲线；无需 `--evaluate` 也生成 |
+| `history.png` | 原始训练和历次续训的完整曲线，嵌入 `report.html`；无需 `--evaluate` 也生成 |
 | `training_chain.json` | 所有 run 的来源、配置哈希和各日志分段的课程、候选、收敛分析 |
 | `chain_candidates.csv` | 所有 run 的日志候选及来源；不同奖励条件的分数不直接混合排名 |
-| `model_best_eval.pt` | 本轮实际仿真推荐模型；使用 `--evaluate` 后自动保存 |
+| `model_best_eval.pt` | 本轮相对推荐第一名；使用 `--evaluate` 后自动保存，未宣称实机验证完成 |
 | `eval_model_manifest.json` | 仿真推荐模型的原始路径、迭代编号和 SHA256 |
+| `hardware_readiness.json` | 全部模型的推荐分项、三组种子分数、权重对照，以及逐地形能力边界 |
 | `evaluation_ranking.csv` | 全部已测模型的排名和汇总指标 |
 | `evaluation_cases.csv` | 全部模型按地形、指令划分的成绩 |
 | `evaluation.csv` | 全部模型的逐回合结果 |
 | `evaluation.json` | 完整协议、模型信息、成绩、轨迹和截图状态 |
 | `evaluation.previous.json` | 同一输出目录中上一次完成的评测结果，用于自动复跑核对；只保留上一份 |
 | `simulation/` | 仿真原始图片、分地形拼图、记录状态和场景文件 |
-| `selection.json` | 训练日志 best、课程阶段、收敛状态及判断依据 |
+| `selection.json` | 本轮 `recommendation`、日志评分候选、课程阶段、收敛状态及判断依据 |
 
-**日常查看整条训练链的仿真 best，用 `model_best_eval.pt`。** 它可能来自任意一个历史 run，原始来源见 `eval_model_manifest.json`。`model_best.pt` 由最新 run 的当前阶段日志评分选出，需加 `--write-best` 才保存；`--export-onnx` 导出的 `policy.onnx` 也对应这个日志 best。两种模型可能不同。
+**使用本轮推荐时，选 `model_best_eval.pt`。** 它可能来自任意一个历史 run，原始来源见 `eval_model_manifest.json`。终端、HTML 页首、排名前 10 名、JSON 和保存的模型使用同一套相对推荐规则，不再因某种楼梯未通过而取消推荐。
+
+“日志评分候选”只反映最新 run 当前课程阶段的训练回报窗口。例如，仿真推荐可能是 `R3 / model_3700`，日志评分候选是 `R3 / model_4300`：两者评判条件不同，日志候选作为训练趋势参考。`model_best.pt` 保存的是日志评分候选，需加 `--write-best` 或 `--export-onnx` 才生成；`--export-onnx` 导出的 `policy.onnx` 也对应日志评分候选。
+
+完整训练曲线已合并到 `report.html`。成功生成新版报告后，会清理同一输出目录中工具旧版生成的 `training_history.html`。不同 run 的 `best/` 各自保留，查看本轮结果请打开终端最后打印的报告路径。
 
 `model_best_eval.pt` 表示**本轮评测排名第一的候选**，不表示已经证明它是唯一最优。报告的“复跑核对”会说明它领先多少、与上一次比较时条件有没有变化、第一名是否稳定。首次运行没有旧结果时，会明确标为尚未验证重复性。
 
@@ -159,6 +166,29 @@ uv run --extra analysis python scripts/best_model.py \
 ```
 
 上面这次的报告位于 `best_review_01/report.html`。
+
+### 准备上实机时怎么判断
+
+目标是在现有模型之间权衡基础运动、稳定性和地形能力，选一个优先实机验证的模型；不要求全部场景通过。默认完整评测仍覆盖平地、起伏和固定 5/10/15 cm 上下楼梯，全部模型参与比较，最后展示前 10 名。
+
+推荐分使用固定参考尺度，和参与比较的模型数量无关：
+
+| 分项 | 权重 | 算法 |
+| --- | --- | --- |
+| 基础跟踪 | 45% | 平地/起伏各回合的存活标记 × `max(0, 1−线速度RMSE/max(指令平移速度, 0.3))` × `max(0, 1−转向RMSE/0.5)`，再取平均 |
+| 稳定性 | 25% | 全场景存活率与平地/起伏的 `1/(1+(倾角RMS/20°)²)` 平均值，各占一半 |
+| 动作平滑 | 10% | 平地/起伏的 `1/(1+(动作变化率/10)²)` 与 `1/(1+(动作二阶变化/400)²)` 各占一半，再取平均 |
+| 楼梯能力 | 20% | 各楼梯回合的任务通过率，未完成和提前终止都会扣分，但不一票否决 |
+
+四项加权后乘 100。线速度、转向速度的单位分别是 m/s、rad/s；动作变化率和二阶变化是策略输出的 1/s、1/s²。**参考尺度和权重是工程取舍，不是安全阈值，推荐分也不是实机成功概率。** 分数相同时按来源顺序、iteration 决定顺序。报告附有评分分项图、三组种子得分，以及“基础行走优先 / 默认均衡 / 楼梯能力优先”三组权重的对照，说明推荐是否依赖特定取舍。
+
+只有缺少可比指标、重复样本或模型间测试样本不一致时，才无法计算相对推荐。例如只测试平地的诊断运行缺少楼梯数据，会保留原来的任务通过率排序并显示推荐分未计算；不会虚构缺失数据。完整评测的 `hardware_recommendation` 记录相对推荐模型，`hardware_validated` 仍为 `false`。已推荐和已实机验证是不同状态。
+
+楼梯短板、触地/偏离通道、跟踪误差和动作变化会明确显示。平地/起伏的原始“通过率”仍只是跑满回合，推荐分另计跟踪精度，避免把站住不动当成走得好。六种楼梯占原始回合数的 75%，在新版推荐分中楼梯完成率的直接权重是 20%。
+
+50 Hz 推理对应 `dt=0.02 s`；10 Nm 限幅与关节、PD、动作缩放要使用匹配配置。当前测试关闭噪声、延迟、推扰和参数随机化；力矩 RMS 不是电机峰值，动作裁剪比例不是力矩饱和比例。`--export-onnx` 当前仍导出日志评分候选，不能把它当成 `model_best_eval.pt` 的对应 ONNX。
+
+改变推荐规则会改变排序，即使复用相同的逐回合成绩。报告会记录规则版本；旧的任务通过率优先规则与新的相对推荐规则之间的名次变化，不属于仿真复跑波动。
 
 ## 6. 续训之后怎么用
 
@@ -216,7 +246,7 @@ uv run --extra analysis python scripts/best_model.py \
   --output "$EVAL_RUN_DIR/log_analysis"
 ```
 
-这会输出完整训练页面 `training_history.html`、完整曲线 `history.png`、`training_chain.json`，以及最新 run 的 `selection.json`、`candidates.csv` 和 `report.png`。打开 `log_analysis/training_history.html` 即可查看；包含模型性能和仿真截图的 `report.html` 需要 `--evaluate`。
+这会输出统一页面 `report.html`、完整曲线 `history.png`、`training_chain.json`，以及最新 run 的 `selection.json`、`candidates.csv` 和 `report.png`。打开 `log_analysis/report.html` 即可查看。页面明确显示“本次未进行仿真评测，暂无仿真推荐”；加上 `--evaluate` 后，同一个 HTML 入口才会包含模型性能排名和仿真截图。
 
 | 状态 | 怎么理解 |
 | --- | --- |
@@ -276,7 +306,8 @@ uv run --extra analysis python scripts/best_model.py \
 | 找不到训练标量或数字 checkpoint | 检查该目录的事件文件与 `model_<数字>.pt`，确认日志复制完整 |
 | `saved policy interface differs from current task` | 按错误中列出的差异核对当前任务与日志的观测、动作接口，使用兼容的代码和配套配置 |
 | 显存不足 | 降低 `--eval-parallel` 和 `--eval-num-envs`，例如 `2` 和 `12` |
-| 没有生成 HTML | 确认使用了 `--evaluate`，并等待终端显示本轮“仿真推荐”和报告路径 |
+| 没有生成 HTML | 检查命令是否报错；成功结束时会打印“统一报告”及 `report.html` 路径，日志分析和仿真评测两种模式都生成 |
+| HTML 中没有仿真推荐或截图 | 确认使用了 `--evaluate`，并等待评测完成；仅分析日志时不会生成仿真成绩 |
 | 目录里有 `evaluation.partial.json` | 表示评测尚未完成或中途失败；成功后会移除，已有 HTML 可能仍是上次报告 |
 | 仿真截图渲染失败 | 查看 `best/simulation/render.log`；指定 `--output` 时查看该输出目录下的同一路径 |
 | 想查看第 11 名以后的结果 | 打开 `evaluation_ranking.csv`，完整逐场景成绩在 `evaluation_cases.csv` |

@@ -167,7 +167,7 @@ uv run --extra analysis python scripts/best_model.py \
 # 旧日志仅保存了正则来源时，按原始训练到最新续训的顺序指定
 uv run --extra analysis python scripts/best_model.py --runs /path/to/<original_run> /path/to/<resumed_run> --evaluate
 
-# 复制当前阶段 best，并从选中的 checkpoint 重新导出 ONNX（CPU）
+# 复制当前阶段日志评分候选，并从该 checkpoint 重新导出 ONNX（CPU）
 uv run python scripts/best_model.py --run /path/to/<run> --write-best --export-onnx
 
 # 调整统计窗口，并添加明确的任务目标；不指定目标时最多判为平台期
@@ -214,21 +214,25 @@ uv run python scripts/best_model.py --run /path/to/<run> \
 
 ```text
 best/
-├── training_history.html  # 原始训练和历次续训的完整曲线、来源、各段状态
+├── report.html            # 唯一 HTML 入口：完整训练曲线、来源、各段状态
 ├── history.png            # 完整曲线；原始 iteration，分别平滑并标记恢复点
 ├── training_chain.json    # 所有 run 的配置及各段分析
 ├── chain_candidates.csv   # 所有 run 的日志候选
-├── selection.json         # 规则、配置哈希、阶段、所有候选、收敛依据
+├── selection.json         # 本轮推荐、日志候选、规则、配置哈希、阶段、收敛依据
 ├── candidates.csv         # 窗口指标及排除原因
 ├── report.png             # 曲线、阶段边界、当前阶段 Top K（--no-plot 跳过）
-├── model_best.pt           # --write-best 或 --export-onnx 时生成
+├── model_best.pt           # 日志评分候选；--write-best 或 --export-onnx 时生成
 ├── model_manifest.json    # 已发布模型来源、SHA256、配套 ONNX 信息
 └── policy.onnx            # --export-onnx 时重新导出
 ```
 
-`selection.json` 的 `top_by_stage` 保留各阶段候选；当前阶段样本不足时 `best_current_stage`
-为 null，不自动用早期简单任务的模型替代。`published` 为 null 表示这次只生成报告，已有发布
-文件以 `model_manifest.json` 为准。重新发布模型但不导出 ONNX 时会移除输出目录中旧的
+两种模式都只生成一个 `report.html`，完整训练曲线在页面内；成功生成后清理同目录中工具旧版生成的 `training_history.html`。只分析日志时明确显示未进行仿真评测。
+
+`selection.json` 的 `recommendation` 记录本轮推荐及依据：加 `--evaluate` 时为仿真推荐，与终端、HTML 和 `model_best_eval.pt` 一致；仅分析日志时依据为 `training_log`。
+完整评测的 `intended_use` 为 `hardware_trial_priority`，`hardware_recommendation` 记录当前模型间的相对推荐，`hardware_validated=false` 表示尚未完成实机验证。允许楼梯等能力存在短板，不设全部通过门槛。
+`top_by_stage` 和 `best_current_stage` 是日志评分候选，作为训练曲线参考，可能与仿真推荐不同。当前阶段样本不足时 `best_current_stage`
+为 null，不自动用早期简单任务的模型替代。`published` 为 null 表示这次未发布日志候选，已有日志候选发布
+文件以 `model_manifest.json` 为准。重新发布日志候选但不导出 ONNX 时会移除输出目录中旧的
 `policy.onnx`，避免配错模型；run 根目录的训练 checkpoint 和 ONNX 不受影响。
 
 导出复用 runner 使用的 `actor.as_onnx()`，严格加载历史网络配置与参数。HIM 导出包含
@@ -297,7 +301,7 @@ uv run --extra analysis python scripts/best_model.py \
 同一种子/测试编号的初始姿态与关节状态不依赖模型顺序或并行数量，并须通过哈希一致性检查。
 发生跌倒时先记录终止状态，重置后的片段不再计入该次评测。该协议测量名义条件下的运动和楼梯能力，尚未覆盖抗推扰能力。
 
-推荐顺序依次比较：任务通过率、存活至结束比例、存活时长、平面速度误差、转向速度误差、机身倾斜。
+推荐按基础跟踪、稳定性、动作平滑和楼梯能力的相对分数排序（45/25/10/20），不设全场景通过门槛。
 每回合计算指标后平均，不使用训练 reward 混合排名；完整跑完不等于跟踪达标。
 相近成绩只提供候选顺序，当前没有显著性检验。样本偏少时报告会提示复核。
 稳定性分析包括横滚/俯仰时间标准差、倾角 P95/峰值、机身角速度与垂直速度 RMS、动作一阶/二阶变化、
@@ -326,6 +330,7 @@ best/
 ├── evaluation.csv            # 每个模型、种子、场景的逐回合结果
 ├── evaluation_cases.csv      # 各模型/地形/指令的汇总指标
 ├── evaluation_ranking.csv    # 全部模型的完整排名及汇总指标
+├── hardware_readiness.json   # 全部模型的推荐分项、种子分数和权重对照
 ├── simulation/              # 真实仿真图片、拼图、采样状态、场景 MJB 和图片索引
 ├── eval_env_flat.json        # 实际采用的统一平地环境描述
 ├── eval_env_rough.json       # 实际采用的统一起伏环境描述
@@ -337,8 +342,9 @@ best/
 
 仿真执行期间会写 `evaluation.partial.json`，成功完成后移除；失败时不会发布新的仿真推荐模型。
 HTML / Markdown 包含分高度的上下楼梯通过率表，场景筛选、稳定性指标和 CSV 同样区分三个高度。
-`model_best_eval.pt` 和日志选出的 `model_best.pt` 含义不同，报告明确标注两者。
-`--write-best` / `--export-onnx` 仍针对日志 best；`policy.onnx` 不代表仿真 best。
+终端最后的“本轮推荐（基于仿真）”、HTML 页首推荐和 `model_best_eval.pt` 指向同一模型。报告将训练回报选出的模型单独标为“日志评分候选（训练曲线参考）”。
+完整评测按相对推荐分选择优先实机验证的模型：基础跟踪 45%、稳定性 25%、动作平滑 10%、楼梯能力 20%，不要求全场景通过。分项先用固定参考尺度归一化，分数与候选数量无关；权重为工程取舍，不是实机成功概率。终端、模型文件、JSON、HTML 排名和图片统一采用该排序。公式、种子表现、权重对照和能力边界见报告及 [实机使用前的判断](docs/tool使用.md#准备上实机时怎么判断)。实机表现未验证单独记录，不再导致推荐恒为空。
+`--write-best` / `--export-onnx` 仍针对日志评分候选，分别生成 `model_best.pt` / `policy.onnx`；日常使用仿真推荐请选 `model_best_eval.pt`。
 `--no-plot` 跳过统计图，但仍保留真实仿真截图、HTML、Markdown 和数值报告。
 
 若要交互查看推荐模型的动作，可使用现有回放入口（这是 play 环境，条件与上面的固定评测不同）：

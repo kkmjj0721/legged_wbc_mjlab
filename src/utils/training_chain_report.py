@@ -30,7 +30,39 @@ def chain_html(result):
             + table + '<p>完整曲线保留每个 run 的原始 iteration，恢复、回退与配置变化处分别画线，不跨断点平滑。旧分支的曲线保留显示，不冒充新分支的训练经历。各段收敛按各自配置独立判断；页面主训练状态来自最新 run 的所选分段，不把不同奖励条件的数值直接合并评分。</p>'
             '<p>所有模型在当前代码和最新 run 的控制接口下统一仿真；每个模型用自己的 agent 配置加载。接口或控制步长不兼容时明确报错，不悄悄排除模型。</p>'
             '<details><summary>续训关系依据与日志缺失提示</summary><ul>' + evidence + warnings + '</ul></details>'
-            '<p><a href="training_chain.json">全部 run、配置和各段分析</a> · <a href="chain_candidates.csv">所有 run 的日志候选</a> · <a href="training_history.html">单独查看完整训练曲线</a></p></section>')
+            '<p><a href="training_chain.json">全部 run、配置和各段分析</a> · <a href="chain_candidates.csv">所有 run 的日志候选</a> · <a href="#training-history">本页完整训练曲线</a></p></section>')
+
+
+def training_figures_html(output):
+    sections = []
+    for ident, name, title in (("training-history", "history.png", "完整训练与续训曲线"),
+                               ("training-trends", "report.png", "最新 run 的训练曲线与日志评分候选")):
+        picture = (f'<a href="{name}"><img loading="lazy" src="{name}" alt="{title}"></a>'
+                   if (output / name).exists() else '<p>本次未生成此曲线图，数值分析见 JSON。</p>')
+        sections.append(f'<section id="{ident}"><h2>{title}</h2>{picture}</section>')
+    return ''.join(sections)
+
+
+def remove_legacy_training_page(output):
+    legacy = output / "training_history.html"
+    if legacy.exists() and '<title>完整训练与续训</title>' in legacy.read_text():
+        legacy.unlink()
+
+
+def write_training_report(result, output):
+    """The same report.html entry point for a run without simulation."""
+    from .training_report import _atomic_text, log_candidate_label
+    from .evaluation_report import STATUSES
+    status = STATUSES.get(result["convergence"]["status"], result["convergence"]["status"])
+    html = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>训练日志分析</title><style>'
+            'body{font-family:sans-serif;margin:35px;color:#19324b}table{border-collapse:collapse;font-size:13px}td,th{padding:10px;border-bottom:1px solid #ccd}img{width:100%}.scroll{overflow:auto}a{color:#006c76}</style>'
+            '<h1>训练日志分析</h1><p>本次未进行仿真评测，暂无仿真推荐。</p>'
+            f'<p><b>日志评分候选（训练曲线参考）：{escape(log_candidate_label(result))}</b></p>'
+            f'<p>训练状态：{escape(status)}</p>'
+            + chain_html(result) + training_figures_html(output)
+            + '<p><a href="selection.json">日志分析 JSON</a> · <a href="candidates.csv">日志候选 CSV</a></p></html>')
+    _atomic_text(output / "report.html", lambda f: f.write(html))
+    remove_legacy_training_page(output)
 
 
 def write_chain_reports(runs, result, output, plot=True):
@@ -84,8 +116,3 @@ def write_chain_reports(runs, result, output, plot=True):
         plt.close(figure)
     else:
         (output / "history.png").unlink(missing_ok=True)
-    picture = '<img src="history.png" alt="完整训练曲线">' if plot else '<p>本次禁用了绘图；逐段分析请下载 JSON。</p>'
-    html = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>完整训练与续训</title><style>'
-            'body{font-family:sans-serif;margin:35px;color:#19324b}table{border-collapse:collapse;font-size:13px}td,th{padding:10px;border-bottom:1px solid #ccd}img{width:100%}.scroll{overflow:auto}a{color:#006c76}</style>'
-            '<h1>完整训练与续训记录</h1>'+chain_html(result)+picture+'</html>')
-    _atomic_text(output / "training_history.html", lambda f: f.write(html))

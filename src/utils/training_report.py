@@ -13,7 +13,39 @@ import shutil
 import tempfile
 
 from .best_model import ANGULAR, LENGTH, LINEAR, REWARD, TERRAIN
-from .training_logs import Run, sha256
+from .training_logs import Run, sha256, model_key, model_label
+
+
+def log_candidate_label(result):
+    iteration = result.get("best_current_stage")
+    if iteration is None:
+        return "暂无合格日志候选"
+    prefix = f"R{result['chain'][-1]['index']} / " if len(result.get("chain", [])) > 1 else ""
+    return f"{prefix}model_{iteration}"
+
+
+def recommendation(result, evaluation=None):
+    """One explicit recommendation source shared by the CLI, JSON and report."""
+    if evaluation is not None:
+        winner = evaluation["summary"][0]
+        identity = model_key(winner)
+        if identity != evaluation.get("best_model_id", evaluation.get("best_iteration", identity)):
+            raise ValueError("evaluation winner differs from the first ranked model")
+        source = next(m for m in evaluation["models"] if model_key(m) == identity)
+        trial = evaluation.get("hardware_assessment", {}).get("hardware_recommendation")
+        if trial and trial["model_id"] != identity:
+            raise ValueError("hardware-trial recommendation differs from the first ranked model")
+        return {"basis": "simulation", "label": model_label(source), "model_id": identity,
+                "iteration": source["iteration"], "source_checkpoint": source.get("path"),
+                "artifact": "model_best_eval.pt", "unique_best_established": False,
+                "intended_use": "hardware_trial_priority" if trial else "simulation_screening", "hardware_validated": False,
+                "hardware_recommendation": trial}
+    candidate = next((c for c in result.get("candidates", []) if c["iteration"] == result.get("best_current_stage")), None)
+    return {"basis": "training_log", "label": log_candidate_label(result),
+            "iteration": result.get("best_current_stage"), "source_checkpoint": candidate["path"] if candidate else None,
+            "artifact": "model_best.pt" if result.get("published") else None,
+            "unique_best_established": False, "intended_use": "training_log_analysis",
+            "hardware_validated": False, "hardware_recommendation": None}
 
 
 def _atomic_text(path: Path, writer):
@@ -170,7 +202,7 @@ def write_reports(run: Run, result: dict, output: Path, plot: bool = True) -> No
     figure, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
     labels = ("训练总回报 ↑", "平均回合长度（步）↑", "线速度跟踪奖励 ↑", "转向跟踪奖励 ↑", "地形课程等级", "动作平滑奖励")
     for axis, tag, label in zip(axes.flat, (REWARD, LENGTH, LINEAR, ANGULAR, TERRAIN, "Episode_Reward/smoothness"), labels):
-        points = sorted(segment.series.get(tag, {}).values(), key=lambda p: p.step)
+        points = sorted((p for p in segment.series.get(tag, {}).values() if p.step <= result["as_of_iteration"]), key=lambda p: p.step)
         steps = [p.step for p in points]
         values = [p.value for p in points]
         axis.plot(steps, values, linewidth=0.6, alpha=0.3, label="原始值")
@@ -191,8 +223,7 @@ def write_reports(run: Run, result: dict, output: Path, plot: bool = True) -> No
         axis.set_xlabel("训练迭代 iteration")
     axes.flat[0].legend(fontsize=8, loc="best")
     status = STATUSES.get(result['convergence']['status'], result['convergence']['status'])
-    best_label = f"model_{result['best_current_stage']}" if result['best_current_stage'] is not None else "暂无合格候选"
-    figure.suptitle(f"{run.path.name} · {status}\n日志 best：{best_label}；灰线：课程切换；绿线：本阶段候选（实线为 best）", fontsize=12)
+    figure.suptitle(f"{run.path.name} · {status}\n日志评分候选：{log_candidate_label(result)}（训练曲线参考）；灰线：课程切换；绿线：日志候选", fontsize=12)
     figure.tight_layout()
     descriptor, temporary = tempfile.mkstemp(suffix=".png", dir=output)
     os.close(descriptor)

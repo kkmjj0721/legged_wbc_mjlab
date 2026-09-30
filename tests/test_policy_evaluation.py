@@ -309,6 +309,9 @@ class FixedStairReportTests(unittest.TestCase):
             write_evaluation_report(result, data, output, plot=False)
             html = (output / "report.html").read_text()
             markdown = (output / "report.md").read_text()
+            self.assertIn("实机优先模型", html)
+            self.assertIn('id="hardware-readiness"', html)
+            self.assertFalse(json.loads((output / "hardware_readiness.json").read_text())["hardware_validated"])
             for terrain, preset in STAIR_PRESETS.items():
                 self.assertIn(f'<option value="{terrain}">{preset["label"]}</option>', html)
                 self.assertIn(preset["label"], markdown)
