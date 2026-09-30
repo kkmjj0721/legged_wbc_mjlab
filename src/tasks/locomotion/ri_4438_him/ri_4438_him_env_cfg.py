@@ -412,7 +412,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_clearance": RewardTermCfg(
       func=him_mdp.feet_clearance,
-      weight=-0.25,
+      weight = -0.1,
       params={
         "height_range": (0.10, 0.20),
         "period": 0.6,
