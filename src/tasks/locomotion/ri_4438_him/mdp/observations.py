@@ -66,7 +66,9 @@ def phase(
   command_name: str,
   command_threshold: float = 0.1,
 ) -> torch.Tensor:
-  global_phase = (env.episode_length_buf * env.step_dt) % period / period
+  # Match feet_gait, including at cycle boundaries and in long play sessions.
+  period_steps = int(round(period / env.step_dt))
+  global_phase = (env.episode_length_buf % period_steps) / period_steps
 
   phase = torch.zeros(env.num_envs, 2, device=env.device)
   phase[:, 0] = torch.sin(global_phase * torch.pi * 2.0)

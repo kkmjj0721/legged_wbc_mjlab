@@ -22,7 +22,7 @@ from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.scene import SceneCfg
-from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg, TerrainHeightSensorCfg
+from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
 from src.tasks.locomotion.ri_4438_him.mdp.velocity_command import (
@@ -42,6 +42,16 @@ ri_4438_cfg = Ri4438HimCfg()
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""
 
+  # One reward-only difficulty signal shared by all terrain-adaptive terms.
+  terrain_difficulty_cfg = him_mdp.TerrainDifficultyCfg(
+    sensor_name="terrain_scan",
+    radius=0.35,
+    flat_span=0.02,
+    rough_span=0.08,
+    rise_time=0.06,
+    fall_time=0.20,
+  )
+
   ##
   # Sensors
   ##
@@ -55,20 +65,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     exclude_parent_body = True,
     debug_vis = True,
     viz = RayCastSensorCfg.VizCfg(show_normals = True),
-  )
-
-  feet_terrain_height = TerrainHeightSensorCfg(
-    name="feet_terrain_height",
-    frame=tuple(
-      ObjRef(type="site", name=name, entity="robot")
-      for name in ("FL", "FR", "RL", "RR")
-    ),
-    pattern=GridPatternCfg(size=(0.0, 0.0), resolution=0.1),
-    ray_alignment="world",
-    max_distance=2.0,
-    exclude_parent_body=True,
-    include_geom_groups=(0,),
-    reduction="min",
   )
 
   ##
@@ -239,6 +235,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   events = {
     # reset
+    "reset_terrain_difficulty": EventTermCfg(
+      func=him_mdp.reset_terrain_difficulty,
+      mode="reset",
+    ),
     "reset_base": EventTermCfg(
       func = mdp.reset_root_state_uniform,
       mode = "reset",
@@ -349,7 +349,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight = 3.0,
       params = {
         "command_name": "twist", 
-        "std": math.sqrt(0.25)
+        "std": math.sqrt(0.25),
+        "terrain_cfg": terrain_difficulty_cfg,
+        "rough_z_scale": 0.1,
       },
     ),
     "track_angular_velocity": RewardTermCfg(
@@ -360,11 +362,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
       weight = -0.25,
-      params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
+      params={
+        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
+        "terrain_cfg": terrain_difficulty_cfg,
+        "rough_scale": 0.5,
+      },
     ),
     "pose": RewardTermCfg(
-      func=mdp.variable_posture,
-      weight = 0.65,
+      func=him_mdp.variable_posture,
+      weight = 0.7,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
@@ -373,6 +379,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "std_running": {},  # Set per-robot.ss
         "walking_threshold": 0.1,
         "running_threshold": 1.0,
+        "terrain_cfg": terrain_difficulty_cfg,
+        "rough_std_scale": 1.75,
       },
     ),
     "body_ang_vel": RewardTermCfg(
@@ -396,32 +404,61 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       weight = -1.0,
       params = {
         "command_name": "twist",
+        "terrain_cfg": terrain_difficulty_cfg,
+        "rough_scale": 0.3,
       }
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.25,
+      weight = 0.35,
       params = {
         "period": 0.6,
-        "offset": [0.0, 0.5],
+        "offset": [0.0, 0.5, 0.5, 0.0],
         "threshold": 0.56,
         "command_threshold": 0.1,
         "command_name": "twist",
         "sensor_name": "feet_ground_contact",
+        "terrain_cfg": terrain_difficulty_cfg,
+        "rough_strength": 0.15,
       }
     ),
     "foot_clearance": RewardTermCfg(
-      func=him_mdp.feet_clearance,
-      weight = -0.1,
-      params={
-        "height_range": (0.10, 0.20),
-        "period": 0.6,
-        "offset": [0.0, 0.5, 0.5, 0.0],
-        "threshold": 0.56,
+      func = him_mdp.feet_clearance_adaptive,
+      weight = -0.2,
+      params = {
+        "sensor_name": "feet_ground_contact",
+        "scan_sensor_name": "clearance_scan",
         "command_name": "twist",
         "command_threshold": 0.1,
-        "height_sensor_name": "feet_terrain_height",
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),
+        "foot_radius": 0.01573,
+        "clearance_margin": 0.025,
+        "path_length": 0.10,
+        "path_half_width": 0.04,
+        "speed_scale": 0.5,
+        "max_deficit": 2.0,
+        "support_force": 1.0,
+        "support_horizontal_ratio": 1.0,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
+      },
+    ),
+    "foot_swing_peak": RewardTermCfg(
+      func=him_mdp.feet_swing_peak,
+      # Per landing event; the term cancels RewardManager's step_dt scaling.
+      weight=-0.02,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "command_name": "twist",
+        "command_threshold": 0.1,
+        "terrain_cfg": terrain_difficulty_cfg,
+        "min_height": 0.06,
+        "max_height": 0.10,
+        "error_scale": 0.04,
+        "max_cost": 4.0,
+        "min_air_time": 0.04,
+        "support_force": 1.0,
+        "support_horizontal_ratio": 1.0,
+        "contact_debounce_steps": 2,
+        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
     "foot_slip": RewardTermCfg(
@@ -542,7 +579,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         terrain_type = "generator",
         terrain_generator = terrain_cfg,
       ),
-      sensors=(terrain_scan, feet_terrain_height),
+      sensors=(terrain_scan,),
       num_envs = ri_4438_cfg.env.num_envs,
       extent = 2.0,
     ),

@@ -14,7 +14,11 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
+  GridPatternCfg,
+  ObjRef,
   RayCastSensorCfg,
+  RingPatternCfg,
+  TerrainHeightSensorCfg,
 )
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 
@@ -60,6 +64,36 @@ def ri_4438_rough_env_cfg(
   site_names = ("FL", "FR", "RL", "RR")
 
   geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
+
+  # Reward-only scan: look down from the base to include steps above the feet.
+  # It is deliberately absent from actor/critic observations and HIM targets.
+  clearance_scan_cfg = RayCastSensorCfg(
+    name="clearance_scan",
+    frame=ObjRef(type="body", name="base_link", entity="robot"),
+    ray_alignment="yaw",
+    pattern=GridPatternCfg(size=(1.0, 0.8), resolution=0.05),
+    max_distance=5.0,
+    exclude_parent_body=True,
+    include_geom_groups=(0,),
+  )
+
+  feet_height_cfg = TerrainHeightSensorCfg(
+    name="feet_terrain_height",
+    frame=tuple(
+      ObjRef(type="site", name=name, entity="robot") for name in site_names
+    ),
+    pattern=RingPatternCfg.single_ring(
+      radius=0.02,
+      num_samples=4,
+      include_center=True,
+    ),
+    ray_alignment="world",
+    max_distance=1.0,
+    exclude_parent_body=True,
+    include_geom_groups=(0,),
+    # Closest terrain surface among the five rays around each foot.
+    reduction="min",
+  )
 
   feet_ground_cfg = ContactSensorCfg(
     name = "feet_ground_contact",
@@ -127,6 +161,8 @@ def ri_4438_rough_env_cfg(
 
   cfg.scene.sensors = (cfg.scene.sensors or ()) + (
     feet_ground_cfg,
+    feet_height_cfg,
+    clearance_scan_cfg,
     nonfoot_ground_cfg,
     leg_ground_cfg,
     self_collision_cfg
@@ -175,17 +211,6 @@ def ri_4438_rough_env_cfg(
     "base_link",
   )
 
-  for key in (
-    "period",
-    "offset",
-    "threshold",
-    "command_name",
-    "command_threshold",
-  ):
-    cfg.rewards["foot_clearance"].params[key] = (
-      cfg.rewards["foot_gait"].params[key]
-    )
-
   foot_gait = cfg.rewards["foot_gait"]
 
   for group_name in ("actor", "critic"):
@@ -196,7 +221,11 @@ def ri_4438_rough_env_cfg(
       "command_threshold"
     ]
 
-  cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
+  for reward_name in ("foot_clearance", "foot_swing_peak"):
+    clearance_asset_cfg = cfg.rewards[reward_name].params["asset_cfg"]
+    clearance_asset_cfg.site_names = site_names
+    # Match contact sensor primaries to the same FL, FR, RL, RR foot sites.
+    clearance_asset_cfg.preserve_order = True
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
   cfg.terminations["illegal_contact"] = TerminationTermCfg(
