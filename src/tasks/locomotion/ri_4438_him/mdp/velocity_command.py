@@ -285,6 +285,20 @@ class UniformVelocityCommandCfg(CommandTermCfg):
         "the `ranges.heading` parameter is set to None."
       )
 
+
+def _stairs_mask(env: ManagerBasedRlEnv, env_ids: torch.Tensor) -> torch.Tensor:
+  """Select stair columns only when curriculum terrain identities are available."""
+  terrain = env.scene.terrain
+  generator = terrain.cfg.terrain_generator if terrain is not None else None
+  result = torch.zeros(len(env_ids), device=env.device, dtype=torch.bool)
+  if generator is None or not generator.curriculum or not hasattr(terrain, "terrain_types"):
+    return result
+  for column, name in enumerate(generator.sub_terrains):
+    if "stairs" in name:
+      result |= terrain.terrain_types[env_ids] == column
+  return result
+
+
 class HeadingHoldVelocityCommand(_MjlabUniformVelocityCommand):
   """对 Viser 人工命令增加航向保持，不改变策略输入维度。"""
 
@@ -296,6 +310,27 @@ class HeadingHoldVelocityCommand(_MjlabUniformVelocityCommand):
     )
     self._ui_forward_active = torch.zeros_like(self._ui_heading_hold)
     self._ui_last_env_idx = -1
+
+  def _resample_command(self, env_ids: torch.Tensor) -> None:
+    super()._resample_command(env_ids)
+    if self.cfg.stair_forward_fraction <= 0:
+      return
+    stairs = _stairs_mask(self._env, env_ids)
+    chosen = stairs & ~self.is_standing_env[env_ids]
+    chosen &= torch.rand(len(env_ids), device=self.device) < self.cfg.stair_forward_fraction
+    ids = env_ids[chosen]
+    if not len(ids):
+      return
+    terrain = self._env.scene.terrain
+    level = terrain.terrain_levels[ids].float() / max(1, terrain.cfg.terrain_generator.num_rows - 1)
+    # Easy stairs cover 0.3--0.8 m/s; advanced levels also practice 1.0 m/s.
+    high = (0.8 + 0.2 * ((level - 0.5) / 0.3).clamp(0, 1)).clamp(max=self.cfg.ranges.lin_vel_x[1])
+    low = torch.minimum(torch.full_like(high, 0.3), high)
+    self.vel_command_b[ids, 0] = low + torch.rand(len(ids), device=self.device) * (high - low)
+    self.vel_command_b[ids, 1:] = 0
+    self.is_heading_env[ids] = False
+    self.is_world_env[ids] = False
+    self.is_forward_env[ids] = True
 
   def reset(self, env_ids: torch.Tensor | slice | None) -> dict[str, float]:
     extras = super().reset(env_ids)
@@ -364,5 +399,7 @@ class HeadingHoldVelocityCommand(_MjlabUniformVelocityCommand):
 
 @dataclass(kw_only=True)
 class HeadingHoldVelocityCommandCfg(_MjlabUniformVelocityCommandCfg):
+  stair_forward_fraction: float = 0.0
+
   def build(self, env: ManagerBasedRlEnv) -> HeadingHoldVelocityCommand:
     return HeadingHoldVelocityCommand(self, env)

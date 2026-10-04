@@ -1,3 +1,3 @@
 """Termination terms used by Go2 HIM."""
 
-from src.tasks.locomotion.ri_4438_him.mdp.terminations import *  # noqa: F401, F403
+from mjlab.tasks.velocity.mdp.terminations import illegal_contact as illegal_contact

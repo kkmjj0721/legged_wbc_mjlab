@@ -8,6 +8,8 @@ from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
 
+from .gait import gait_phase as _gait_phase
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
@@ -63,12 +65,10 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
 def phase(
   env: ManagerBasedRlEnv,
   period: float,
-  command_name: str,
+  command_name: str = "twist",
   command_threshold: float = 0.1,
 ) -> torch.Tensor:
-  # Match feet_gait, including at cycle boundaries and in long play sessions.
-  period_steps = int(round(period / env.step_dt))
-  global_phase = (env.episode_length_buf % period_steps) / period_steps
+  global_phase = _gait_phase(env, period)
 
   phase = torch.zeros(env.num_envs, 2, device=env.device)
   phase[:, 0] = torch.sin(global_phase * torch.pi * 2.0)

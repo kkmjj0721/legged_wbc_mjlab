@@ -12,7 +12,7 @@ class Ri4438Cfg( BaseConfig ):
         resampling_time = [1.0, 12.0]  # [s] time before new command is given
         heading_command = False  # if true: compute ang vel command from heading error
         rel_standing_envs = 0.1
-        rel_forward_envs = 0.0
+        rel_forward_envs = 0.05
         class ranges:
             lin_vel_x = [-1.0, 1.0]  # min max [m/s]
             lin_vel_y = [-1.0, 1.0]  # min max [m/s]

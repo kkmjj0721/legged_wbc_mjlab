@@ -42,16 +42,6 @@ ri_4438_cfg = Ri4438HimCfg()
 def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   """Create base velocity tracking task configuration."""
 
-  # One reward-only difficulty signal shared by all terrain-adaptive terms.
-  terrain_difficulty_cfg = him_mdp.TerrainDifficultyCfg(
-    sensor_name="terrain_scan",
-    radius=0.35,
-    flat_span=0.02,
-    rough_span=0.08,
-    rise_time=0.06,
-    fall_time=0.20,
-  )
-
   ##
   # Sensors
   ##
@@ -210,12 +200,13 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         resampling_time_range = tuple(ri_4438_cfg.comaman.resampling_time),
         rel_standing_envs = float(ri_4438_cfg.comaman.rel_standing_envs),
         rel_forward_envs = float(ri_4438_cfg.comaman.rel_forward_envs),
+        stair_forward_fraction = 0.5,
         heading_command = ri_4438_cfg.comaman.heading_command,
         debug_vis = True,
         ranges = UniformVelocityCommandCfg.Ranges(
-          lin_vel_x = tuple(ri_4438_cfg.comaman.ranges.lin_vel_x),
-          lin_vel_y = tuple(ri_4438_cfg.comaman.ranges.lin_vel_y),
-          ang_vel_z = tuple(ri_4438_cfg.comaman.ranges.ang_vel_yaw),
+          lin_vel_x=tuple(ri_4438_cfg.comaman.ranges.lin_vel_x),
+          lin_vel_y=tuple(ri_4438_cfg.comaman.ranges.lin_vel_y),
+          ang_vel_z=tuple(ri_4438_cfg.comaman.ranges.ang_vel_yaw),
           heading=(
             tuple(ri_4438_cfg.comaman.ranges.heading)
             if ri_4438_cfg.comaman.heading_command
@@ -235,12 +226,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   events = {
     # reset
-    "reset_terrain_difficulty": EventTermCfg(
-      func=him_mdp.reset_terrain_difficulty,
-      mode="reset",
-    ),
     "reset_base": EventTermCfg(
-      func = mdp.reset_root_state_uniform,
+      func = envs_mdp.reset_root_state_uniform,
       mode = "reset",
       params = dict(ri_4438_cfg.reset.base_offset)
     ),
@@ -258,7 +245,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "push_robot": EventTermCfg(
       func = mdp.push_by_setting_velocity,
       mode = "interval",
-      interval_range_s = (5.0, 6.0),
+      interval_range_s = (4.0, 6.0),
       params = {
         "velocity_range": {
           "x": (-1.0, 1.0),
@@ -340,77 +327,68 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   }
 
   ##
-  # Rewards
+  # Basic PPO-style rewards, implemented and tuned locally for RI-4438 HIM.
   ##
 
   rewards = {
     "track_linear_velocity": RewardTermCfg(
       func = him_mdp.track_linear_velocity,
-      weight = 3.0,
-      params = {
-        "command_name": "twist", 
-        "std": math.sqrt(0.25),
-        "terrain_cfg": terrain_difficulty_cfg,
-        "rough_z_scale": 0.1,
-      },
+      weight = 2.0,
+      params = {"command_name": "twist", "std": math.sqrt(0.25)},
+    ),
+    "lin_vel_z": RewardTermCfg(
+      func = him_mdp.lin_vel_z,
+      weight = -2.0,
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
-      weight = 2.0,
+      weight = 1.0,
       params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
-      weight = -0.25,
-      params={
-        "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
-        "terrain_cfg": terrain_difficulty_cfg,
-        "rough_scale": 0.5,
-      },
+      weight = -0.2,
+      params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "pose": RewardTermCfg(
       func=him_mdp.variable_posture,
-      weight = 0.7,
+      weight=0.5,
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
         "std_standing": {},  # Set per-robot.
         "std_walking": {},  # Set per-robot.
-        "std_running": {},  # Set per-robot.ss
+        "std_running": {},  # Set per-robot.
         "walking_threshold": 0.1,
         "running_threshold": 1.0,
-        "terrain_cfg": terrain_difficulty_cfg,
-        "rough_std_scale": 1.75,
       },
     ),
     "body_ang_vel": RewardTermCfg(
-      func = mdp.body_angular_velocity_penalty,
+      func = him_mdp.body_angular_velocity_penalty,
       weight = -0.08,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
-      func = mdp.angular_momentum_penalty,
+      func = him_mdp.angular_momentum_penalty,
       weight = -0.025,  # Override per-robot
       params = {"sensor_name": "robot/root_angmom"},
     ),
-    "is_terminated": RewardTermCfg(func=mdp.is_terminated, weight = -10.0),
-    "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight = -2.5e-7),
-    "joint_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight = -20.0),
-    "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight = -0.01),
-    "smoothness": RewardTermCfg(func=mdp.action_acc_l2, weight = -0.02),
-    "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight = -2.0e-5),
+    "is_terminated": RewardTermCfg(func=him_mdp.is_terminated, weight = -100.0),
+    "joint_acc_l2": RewardTermCfg(func=him_mdp.joint_acc_l2, weight = -2.5e-7),
+    "joint_pos_limits": RewardTermCfg(func=him_mdp.joint_pos_limits, weight = -10.0),
+    "action_rate_l2": RewardTermCfg(func=him_mdp.action_rate_l2, weight = -0.01 ),
+    "smoothness": RewardTermCfg(func=him_mdp.action_acc_l2, weight = -0.01),
+    "joint_torques_l2": RewardTermCfg(func=him_mdp.joint_torques_l2, weight = -2.0e-5),
     "hip_pos": RewardTermCfg(
       func = him_mdp.hip_joint_deviation_penalty,
       weight = -1.0,
       params = {
         "command_name": "twist",
-        "terrain_cfg": terrain_difficulty_cfg,
-        "rough_scale": 0.3,
       }
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.35,
+      weight = 0.5,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
@@ -418,51 +396,20 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "command_threshold": 0.1,
         "command_name": "twist",
         "sensor_name": "feet_ground_contact",
-        "terrain_cfg": terrain_difficulty_cfg,
-        "rough_strength": 0.15,
       }
     ),
-    "foot_clearance": RewardTermCfg(
-      func = him_mdp.feet_clearance_adaptive,
-      weight = -0.2,
+    "feet_air_time": RewardTermCfg(
+      func = him_mdp.feet_air_time,
+      weight = 1.0,
       params = {
         "sensor_name": "feet_ground_contact",
-        "scan_sensor_name": "clearance_scan",
+        "gait_name": "foot_gait",  # Target time and support pair follow this gait.
         "command_name": "twist",
         "command_threshold": 0.1,
-        "foot_radius": 0.01573,
-        "clearance_margin": 0.025,
-        "path_length": 0.10,
-        "path_half_width": 0.04,
-        "speed_scale": 0.5,
-        "max_deficit": 2.0,
-        "support_force": 1.0,
-        "support_horizontal_ratio": 1.0,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
-      },
-    ),
-    "foot_swing_peak": RewardTermCfg(
-      func=him_mdp.feet_swing_peak,
-      # Per landing event; the term cancels RewardManager's step_dt scaling.
-      weight=-0.02,
-      params={
-        "sensor_name": "feet_ground_contact",
-        "command_name": "twist",
-        "command_threshold": 0.1,
-        "terrain_cfg": terrain_difficulty_cfg,
-        "min_height": 0.06,
-        "max_height": 0.10,
-        "error_scale": 0.04,
-        "max_cost": 4.0,
-        "min_air_time": 0.04,
-        "support_force": 1.0,
-        "support_horizontal_ratio": 1.0,
-        "contact_debounce_steps": 2,
-        "asset_cfg": SceneEntityCfg("robot", site_names=()),  # Set per-robot.
       },
     ),
     "foot_slip": RewardTermCfg(
-      func = mdp.feet_slip,
+      func = him_mdp.feet_slip,
       weight = -1.0,
       params = {
         "sensor_name": "feet_ground_contact",
@@ -472,8 +419,8 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       },
     ),
     "soft_landing": RewardTermCfg(
-      func = mdp.soft_landing,
-      weight = -2e-3,
+      func = him_mdp.soft_landing,
+      weight = -1e-3,
       params = {
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -482,7 +429,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "stand_still": RewardTermCfg(
       func = him_mdp.stand_still,
-      weight = -0.5,
+      weight = -1.0,
       params = {
         "command_name": "twist",
         "command_threshold": 0.1,
@@ -578,6 +525,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       terrain = TerrainEntityCfg(
         terrain_type = "generator",
         terrain_generator = terrain_cfg,
+        max_init_terrain_level = 1,
       ),
       sensors=(terrain_scan,),
       num_envs = ri_4438_cfg.env.num_envs,
