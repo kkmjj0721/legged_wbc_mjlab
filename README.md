@@ -235,6 +235,14 @@ best/
 文件以 `model_manifest.json` 为准。重新发布日志候选但不导出 ONNX 时会移除输出目录中旧的
 `policy.onnx`，避免配错模型；run 根目录的训练 checkpoint 和 ONNX 不受影响。
 
+终端和 HTML 的“日志候选筛选依据”会说明有效模型数量、当前阶段合格数量、未入选原因、
+候选与收敛所需的最早 iteration，并在当前阶段无候选时展示最近有合格候选的历史阶段模型。
+这些依据也保存在 `selection.json` 的 `selection_diagnostics` 中。历史阶段模型仅作参考，
+不替代 `best_current_stage`。评分窗口止于 checkpoint 的 iteration，后续新增日志不会回填旧模型的评分。
+例如最终阶段从 2000 开始，默认适应期后从 2020 计分；连续有效日志下，checkpoint 最早在
+2069 满足 50 个样本要求，而收敛观察长度最早在 2319 满足。若每 100 轮保存一次模型，
+首个可能合格的模型为 `model_2100.pt`。`--evaluate` 可以直接比较全部有效模型，无需等待日志候选或收敛。
+
 导出复用 runner 使用的 `actor.as_onnx()`，严格加载历史网络配置与参数。HIM 导出包含
 观测归一化、估计器及动作裁剪，并要求 checkpoint 有匹配的数值契约。当前只支持现代
 `HIMActorModel` / `MLPModel` 和 GaussianDistribution，旧格式或其他网络会明确报错。

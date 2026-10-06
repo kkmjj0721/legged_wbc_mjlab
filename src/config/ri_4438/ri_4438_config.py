@@ -24,7 +24,7 @@ class Ri4438Cfg( BaseConfig ):
         damping   = {"hip":  2.0694, "thigh":  2.0694, "calf":  2.0694}
         action_scale = 0.5
         decimation = 4  # control frequency = sim frequency / decimation
-        hip_reduction = 0.5
+        hip_reduction = 0.25
         effort_limit = {"hip": 10.0, "thigh": 10.0, "calf": 10.0 }
         armature = 0.008234
         friction = 0.01

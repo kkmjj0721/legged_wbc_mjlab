@@ -1,5 +1,6 @@
 import os
 import inspect
+from pathlib import Path
 import tempfile
 import warnings
 
@@ -16,6 +17,7 @@ from mjlab.rl.runner import MjlabOnPolicyRunner
 from rsl_rl.runners.him_on_policy_runner import HIMOnPolicyRunner as RslRlHIMOnPolicyRunner
 from rsl_rl.utils.wandb_log_writer import WandbLogWriter
 from rsl_rl.utils.numerics import tensor_items
+from src.tasks.locomotion.ri_4438_him.mdp.curriculums import RewardBasedVelocityCurriculum
 
 
 def _single_file_onnx_kwargs() -> dict:
@@ -107,7 +109,40 @@ class HIMOnPolicyRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
     elif saved_contract != self._numerical_contract():
       raise ValueError("HIM checkpoint numerical contract differs from the current configuration")
     self._validate_numerics()
+    curriculum = self._velocity_curriculum()
+    if curriculum is not None:
+      state = (infos or {}).get("him_velocity_curriculum")
+      if state is not None:
+        curriculum.load_state_dict(state)
+      else:
+        self._restore_legacy_velocity_ranges(curriculum, path)
+      # The wrapper reset happened before load(); refresh commands and history
+      # once so training starts with the restored curriculum range.
+      self.env.reset()
     return infos
+
+  def _velocity_curriculum(self) -> RewardBasedVelocityCurriculum | None:
+    manager = self.env.unwrapped.curriculum_manager
+    if "command_vel" not in manager.active_terms:
+      return None
+    term = manager.get_term_cfg("command_vel").func
+    return term if isinstance(term, RewardBasedVelocityCurriculum) else None
+
+  @staticmethod
+  def _restore_legacy_velocity_ranges(curriculum, checkpoint_path) -> None:
+    import yaml
+    from src.utils.training_logs import ConfigLoader
+
+    config_path = Path(checkpoint_path).resolve().parent / "params" / "env.yaml"
+    if config_path.is_file():
+      saved_cfg = yaml.load(config_path.read_text(), Loader=ConfigLoader)
+      if isinstance(saved_cfg, dict) and curriculum.restore_legacy_ranges(saved_cfg):
+        return
+    warnings.warn(
+      "Checkpoint has no velocity curriculum state or saved command ranges; "
+      "using the configured initial ranges. Set them to the checkpoint's "
+      "trained ranges when resuming."
+    )
 
   def export_policy_to_onnx(
     self, path: str, filename: str = "policy.onnx", verbose: bool = False
@@ -152,7 +187,11 @@ class HIMOnPolicyRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
 
   def save(self, path: str, infos: dict | None = None) -> None:
     self._validate_numerics()
-    super().save(path, {**(infos or {}), "him_numerics": self._numerical_contract()})
+    infos = {**(infos or {}), "him_numerics": self._numerical_contract()}
+    curriculum = self._velocity_curriculum()
+    if curriculum is not None:
+      infos["him_velocity_curriculum"] = curriculum.state_dict()
+    super().save(path, infos)
     policy_path = os.path.dirname(path)
     filename = "policy.onnx"
     self.export_policy_to_onnx(policy_path, filename)

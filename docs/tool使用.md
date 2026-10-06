@@ -248,6 +248,13 @@ uv run --extra analysis python scripts/best_model.py \
 
 这会输出统一页面 `report.html`、完整曲线 `history.png`、`training_chain.json`，以及最新 run 的 `selection.json`、`candidates.csv` 和 `report.png`。打开 `log_analysis/report.html` 即可查看。页面明确显示“本次未进行仿真评测，暂无仿真推荐”；加上 `--evaluate` 后，同一个 HTML 入口才会包含模型性能排名和仿真截图。
 
+“当前阶段暂无合格日志候选”不表示模型识别失败。终端和 HTML 会展示有效 checkpoint 数量、
+当前阶段的筛选结果与未入选原因，并给出最近有合格候选的历史阶段模型作为参考。例如最终阶段从
+iteration 2000 开始，`model_2000.pt` 在适应期内；默认至少需要从 2020 开始的 50 个有效样本，
+若每 100 轮保存一次，首个可能合格的是 `model_2100.pt`。收敛还需 3 个 100 轮窗口，
+观察长度最早在 2319 满足。后续日志不会计入旧 checkpoint 的评分；
+加 `--evaluate` 则可立即对全部有效模型进行仿真比较，不受日志候选是否合格影响。
+
 | 状态 | 怎么理解 |
 | --- | --- |
 | 课程仍在推进 | 难度或奖励条件仍在改变，暂不判断最终收敛 |

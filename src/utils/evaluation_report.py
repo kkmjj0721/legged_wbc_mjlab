@@ -15,7 +15,7 @@ import tempfile
 import numpy as np
 
 from .training_logs import sha256, model_key, model_label, model_origin
-from .training_report import _atomic_text, recommendation, log_candidate_label
+from .training_report import _atomic_text, recommendation, log_candidate_label, log_selection_html, log_selection_notes
 from .evaluation_scenarios import REPORT_MODEL_LIMIT, TERRAIN_LABELS, stair_sections
 from .evaluation_repeatability import repeatability_notes
 from .evaluation_readiness import assess_hardware_readiness, readiness_notes
@@ -402,6 +402,7 @@ nav{display:flex;gap:18px;flex-wrap:wrap;margin:16px 0}.warn{color:#a64713}butto
 <div class="cards"><div class="card">本轮推荐 · 实机表现未验证<strong>__BEST__</strong></div><div class="card">评测覆盖<strong>__COVERAGE__</strong></div><div class="card">任务通过<strong>__PASS__</strong></div><div class="card">模型并行数<strong>__PARALLEL__</strong></div></div>
 __HARDWARE__
 <section id="recommendation"><h2>本轮推荐模型</h2><p><b>本轮推荐：__BEST__</b> · <a href="model_best_eval.pt">下载推荐模型 model_best_eval.pt</a> · <a href="eval_model_manifest.json">模型来源与 SHA256</a></p><p>用途：按当前表现优先进行实机验证。完整评测综合基础跟踪、稳定性、动作平滑和楼梯能力；允许能力存在短板，实机表现尚未验证。</p><p><b>日志评分候选（训练曲线参考）：__LOG_CANDIDATE__</b></p><p>日志候选依据最新 run 当前课程阶段的训练回报窗口评分，用于观察训练趋势。它与仿真评测的条件和排序指标不同，因此可能是另一个模型。</p></section>
+__LOG_SELECTION__
 __CHAIN__
 <section id="findings"><h2>本次结果怎么读</h2><ul>__FINDINGS__</ul><p><b>训练状态：</b>__STATUS__</p></section>
 <section id="repeatability-section"><h2>重复运行后，第一名可靠吗？</h2><ul>__RELIABILITY__</ul>__REPEAT_TABLE____PREVIOUS_LINK__<p>本工具未启用能保证逐位一致的物理求解后端；仅设置相同随机种子不能消除数值波动。model_best_eval.pt 保存本轮候选，不代表已证明它优于所有其他模型。</p></section>
@@ -427,6 +428,7 @@ for(const id of ['model-filter','terrain-filter','sort-filter'])document.getElem
     from .training_chain_report import chain_html, training_figures_html, remove_legacy_training_page
     replacements = {"CHAIN": chain_html(result), "HARDWARE": hardware_html, "RUN": escape(data["run"]), "TIME": timestamp, "BEST": escape(selected["label"]),
         "LOG_CANDIDATE": escape(log_candidate_label(result)), "TRAINING_FIGURES": training_figures_html(output),
+        "LOG_SELECTION": log_selection_html(result),
         "COVERAGE": f"{data['selection']['selected']} / {data['selection']['available']}", "PASS": f"{winner['task_success']:.1%}",
         "PARALLEL": str(data["parallel_models"]), "FINDINGS": ''.join('<li>'+escape(n)+'</li>' for n in observations),
         "RELIABILITY": ''.join('<li>'+escape(n)+'</li>' for n in reliability_notes),
@@ -449,6 +451,7 @@ for(const id of ['model-filter','terrain-filter','sort-filter'])document.getElem
                 "全部模型的评分依据见 [hardware_readiness.json](hardware_readiness.json)。", "",
                 f"本轮推荐：**{selected['label']}**；模型文件：[model_best_eval.pt](model_best_eval.pt)。",
                 f"日志评分候选（训练曲线参考）：**{log_candidate_label(result)}**。日志回报与仿真性能的排序依据不同。",
+                "", *['- '+n for n in log_selection_notes(result)],
                 "", f"训练状态：{status}", "", *['- '+n for n in observations], "",
                 "## 复跑核对与第一名的可靠性", "", *['- '+n for n in reliability_notes]]
     if result.get("chain"):

@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.utils.best_model import Goal, Options
 from src.utils.training_chain import read_training_chain, analyze_chain, resolve_run_directory
 from src.utils.training_chain_report import write_chain_reports, write_training_report
-from src.utils.training_report import publish_best, write_reports, write_selection, recommendation, log_candidate_label
+from src.utils.training_report import publish_best, write_reports, write_selection, recommendation, log_candidate_label, log_selection_notes
 
 
 def main(argv=None) -> int:
@@ -111,6 +111,8 @@ def main(argv=None) -> int:
         print(f"日志评分候选（训练曲线参考）: {log_candidate_label(result)}")
         if result["current_stage"]:
             print(f"课程阶段: {result['current_stage']['index']} | 最终阶段: {result['current_stage']['final']}")
+        for note in log_selection_notes(result):
+            print(note)
         print(f"收敛状态: {result['convergence']['status']} — {result['convergence']['reason']}")
         for iteration in result["top_current_stage"]:
             candidate = next(c for c in result["candidates"] if c["iteration"] == iteration)
@@ -132,6 +134,7 @@ def main(argv=None) -> int:
                 print(note)
         else:
             print("本次未进行仿真评测，暂无仿真推荐。")
+            print("仿真推荐需加 --evaluate；默认比较训练链的全部有效 checkpoint。")
         print(f"统一报告（含完整训练曲线）: {output / 'report.html'}")
         return 0
     except (ValueError, OSError, ImportError, KeyError, RuntimeError) as exc:

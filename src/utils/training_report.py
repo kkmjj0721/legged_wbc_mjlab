@@ -19,9 +19,70 @@ from .training_logs import Run, sha256, model_key, model_label
 def log_candidate_label(result):
     iteration = result.get("best_current_stage")
     if iteration is None:
-        return "暂无合格日志候选"
+        return "当前阶段暂无合格日志候选"
     prefix = f"R{result['chain'][-1]['index']} / " if len(result.get("chain", [])) > 1 else ""
     return f"{prefix}model_{iteration}"
+
+
+def log_selection_notes(result):
+    """Shared selection evidence for terminal, training and simulation reports."""
+    diagnostic = result.get("selection_diagnostics")
+    if not diagnostic:
+        return []
+    notes = [f"模型识别：{diagnostic['valid_checkpoints']} 个有效 checkpoint；"
+             f"所选日志分段内 {diagnostic['selected_segment_valid_checkpoints']} 个；"
+             f"各课程阶段合计 {diagnostic['eligible_checkpoints']} 个日志评分合格。"]
+    stage = result.get("current_stage")
+    if stage is None:
+        notes.append(f"无法确定课程阶段：{result['curriculum']['reason']}；有效 checkpoint 仍可用 --evaluate 仿真比较。")
+        return notes
+    notes.append(f"当前阶段 {stage['index']} 从 iteration {stage['start']} 开始，"
+                 f"适应期后从 {diagnostic['post_warmup_start']} 计分；"
+                 f"当前阶段 {diagnostic['current_stage_eligible_checkpoints']}/"
+                 f"{diagnostic['current_stage_valid_checkpoints']} 个有效 checkpoint 日志评分合格。")
+    if result.get("best_current_stage") is None:
+        current = [c for c in result['candidates'] if c['valid'] and c['segment'] == result['segment']
+                   and c['stage'] == stage['index']]
+        if not current:
+            notes.append("当前阶段尚无有效的已保存 checkpoint。")
+        for candidate in sorted(current, key=lambda c: c['iteration'], reverse=True)[:3]:
+            if candidate['window_start'] > candidate['iteration']:
+                reason = "位于课程适应期内，评分样本为 0"
+            elif candidate['metrics'].get(REWARD, {}).get('invalid_count', 0):
+                reason = "评分窗口含 NaN/Inf 回报"
+            elif candidate['samples'] < result['options']['min_samples']:
+                reason = f"适应期后评分样本 {candidate['samples']} < 要求 {result['options']['min_samples']}"
+            else:
+                reason = candidate['reason']
+            notes.append(f"model_{candidate['iteration']}.pt 未入选：{reason}。")
+        earliest = diagnostic['earliest_candidate_iteration']
+        if result['as_of_iteration'] < earliest:
+            notes.append(f"连续有效日志下，候选最早需保存于 iteration {earliest} 或之后"
+                         f"（至少 {result['options']['min_samples']} 个适应期后样本）；"
+                         f"日志末尾现有 {diagnostic['post_warmup_samples']} 个，评分窗口止于各 checkpoint 的 iteration。")
+        elif not current or all(c['samples'] < result['options']['min_samples'] for c in current):
+            notes.append(f"日志末尾已有 {diagnostic['post_warmup_samples']} 个适应期后有效样本；"
+                         f"仍需保存评分窗口含至少 {result['options']['min_samples']} 个样本的 checkpoint，"
+                         "较晚日志不会计入较早 checkpoint 的评分。")
+        reference = diagnostic['previous_stage_reference']
+        if reference:
+            notes.append(f"最近有合格候选的历史阶段 {reference['stage']}：model_{reference['iteration']}.pt，"
+                         "仅供该阶段参考，未作为当前阶段 best；不同阶段的回报不直接比较。")
+        notes.append("加 --evaluate 可在统一条件下比较全部有效 checkpoint，日志候选不足不影响仿真评测。")
+    earliest = diagnostic['earliest_convergence_iteration']
+    if earliest is not None and result['as_of_iteration'] < earliest:
+        notes.append(f"最终阶段收敛检查需 {result['options']['convergence_windows']} × "
+                     f"{result['options']['window']} 轮窗口，最早在 iteration {earliest} 具备观察长度；"
+                     "选出日志候选无需等待收敛。")
+    return notes
+
+
+def log_selection_html(result):
+    from html import escape
+
+    notes = log_selection_notes(result)
+    return ('<section id="log-selection"><h2>日志候选筛选依据</h2><ul>'
+            + ''.join('<li>' + escape(note) + '</li>' for note in notes) + '</ul></section>') if notes else ''
 
 
 def recommendation(result, evaluation=None):

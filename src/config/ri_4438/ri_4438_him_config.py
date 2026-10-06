@@ -11,6 +11,13 @@ from src.config.ri_4438.ri_4438_config import Ri4438CfgPPO, Ri4438Cfg
 class Ri4438HimCfg(Ri4438Cfg):
     """Environment-side dimensions and robot defaults used by HIM."""
 
+    class comaman(Ri4438Cfg.comaman):
+        class ranges(Ri4438Cfg.comaman.ranges):
+            # Match the initial reward-based curriculum before the first reset.
+            lin_vel_x = [-0.5, 0.5]
+            lin_vel_y = [-0.5, 0.5]
+            ang_vel_yaw = [-0.5, 0.5]
+
     class env(Ri4438Cfg.env):
         num_envs = 1024
         num_actions = 12

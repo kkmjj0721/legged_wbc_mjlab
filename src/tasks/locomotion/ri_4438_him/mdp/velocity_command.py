@@ -304,6 +304,12 @@ class HeadingHoldVelocityCommand(_MjlabUniformVelocityCommand):
 
   def __init__(self, cfg, env):
     super().__init__(cfg, env)
+    self.commanded_displacement_w = torch.zeros(
+      self.num_envs, 2, device=self.device
+    )
+    self.episode_start_pos_w = torch.zeros(
+      self.num_envs, 2, device=self.device
+    )
     self._ui_heading_ref = torch.zeros(self.num_envs, device=self.device)
     self._ui_heading_hold = torch.zeros(
       self.num_envs, dtype=torch.bool, device=self.device
@@ -321,27 +327,68 @@ class HeadingHoldVelocityCommand(_MjlabUniformVelocityCommand):
     ids = env_ids[chosen]
     if not len(ids):
       return
-    terrain = self._env.scene.terrain
-    level = terrain.terrain_levels[ids].float() / max(1, terrain.cfg.terrain_generator.num_rows - 1)
-    # Easy stairs cover 0.3--0.8 m/s; advanced levels also practice 1.0 m/s.
-    high = (0.8 + 0.2 * ((level - 0.5) / 0.3).clamp(0, 1)).clamp(max=self.cfg.ranges.lin_vel_x[1])
-    low = torch.minimum(torch.full_like(high, 0.3), high)
+    # All stair levels practice the current velocity curriculum range.
+    high = self.cfg.ranges.lin_vel_x[1]
+    low = min(0.3, high)
     self.vel_command_b[ids, 0] = low + torch.rand(len(ids), device=self.device) * (high - low)
     self.vel_command_b[ids, 1:] = 0
     self.is_heading_env[ids] = False
     self.is_world_env[ids] = False
     self.is_forward_env[ids] = True
 
-  def reset(self, env_ids: torch.Tensor | slice | None) -> dict[str, float]:
+  def reset(
+    self, env_ids: torch.Tensor | slice | None
+  ) -> dict[str, float]:
     extras = super().reset(env_ids)
+    self.commanded_displacement_w[env_ids] = 0.0
+
     self._ui_heading_ref[env_ids] = 0.0
     self._ui_heading_hold[env_ids] = False
     self._ui_forward_active[env_ids] = False
     return extras
 
+  def _integrate_command(
+    self,
+    dt: float | torch.Tensor,
+    env_ids: torch.Tensor | None,
+  ) -> None:
+    heading = self.robot.data.heading_w
+    cos_h = torch.cos(heading)
+    sin_h = torch.sin(heading)
+
+    vx = self.vel_command_b[:, 0]
+    vy = self.vel_command_b[:, 1]
+
+    # 先转换到世界坐标，再累计位移向量。
+    vel_w = torch.stack(
+      [
+        cos_h * vx - sin_h * vy,
+        sin_h * vx + cos_h * vy,
+      ],
+      dim=-1,
+    )
+    step_w = vel_w * torch.as_tensor(
+      dt, device=self.device
+    ).reshape(-1, 1)
+
+    ids = slice(None) if env_ids is None else env_ids
+    self.commanded_displacement_w[ids] += step_w[ids]
+
   def compute(
     self, dt: float | torch.Tensor, env_ids: torch.Tensor | None = None
   ) -> None:
+
+    # 在重新采样前，累计刚刚执行的那条指令。
+    self._integrate_command(dt, env_ids)
+
+    # reset 后已经完成 forward，可以读取真实出生位置。
+    fresh = (self._env.episode_length_buf == 0).unsqueeze(-1)
+    self.episode_start_pos_w = torch.where(
+      fresh,
+      self.robot.data.root_link_pos_w[:, :2],
+      self.episode_start_pos_w,
+    )
+
     super().compute(dt, env_ids)
 
     # 没有启用人工控制时，保持原训练命令逻辑。

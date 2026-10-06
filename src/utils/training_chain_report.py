@@ -51,7 +51,7 @@ def remove_legacy_training_page(output):
 
 def write_training_report(result, output):
     """The same report.html entry point for a run without simulation."""
-    from .training_report import _atomic_text, log_candidate_label
+    from .training_report import _atomic_text, log_candidate_label, log_selection_html
     from .evaluation_report import STATUSES
     status = STATUSES.get(result["convergence"]["status"], result["convergence"]["status"])
     html = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>训练日志分析</title><style>'
@@ -59,7 +59,7 @@ def write_training_report(result, output):
             '<h1>训练日志分析</h1><p>本次未进行仿真评测，暂无仿真推荐。</p>'
             f'<p><b>日志评分候选（训练曲线参考）：{escape(log_candidate_label(result))}</b></p>'
             f'<p>训练状态：{escape(status)}</p>'
-            + chain_html(result) + training_figures_html(output)
+            + log_selection_html(result) + chain_html(result) + training_figures_html(output)
             + '<p><a href="selection.json">日志分析 JSON</a> · <a href="candidates.csv">日志候选 CSV</a></p></html>')
     _atomic_text(output / "report.html", lambda f: f.write(html))
     remove_legacy_training_page(output)

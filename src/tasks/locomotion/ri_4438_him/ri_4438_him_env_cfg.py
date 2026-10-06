@@ -486,23 +486,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         params = {"command_name": "twist"},
       ),
       "command_vel": CurriculumTermCfg(
-        func = him_mdp.commands_vel,
+        func = him_mdp.RewardBasedVelocityCurriculum,
         params = {
           "command_name": "twist",
-          "velocity_stages": [
-            {"step": 0, "lin_vel_x": (-0.5, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 200 * 100, "lin_vel_x": (-0.75, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 400 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.5), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 600 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.5, 0.75), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 800 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.5)},
-            {"step": 1000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.5, 0.75)},
-            {"step": 1200 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 0.75), "ang_vel_z": (-0.75, 0.75)},
-
-            {"step": 1400 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-0.75, 1.0), "ang_vel_z": (-0.75, 0.75)},
-            {"step": 1600 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 0.75)},
-            {"step": 1800 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-0.75, 1.0)},
-            {"step": 2000 * 100, "lin_vel_x": (-1.0, 1.0), "lin_vel_y": (-1.0, 1.0), "ang_vel_z": (-1.0, 1.0)},
-          ],
+          "linear_threshold": 0.8,
+          "angular_threshold": 0.8,
+          "linear_increment": 0.1,
+          "angular_increment": 0.1,
+          "lin_vel_x_limit": (-1.0, 1.0),
+          "lin_vel_y_limit": (-1.0, 1.0),
+          "ang_vel_z_limit": (-1.0, 1.0),
+          "check_interval_s": 20.0,
         },
       ),
     }

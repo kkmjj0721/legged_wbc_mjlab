@@ -250,6 +250,32 @@ def convergence(run: Run, segment: Segment, schedule: dict, options: Options) ->
     return result
 
 
+def selection_diagnostics(segment: Segment, stage: dict | None, candidates: list[dict], options: Options) -> dict:
+    """Explain missing current-stage candidates separately from convergence."""
+    valid = [c for c in candidates if c["valid"]]
+    selected = [c for c in valid if c["segment"] == segment.index]
+    eligible = [c for c in candidates if c["eligible"]]
+    current = [c for c in selected if stage is not None and c["stage"] == stage["index"]]
+    start = max(segment.first_step, stage["start"] + options.warmup) if stage else None
+    previous = [c for c in eligible if stage is not None and c["stage"] < stage["index"]]
+    # Prefer the closest earlier stage, then rank only within that stage.
+    reference = max(previous, key=lambda c: (c["stage"], c["score"], c["iteration"])) if previous else None
+    return {
+        "valid_checkpoints": len(valid), "selected_segment_valid_checkpoints": len(selected),
+        "eligible_checkpoints": len(eligible), "current_stage_valid_checkpoints": len(current),
+        "current_stage_eligible_checkpoints": sum(c["eligible"] for c in current),
+        "post_warmup_start": start,
+        "post_warmup_samples": sum(p.step >= start and math.isfinite(p.value)
+                                   for p in segment.series[REWARD].values()) if start is not None else None,
+        # Lower bounds assume one finite reward sample per iteration and a
+        # checkpoint saved there. They do not predict the save interval.
+        "earliest_candidate_iteration": start + options.min_samples - 1 if start is not None else None,
+        "earliest_convergence_iteration": (start + options.window * options.convergence_windows - 1
+                                           if stage and stage["final"] else None),
+        "previous_stage_reference": {"iteration": reference["iteration"], "stage": reference["stage"]} if reference else None,
+    }
+
+
 def analyze(run: Run, options: Options) -> dict:
     options.validate()
     segment = next((s for s in run.segments if s.index == options.segment), None) if options.segment is not None else run.segments[-1]
@@ -300,6 +326,7 @@ def analyze(run: Run, options: Options) -> dict:
         "curriculum": schedule, "current_stage": current_stage,
         "best_current_stage": current[0] if current else None,
         "top_current_stage": current, "top_by_stage": by_stage,
+        "selection_diagnostics": selection_diagnostics(segment, current_stage, candidates, options),
         "candidates": candidates, "convergence": convergence(run, segment, schedule, options),
         "warnings": run.warnings + ["Training-window scores approximate checkpoint performance; no fixed-condition evaluation was run.",
                                    "Termination scalars are counts, not failure rates; tracking indices are not physical accuracy."],
