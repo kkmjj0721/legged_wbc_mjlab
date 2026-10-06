@@ -5,6 +5,7 @@ Robot-specific configurations call the factory and customize as needed.
 """
 
 import math
+import random
 from copy import deepcopy
 from dataclasses import replace
 
@@ -424,11 +425,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params={
         "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
         "command_name": "twist",
-        "std_standing": {},  # Set per-robot.
-        "std_walking": {},  # Set per-robot.
-        "std_running": {},  # Set per-robot.
+        "std_standing": {},  # 继续由机器人配置填入。
+        "std_walking": {},
+        "std_running": {},
         "walking_threshold": 0.1,
         "running_threshold": 1.0,
+        "scan_sensor_name": "terrain_scan",
+        "terrain_radius": 0.35,              # 局部扫描半径，米。
+        "terrain_height_std": (0.01, 0.04),  # 地面高度起伏阈值，米。
+        "terrain_tolerance": {              # 最大关节容差，弧度。
+          ".*_hip_joint": 0.05,
+          ".*_thigh_joint": 0.15,
+          ".*_calf_joint": 0.20,
+        },
       },
     ),
     "body_ang_vel": RewardTermCfg(
@@ -579,8 +588,27 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   terrain_cfg = deepcopy(ROUGH_TERRAINS_CFG)
   for name in ("hf_pyramid_slope", "hf_pyramid_slope_inv", "wave_terrain"):
     terrain_cfg.sub_terrains.pop(name)
+
+  stair_widths = (0.18, 0.20, 0.22, 0.25)
+  target_steps = 5
+
   for name in ("pyramid_stairs", "pyramid_stairs_inv"):
-    terrain_cfg.sub_terrains[name].step_height_range = (0.05, 0.15)
+    base = terrain_cfg.sub_terrains.pop(name)
+
+    for i, width in enumerate(stair_widths):
+      platform_width = (
+        min(terrain_cfg.size)
+        - 2 * base.border_width
+        - 2 * (target_steps - 1) * width
+        - 1e-6  # 避免浮点误差导致 int() 少算一阶
+      )
+      terrain_cfg.sub_terrains[f"{name}_{i}"] = replace(
+        base,
+        step_height_range=(0.05, 0.20),
+        step_width=width,
+        platform_width=platform_width,
+        proportion=base.proportion / len(stair_widths),
+      )
 
   return ManagerBasedRlEnvCfg(
     scene = SceneCfg(

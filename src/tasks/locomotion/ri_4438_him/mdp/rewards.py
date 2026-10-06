@@ -334,40 +334,58 @@ def hip_joint_deviation_penalty(
 
 
 class variable_posture:
-  """Speed-dependent tolerance around the default pose."""
+  """运动时根据局部地形增加姿态容差，只计算超出容差的偏差。"""
 
-  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
-    asset: Entity = env.scene[cfg.params["asset_cfg"].name]
-    default = asset.data.default_joint_pos
-    assert default is not None
-    self.default_joint_pos = default
+  def __init__(self, cfg, env):
+    asset = env.scene[cfg.params["asset_cfg"].name]
+    self.default_joint_pos = asset.data.default_joint_pos
     _, names = asset.find_joints(cfg.params["asset_cfg"].joint_names)
-    self.std_standing = torch.tensor(resolve_matching_names_values(cfg.params["std_standing"], names)[2], device=env.device)
-    self.std_walking = torch.tensor(resolve_matching_names_values(cfg.params["std_walking"], names)[2], device=env.device)
-    self.std_running = torch.tensor(resolve_matching_names_values(cfg.params["std_running"], names)[2], device=env.device)
+    keys = ("std_standing", "std_walking", "std_running", "terrain_tolerance")
+    self.values = torch.tensor([
+      resolve_matching_names_values(cfg.params[k], names)[2] for k in keys
+    ], device=env.device)
+    if (self.values[:3] <= 0).any() or (self.values[3] < 0).any():
+      raise ValueError("Pose std must be positive; terrain tolerances nonnegative.")
 
   def __call__(
-    self,
-    env: ManagerBasedRlEnv,
-    std_standing,
-    std_walking,
-    std_running,
-    asset_cfg: SceneEntityCfg,
-    command_name: str,
-    walking_threshold: float = 0.5,
-    running_threshold: float = 1.5,
-  ) -> torch.Tensor:
-    del std_standing, std_walking, std_running
-    asset: Entity = env.scene[asset_cfg.name]
-    command = env.command_manager.get_command(command_name)
-    assert command is not None
-    speed = torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
-    standing = (speed < walking_threshold).unsqueeze(1)
-    walking = ((speed >= walking_threshold) & (speed < running_threshold)).unsqueeze(1)
-    std = torch.where(standing, self.std_standing, torch.where(walking, self.std_walking, self.std_running))
-    error = asset.data.joint_pos[:, asset_cfg.joint_ids] - self.default_joint_pos[:, asset_cfg.joint_ids]
-    return torch.exp(-torch.mean(torch.square(error) / torch.square(std), dim=1))
+    self, env, std_standing, std_walking, std_running, terrain_tolerance,
+    asset_cfg, command_name, walking_threshold=0.1, running_threshold=1.0,
+    scan_sensor_name="terrain_scan", terrain_radius=0.35,
+    terrain_height_std=(0.01, 0.04),
+  ):
+    lo, hi = terrain_height_std
+    if not (terrain_radius > 0 and 0 <= lo < hi
+            and 0 <= walking_threshold < running_threshold):
+      raise ValueError("Invalid terrain radius, height thresholds or speed thresholds.")
 
+    asset = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    speed = torch.linalg.norm(command[:, :2], dim=1) + command[:, 2].abs()
+    mode = (speed >= walking_threshold).long() + (speed >= running_threshold).long()
+
+    # 仅统计附近有效地面；越靠近范围边缘，权重越小。
+    scan = env.scene[scan_sensor_name].data
+    valid = ((scan.distances >= 0) & torch.isfinite(scan.distances)
+             & torch.isfinite(scan.hit_pos_w).all(-1) & (scan.normals_w[..., 2] > 0))
+    hits = torch.where(valid[..., None], scan.hit_pos_w, 0.0)
+    delta = hits - asset.data.root_link_pos_w[:, None, :]
+    distance_sq = delta[..., :2].square().sum(-1)
+    weights = (1 - distance_sq / terrain_radius**2).clamp_min(0).square() * valid
+    count = weights.sum(-1).clamp_min(1e-6)
+    z = delta[..., 2]
+    mean = (weights * z).sum(-1) / count
+    roughness = ((weights * (z - mean[:, None]).square()).sum(-1) / count).sqrt()
+
+    # 地形起伏映射到 0～1；站立或有效采样不足时关闭容差。
+    alpha = ((roughness - lo) / (hi - lo)).clamp(0, 1)
+    alpha = alpha.square() * (3 - 2 * alpha)
+    alpha = torch.where((mode > 0) & ((weights > 0).sum(-1) >= 4), alpha, 0.0)
+
+    std = self.values[mode]
+    tolerance = alpha[:, None] * self.values[3]
+    error = asset.data.joint_pos[:, asset_cfg.joint_ids] - self.default_joint_pos[:, asset_cfg.joint_ids]
+    error = (error.abs() - tolerance).clamp_min(0.0)
+    return torch.exp(-torch.mean(error.square() / std.square(), dim=1))
 
 def stumble(
   env: ManagerBasedRlEnv,

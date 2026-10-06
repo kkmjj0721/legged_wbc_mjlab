@@ -13,8 +13,8 @@ class Ri4438HimCfg(Ri4438Cfg):
 
     class domain_rand(Ri4438Cfg.domain_rand):
         # Starting ranges around the nominal model; refine after hardware calibration.
-        link_mass_range = [0.85, 1.15]
-        com_displacement_range = [-0.02, 0.02]  # Per-axis base COM shift, in metres.
+        link_mass_range = [0.8, 1.1]
+        com_displacement_range = [-0.08, 0.08]  # Per-axis base COM shift, in metres.
         # Scale the torque cap, without exceeding the nominal actuator limit.
         effort_limit_range = [0.8, 1.0]
         joint_friction_range = [0.5, 1.5]  # Scale passive Coulomb friction.
@@ -97,6 +97,6 @@ class Ri4438CFGHimPPO(Ri4438CfgPPO):
 
     class runner(Ri4438CfgPPO.runner):
         num_steps_per_env = 100
-        max_iterations = 100000
-        save_interval = 100
+        max_iterations = 20000
+        save_interval = 200
         experiment_name = "ri_4438_him"
