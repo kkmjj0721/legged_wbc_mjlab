@@ -11,6 +11,13 @@ from src.config.ri_4438.ri_4438_config import Ri4438CfgPPO, Ri4438Cfg
 class Ri4438HimCfg(Ri4438Cfg):
     """Environment-side dimensions and robot defaults used by HIM."""
 
+    class domain_rand(Ri4438Cfg.domain_rand):
+        # Starting ranges around the nominal model; refine after hardware calibration.
+        link_mass_range = [0.85, 1.15]
+        com_displacement_range = [-0.02, 0.02]  # Per-axis base COM shift, in metres.
+        # Scale the torque cap, without exceeding the nominal actuator limit.
+        effort_limit_range = [0.8, 1.0]
+
     class comaman(Ri4438Cfg.comaman):
         class ranges(Ri4438Cfg.comaman.ranges):
             # Match the initial reward-based curriculum before the first reset.

@@ -84,6 +84,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "joint_pos": ObservationTermCfg(
       func = mdp.joint_pos_rel,
+      params = {"biased": True},
       noise = Unoise(n_min = -0.01, n_max = 0.01),
     ),
     "joint_vel": ObservationTermCfg(
@@ -95,6 +96,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
   critic_terms = {
     **actor_terms,
+    "joint_pos": ObservationTermCfg(func=mdp.joint_pos_rel),
     "base_lin_vel": ObservationTermCfg(
       func = mdp.builtin_sensor,
       params = {"sensor_name": "robot/imu_lin_vel"},
@@ -224,6 +226,11 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # def _build_events():
 
 
+  # Uniform alpha produces a log-uniform mass multiplier, exp(2 * alpha).
+  mass_alpha_range = tuple(
+    0.5 * math.log(scale) for scale in ri_4438_cfg.domain_rand.link_mass_range
+  )
+
   events = {
     # reset
     "reset_base": EventTermCfg(
@@ -272,20 +279,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func=dr.encoder_bias,
       params={
         "asset_cfg": SceneEntityCfg("robot"),
-        "bias_range": (-0.02, 0.02),
+        "bias_range": tuple(ri_4438_cfg.domain_rand.motor_offset_range),
       },
     ),
     "base_com": EventTermCfg(
       mode="startup",
-      func=dr.body_com_offset,
+      func=dr.pseudo_inertia,
       params={
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
-        "operation": "add",
-        "ranges": {
-          0: (-0.08, 0.08),
-          1: (-0.08, 0.08),
-          2: (-0.08, 0.08),
-        },
+        # Randomize base mass, inertia and COM together. The leg event below
+        # excludes the base, so it cannot overwrite this COM perturbation.
+        "alpha_range": mass_alpha_range,
+        "t_range": tuple(ri_4438_cfg.domain_rand.com_displacement_range),
+        "distribution": "uniform",
       },
     ),
     "pd_gains": EventTermCfg(
@@ -304,25 +310,23 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       params = {
         "asset_cfg": SceneEntityCfg("robot"),
         "operation": "scale",
-        "effort_limit_range": tuple(ri_4438_cfg.domain_rand.motor_strength_range)
+        "effort_limit_range": tuple(ri_4438_cfg.domain_rand.effort_limit_range)
       }  
     ),
     "pseudo_inertia": EventTermCfg(
       func = dr.pseudo_inertia,
       mode = "startup",
       params = {
-        # 默认选择 robot 的所有 body，包括 base_link 和各个腿部 link
-        "asset_cfg": SceneEntityCfg("robot"),
-
-        # pseudo_inertia 中质量缩放倍数为 exp(2 * alpha)
-        # 这里把 [0.8, 1.2] 的质量缩放范围转换成 alpha 范围
-        "alpha_range": (
-          0.5 * math.log(ri_4438_cfg.domain_rand.link_mass_range[0]),
-          0.5 * math.log(ri_4438_cfg.domain_rand.link_mass_range[1]),
+        "asset_cfg": SceneEntityCfg(
+          "robot", body_names=(r".*_(hip|thigh|calf)",),
         ),
-
+        "alpha_range": mass_alpha_range,
         "distribution": "uniform",
       },
+    ),
+    "synchronize_sensor_delays": EventTermCfg(
+      func=him_mdp.synchronize_sensor_delays,
+      mode="startup",
     ),
   }
 

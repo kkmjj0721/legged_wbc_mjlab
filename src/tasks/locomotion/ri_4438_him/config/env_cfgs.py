@@ -1,5 +1,6 @@
 """RI-4438 HIM environment configurations."""
 
+from copy import deepcopy
 from typing import Literal
 
 from src.assets.robots import (
@@ -45,7 +46,9 @@ def ri_4438_rough_env_cfg(
   cfg.sim.njmax = 300
   cfg.sim.broadphase = "nxn"
   cfg.sim.mujoco.solver = "cg"
-  cfg.scene.entities = {"robot": get_ri_4438_robot_cfg()}
+  # The robot factory contains shared actuator configs. Own them before play
+  # overrides so disabling play latency cannot affect a later training config.
+  cfg.scene.entities = {"robot": deepcopy(get_ri_4438_robot_cfg())}
   # The recorder captures fresh estimator targets before the automatic reset.
   cfg.auto_reset = True
 
@@ -200,7 +203,21 @@ def ri_4438_rough_env_cfg(
     cfg.commands["twist"].ranges.ang_vel_z = (-1.0, 1.0)
 
     cfg.observations["actor"].enable_corruption = False
-    cfg.events.pop("push_robot", None)
+    for term in cfg.observations["actor"].terms.values():
+      term.delay_min_lag = term.delay_max_lag = 0
+      term.delay_hold_prob = 0.0
+      term.delay_update_period = 0
+    assert cfg.scene.entities["robot"].articulation is not None
+    for actuator in cfg.scene.entities["robot"].articulation.actuators:
+      actuator.delay_min_lag = actuator.delay_max_lag = 0
+      actuator.delay_hold_prob = 0.0
+      actuator.delay_update_period = 0
+    # Play uses nominal dynamics; training retains the configured randomization.
+    for name in (
+      "push_robot", "foot_friction", "encoder_bias", "base_com", "pd_gains",
+      "effort_limits", "pseudo_inertia", "synchronize_sensor_delays",
+    ):
+      cfg.events.pop(name, None)
     cfg.curriculum = {}
     cfg.events["randomize_terrain"] = EventTermCfg(
       func = envs_mdp.randomize_terrain,

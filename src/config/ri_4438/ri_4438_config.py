@@ -71,7 +71,7 @@ class Ri4438Cfg( BaseConfig ):
         }
    
     class domain_rand:
-        link_mass_range = [0.7, 1.05]
+        link_mass_range = [0.6, 1.05]
         KpKd_factor_range = [0.8, 1.2]
         com_displacement_range = [-0.05, 0.05]
         motor_offset_range = [-0.02, 0.02]
