@@ -146,6 +146,7 @@ def ri_4438_rough_env_cfg(
   cfg.viewer.elevation = -10.0
 
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
+  cfg.events["foot_contact_softness"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("base_link",)
 
   cfg.rewards["pose"].params["std_standing"] = {
@@ -216,6 +217,8 @@ def ri_4438_rough_env_cfg(
     for name in (
       "push_robot", "foot_friction", "encoder_bias", "base_com", "pd_gains",
       "effort_limits", "pseudo_inertia", "synchronize_sensor_delays",
+      "joint_friction", "joint_armature", "joint_damping", "imu_errors",
+      "external_force", "foot_contact_softness",
     ):
       cfg.events.pop(name, None)
     cfg.curriculum = {}

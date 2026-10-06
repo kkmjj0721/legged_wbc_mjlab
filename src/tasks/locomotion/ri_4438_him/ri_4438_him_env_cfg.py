@@ -136,6 +136,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
   }
 
+  # Replace actor terms only; critic and estimator retain unbiased true states.
+  actor_terms["base_ang_vel"] = replace(
+    actor_terms["base_ang_vel"], func=him_mdp.imu_ang_vel_with_errors,
+  )
+  actor_terms["projected_gravity"] = replace(
+    actor_terms["projected_gravity"], func=him_mdp.imu_projected_gravity_with_errors,
+  )
+
   for name in ("base_ang_vel", "projected_gravity"):
     actor_terms[name] = replace(
       actor_terms[name], 
@@ -327,6 +335,62 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "synchronize_sensor_delays": EventTermCfg(
       func=him_mdp.synchronize_sensor_delays,
       mode="startup",
+    ),
+    "joint_friction": EventTermCfg(
+      func=dr.joint_friction,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=(r".*_joint",)),
+        "operation": "scale",
+        "ranges": tuple(ri_4438_cfg.domain_rand.joint_friction_range),
+      },
+    ),
+    "joint_armature": EventTermCfg(
+      func=dr.joint_armature,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=(r".*_joint",)),
+        "operation": "scale",
+        "ranges": tuple(ri_4438_cfg.domain_rand.joint_armature_range),
+      },
+    ),
+    "joint_damping": EventTermCfg(
+      func=dr.joint_damping,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=(r".*_joint",)),
+        "operation": "scale",
+        "ranges": tuple(ri_4438_cfg.domain_rand.joint_damping_range),
+      },
+    ),
+    "imu_errors": EventTermCfg(
+      func=him_mdp.randomize_imu_errors,
+      mode="startup",
+      params={
+        "gyro_bias_range": tuple(ri_4438_cfg.domain_rand.imu_gyro_bias_range),
+        "mount_angle_range": tuple(ri_4438_cfg.domain_rand.imu_mount_angle_range),
+      },
+    ),
+    "external_force": EventTermCfg(
+      func=envs_mdp.apply_body_impulse,
+      mode="step",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", body_names=("base_link",)),
+        "force_range": tuple(ri_4438_cfg.domain_rand.external_force_range),
+        "torque_range": (0.0, 0.0),
+        "duration_s": tuple(ri_4438_cfg.domain_rand.external_force_duration_s),
+        "cooldown_s": tuple(ri_4438_cfg.domain_rand.external_force_cooldown_s),
+      },
+    ),
+    "foot_contact_softness": EventTermCfg(
+      func=him_mdp.randomize_foot_contact_softness,
+      mode="startup",
+      params={
+        "asset_cfg": SceneEntityCfg("robot", geom_names=()),  # Set per-robot.
+        "time_constant_range": tuple(
+          ri_4438_cfg.domain_rand.foot_contact_time_constant_range
+        ),
+      },
     ),
   }
 

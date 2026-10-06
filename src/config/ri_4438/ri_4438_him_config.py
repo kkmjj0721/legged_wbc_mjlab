@@ -17,6 +17,15 @@ class Ri4438HimCfg(Ri4438Cfg):
         com_displacement_range = [-0.02, 0.02]  # Per-axis base COM shift, in metres.
         # Scale the torque cap, without exceeding the nominal actuator limit.
         effort_limit_range = [0.8, 1.0]
+        joint_friction_range = [0.5, 1.5]  # Scale passive Coulomb friction.
+        joint_armature_range = [0.8, 1.2]  # Scale reflected rotor inertia.
+        joint_damping_range = [0.5, 1.5]  # Scale passive damping, not PD Kd.
+        imu_gyro_bias_range = [-0.02, 0.02]  # rad/s, fixed per environment.
+        imu_mount_angle_range = [-0.01745329252, 0.01745329252]  # +/-1 degree, rad.
+        external_force_range = [-6.0, 6.0]  # N per world-frame axis, base only.
+        external_force_duration_s = [0.1, 0.3]
+        external_force_cooldown_s = [6.0, 10.0]
+        foot_contact_time_constant_range = [0.015, 0.03]  # solref[0], seconds.
 
     class comaman(Ri4438Cfg.comaman):
         class ranges(Ri4438Cfg.comaman.ranges):
