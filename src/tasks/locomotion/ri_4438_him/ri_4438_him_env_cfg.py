@@ -236,7 +236,10 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
 
   # Uniform alpha produces a log-uniform mass multiplier, exp(2 * alpha).
-  mass_alpha_range = tuple(
+  base_mass_alpha_range = tuple(
+    0.5 * math.log(scale) for scale in ri_4438_cfg.domain_rand.base_mass_range
+  )
+  link_mass_alpha_range = tuple(
     0.5 * math.log(scale) for scale in ri_4438_cfg.domain_rand.link_mass_range
   )
 
@@ -298,7 +301,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg("robot", body_names=()),  # Set per-robot.
         # Randomize base mass, inertia and COM together. The leg event below
         # excludes the base, so it cannot overwrite this COM perturbation.
-        "alpha_range": mass_alpha_range,
+        "alpha_range": base_mass_alpha_range,
         "t_range": tuple(ri_4438_cfg.domain_rand.com_displacement_range),
         "distribution": "uniform",
       },
@@ -329,7 +332,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "asset_cfg": SceneEntityCfg(
           "robot", body_names=(r".*_(hip|thigh|calf)",),
         ),
-        "alpha_range": mass_alpha_range,
+        "alpha_range": link_mass_alpha_range,
         "distribution": "uniform",
       },
     ),
@@ -411,12 +414,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
-      weight = 1.0,
+      weight = 1.5,
       params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
-      weight = -0.2,
+      weight = -0.3,
       params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "pose": RewardTermCfg(
@@ -432,17 +435,17 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "running_threshold": 1.0,
         "scan_sensor_name": "terrain_scan",
         "terrain_radius": 0.35,              # 局部扫描半径，米。
-        "terrain_height_std": (0.01, 0.04),  # 地面高度起伏阈值，米。
+        "terrain_height_std": (0.01, 0.08),  # 地面高度起伏阈值，米。
         "terrain_tolerance": {              # 最大关节容差，弧度。
-          ".*_hip_joint": 0.05,
-          ".*_thigh_joint": 0.15,
-          ".*_calf_joint": 0.20,
+          ".*_hip_joint": 0.1,
+          ".*_thigh_joint": 0.25,
+          ".*_calf_joint": 0.3,
         },
       },
     ),
     "body_ang_vel": RewardTermCfg(
       func = him_mdp.body_angular_velocity_penalty,
-      weight = -0.08,  # Override per-robot
+      weight = -0.1,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
@@ -465,7 +468,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.5,
+      weight = 0.3,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
@@ -487,7 +490,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_slip": RewardTermCfg(
       func = him_mdp.feet_slip,
-      weight = -1.0,
+      weight = -0.1,
       params = {
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -531,7 +534,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "stumble": RewardTermCfg(
       func = him_mdp.stumble,
-      weight = -0.1,
+      weight = -0.2,
       params = {
         "sensor_name": "feet_ground_contact",
         "ratio": 5.0,
@@ -566,14 +569,14 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         func = him_mdp.RewardBasedVelocityCurriculum,
         params = {
           "command_name": "twist",
-          "linear_threshold": 0.8,
-          "angular_threshold": 0.8,
+          "linear_threshold": 0.75,
+          "angular_threshold": 0.65,
           "linear_increment": 0.1,
           "angular_increment": 0.1,
           "lin_vel_x_limit": (-1.0, 1.0),
           "lin_vel_y_limit": (-1.0, 1.0),
           "ang_vel_z_limit": (-1.0, 1.0),
-          "check_interval_s": 20.0,
+          "check_interval_s": 10.0,
         },
       ),
     }
@@ -604,7 +607,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       )
       terrain_cfg.sub_terrains[f"{name}_{i}"] = replace(
         base,
-        step_height_range=(0.05, 0.20),
+        step_height_range=(0.05, 0.18),
         step_width=width,
         platform_width=platform_width,
         proportion=base.proportion / len(stair_widths),
@@ -615,7 +618,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       terrain = TerrainEntityCfg(
         terrain_type = "generator",
         terrain_generator = terrain_cfg,
-        max_init_terrain_level = 1,
+        max_init_terrain_level = 5,
       ),
       sensors=(terrain_scan,),
       num_envs = ri_4438_cfg.env.num_envs,

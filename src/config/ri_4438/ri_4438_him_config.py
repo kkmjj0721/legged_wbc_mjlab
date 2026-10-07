@@ -13,7 +13,8 @@ class Ri4438HimCfg(Ri4438Cfg):
 
     class domain_rand(Ri4438Cfg.domain_rand):
         # Starting ranges around the nominal model; refine after hardware calibration.
-        link_mass_range = [0.8, 1.1]
+        base_mass_range = [0.75, 1.05]  # Scale base mass and inertia; separate from legs.
+        link_mass_range = [0.75, 1.05]  # Scale leg-link mass and inertia; excludes base.
         com_displacement_range = [-0.08, 0.08]  # Per-axis base COM shift, in metres.
         # Scale the torque cap, without exceeding the nominal actuator limit.
         effort_limit_range = [0.8, 1.0]
