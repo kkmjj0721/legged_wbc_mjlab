@@ -30,6 +30,7 @@ from src.tasks.locomotion.ri_4438_him.mdp.velocity_command import (
   HeadingHoldVelocityCommandCfg as UniformVelocityCommandCfg,
 )
 from mjlab.terrains import TerrainEntityCfg
+from mjlab.terrains import BoxRandomGridTerrainCfg
 from mjlab.terrains.config import ROUGH_TERRAINS_CFG
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
@@ -149,7 +150,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     actor_terms[name] = replace(
       actor_terms[name], 
       delay_min_lag = 0, 
-      delay_max_lag = 2,
+      delay_max_lag = 1,
       delay_hold_prob = 0.3,
       delay_update_period = 10
     )
@@ -158,7 +159,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     actor_terms[name] = replace(
       actor_terms[name], 
       delay_min_lag = 0, 
-      delay_max_lag = 2,
+      delay_max_lag = 1,
       delay_hold_prob = 0.3,
       delay_update_period = 10
     )
@@ -211,7 +212,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         resampling_time_range = tuple(ri_4438_cfg.comaman.resampling_time),
         rel_standing_envs = float(ri_4438_cfg.comaman.rel_standing_envs),
         rel_forward_envs = float(ri_4438_cfg.comaman.rel_forward_envs),
-        stair_forward_fraction = 0.5,
+        stair_forward_fraction = 0.1,
         heading_command = ri_4438_cfg.comaman.heading_command,
         debug_vis = True,
         ranges = UniformVelocityCommandCfg.Ranges(
@@ -414,12 +415,12 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
-      weight = 1.5,
+      weight = 1.0,
       params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
-      weight = -0.3,
+      weight = -0.25,
       params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "pose": RewardTermCfg(
@@ -437,15 +438,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         "terrain_radius": 0.35,              # 局部扫描半径，米。
         "terrain_height_std": (0.01, 0.08),  # 地面高度起伏阈值，米。
         "terrain_tolerance": {              # 最大关节容差，弧度。
-          ".*_hip_joint": 0.1,
-          ".*_thigh_joint": 0.25,
-          ".*_calf_joint": 0.3,
+          ".*_hip_joint": 0.15,
+          ".*_thigh_joint": 0.30,
+          ".*_calf_joint": 0.35,
         },
       },
     ),
     "body_ang_vel": RewardTermCfg(
       func = him_mdp.body_angular_velocity_penalty,
-      weight = -0.1,  # Override per-robot
+      weight = -0.08,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
@@ -456,19 +457,19 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     "is_terminated": RewardTermCfg(func=him_mdp.is_terminated, weight = -100.0),
     "joint_acc_l2": RewardTermCfg(func=him_mdp.joint_acc_l2, weight = -2.5e-7),
     "joint_pos_limits": RewardTermCfg(func=him_mdp.joint_pos_limits, weight = -10.0),
-    "action_rate_l2": RewardTermCfg(func=him_mdp.action_rate_l2, weight = -0.01 ),
-    "smoothness": RewardTermCfg(func=him_mdp.action_acc_l2, weight = -0.01),
+    "action_rate_l2": RewardTermCfg(func=him_mdp.action_rate_l2, weight = -0.015 ),
+    "smoothness": RewardTermCfg(func=him_mdp.action_acc_l2, weight = -0.015),
     "joint_torques_l2": RewardTermCfg(func=him_mdp.joint_torques_l2, weight = -2.0e-5),
     "hip_pos": RewardTermCfg(
       func = him_mdp.hip_joint_deviation_penalty,
-      weight = -1.0,
+      weight = -0.5,
       params = {
         "command_name": "twist",
       }
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.3,
+      weight = 0.5,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
@@ -500,7 +501,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "soft_landing": RewardTermCfg(
       func = him_mdp.soft_landing,
-      weight = -1e-3,
+      weight = -2e-3,
       params = {
         "sensor_name": "feet_ground_contact",
         "command_name": "twist",
@@ -534,7 +535,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "stumble": RewardTermCfg(
       func = him_mdp.stumble,
-      weight = -0.2,
+      weight = -0.1,
       params = {
         "sensor_name": "feet_ground_contact",
         "ratio": 5.0,
@@ -562,15 +563,15 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   def _build_curriculum():
     curriculum = {
       "terrain_levels": CurriculumTermCfg(
-        func = him_mdp.terrain_levels_vel,
+        func = mdp.terrain_levels_vel,
         params = {"command_name": "twist"},
       ),
       "command_vel": CurriculumTermCfg(
         func = him_mdp.RewardBasedVelocityCurriculum,
         params = {
           "command_name": "twist",
-          "linear_threshold": 0.75,
-          "angular_threshold": 0.65,
+          "linear_threshold": 0.8,
+          "angular_threshold": 0.8,
           "linear_increment": 0.1,
           "angular_increment": 0.1,
           "lin_vel_x_limit": (-1.0, 1.0),
@@ -583,7 +584,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
 
     return curriculum
 
-  
   ##
   # Assemble and return
   ##
@@ -591,6 +591,20 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   terrain_cfg = deepcopy(ROUGH_TERRAINS_CFG)
   for name in ("hf_pyramid_slope", "hf_pyramid_slope_inv", "wave_terrain"):
     terrain_cfg.sub_terrains.pop(name)
+
+  terrain_cfg.sub_terrains.pop("random_rough", None)
+
+  terrain_cfg.sub_terrains["box_random_grid"] = BoxRandomGridTerrainCfg(
+    proportion=0.05,
+    grid_width=0.8,
+    grid_height_range=(0.02, 0.10),
+    platform_width=2.4,
+    border_width=0.25,
+    holes=False,
+    merge_similar_heights=True,
+    height_merge_threshold=0.02,
+    max_merge_distance=3,
+  )
 
   stair_widths = (0.18, 0.20, 0.22, 0.25)
   target_steps = 5

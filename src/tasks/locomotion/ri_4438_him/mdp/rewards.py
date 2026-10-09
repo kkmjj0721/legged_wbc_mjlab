@@ -59,8 +59,7 @@ def track_angular_velocity(
   assert command is not None, f"Command '{command_name}' not found."
   actual = asset.data.root_link_ang_vel_b
   z_error = torch.square(command[:, 2] - actual[:, 2])
-  xy_error = torch.square(actual[:, :2]).sum(dim=1)
-  return torch.exp(-(z_error + 0.05 * xy_error) / std**2)
+  return torch.exp(-z_error / std**2)
 
 
 def body_orientation_l2(

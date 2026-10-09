@@ -9,8 +9,8 @@ class Ri4438Cfg( BaseConfig ):
         curriculum = True
         max_curriculum = 1.0
         num_commands = 4  # [lin_vel_x, lin_vel_y, ang_vel_yaw, heading]
-        resampling_time = [1.0, 12.0]  # [s] time before new command is given
-        heading_command = False  # if true: compute ang vel command from heading error
+        resampling_time = [4.0, 12.0]  # [s] time before new command is given
+        heading_command = True  # if true: compute ang vel command from heading error
         rel_standing_envs = 0.1
         rel_forward_envs = 0.05
         class ranges:
@@ -24,12 +24,12 @@ class Ri4438Cfg( BaseConfig ):
         damping   = {"hip":  2.0694, "thigh":  2.0694, "calf":  2.0694}
         action_scale = 0.5
         decimation = 4  # control frequency = sim frequency / decimation
-        hip_reduction = 0.25
+        hip_reduction = 0.5
         effort_limit = {"hip": 10.0, "thigh": 10.0, "calf": 10.0 }
         armature = 0.008234
         friction = 0.01
         delay_min_lag = 0
-        delay_max_lag = 4
+        delay_max_lag = 3
         delay_hold_prob = 0.4
         delay_update_period = 10
 

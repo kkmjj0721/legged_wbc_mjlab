@@ -155,12 +155,12 @@ def ri_4438_rough_env_cfg(
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.15,
   }
   cfg.rewards["pose"].params["std_walking"] = {
-    r".*(FR|FL|RR|RL)_hip_joint.*": 0.15,
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.25,
     r".*(FR|FL|RR|RL)_thigh_joint.*": 0.35,
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.35,  # Discourage sustained crouching.
   }
   cfg.rewards["pose"].params["std_running"] = {
-    r".*(FR|FL|RR|RL)_hip_joint.*": 0.15,
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.30,
     r".*(FR|FL|RR|RL)_thigh_joint.*": 0.35,
     r".*(FR|FL|RR|RL)_calf_joint.*": 0.4,
   }
