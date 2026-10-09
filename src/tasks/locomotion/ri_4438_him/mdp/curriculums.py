@@ -106,14 +106,15 @@ def commands_vel(
 
 
 class RewardBasedVelocityCurriculum(ManagerTermBase):
-  """Expand vx/vy from planar tracking and wz from angular tracking.
+  """Expand vx/vy from planar tracking and monitor angular tracking.
 
   Aggregate completed episodes over each check interval. Scores use the full
   episode duration, so early termination lowers the score as in legged_gym.
   Global progress survives per-environment resets and is saved by the HIM runner.
+  Angular command bounds stay at their configured values, including on resume.
   """
 
-  _range_names = ("lin_vel_x", "lin_vel_y", "ang_vel_z")
+  _range_names = ("lin_vel_x", "lin_vel_y")
   _reward_names = ("track_linear_velocity", "track_angular_velocity")
 
   def __init__(self, cfg: CurriculumTermCfg, env: ManagerBasedRlEnv):
@@ -121,14 +122,8 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
     params = cfg.params
     self.command_name = params.get("command_name", "twist")
     self.command_term = env.command_manager.get_term(self.command_name)
-    self.thresholds = (
-      float(params.get("linear_threshold", 0.8)),
-      float(params.get("angular_threshold", 0.8)),
-    )
-    self.increments = (
-      float(params.get("linear_increment", 0.1)),
-      float(params.get("angular_increment", 0.1)),
-    )
+    self.linear_threshold = float(params.get("linear_threshold", 0.8))
+    self.linear_increment = float(params.get("linear_increment", 0.1))
     self.limits = {
       name: tuple(params.get(f"{name}_limit", (-1.0, 1.0)))
       for name in self._range_names
@@ -136,10 +131,10 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
     interval_s = float(params.get("check_interval_s", env.max_episode_length_s))
     if not math.isfinite(interval_s) or interval_s <= 0:
       raise ValueError("Velocity curriculum check_interval_s must be positive.")
-    if any(not 0.0 <= value <= 1.0 for value in self.thresholds):
-      raise ValueError("Velocity curriculum thresholds must be between 0 and 1.")
-    if any(not math.isfinite(value) or value <= 0 for value in self.increments):
-      raise ValueError("Velocity curriculum increments must be positive.")
+    if not 0.0 <= self.linear_threshold <= 1.0:
+      raise ValueError("Velocity curriculum linear_threshold must be between 0 and 1.")
+    if not math.isfinite(self.linear_increment) or self.linear_increment <= 0:
+      raise ValueError("Velocity curriculum linear_increment must be positive.")
     for name, (low, high) in self.limits.items():
       if not math.isfinite(low) or not math.isfinite(high) or low > high:
         raise ValueError(f"Invalid velocity curriculum limit for {name}.")
@@ -187,9 +182,9 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
       if env.reward_manager._scale_by_dt else env.max_episode_length
     )
     self.scores.copy_(self.reward_sums / (weights * duration * self.episode_count))
-    if self.scores[0] > self.thresholds[0]:
-      self._expand("lin_vel_x", self.increments[0])
-      self._expand("lin_vel_y", self.increments[0])
+    if self.scores[0] > self.linear_threshold:
+      self._expand("lin_vel_x", self.linear_increment)
+      self._expand("lin_vel_y", self.linear_increment)
     self.reward_sums.zero_()
     self.episode_count = 0
     self.last_check_step = env.common_step_counter
@@ -269,8 +264,7 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
     return True
 
   def _checked_ranges(self, ranges: dict) -> dict[str, tuple[float, float]]:
-    ranges = dict(ranges)
-    ranges["ang_vel_z"] = self.command_term.cfg.ranges.ang_vel_z
+    """Restore planar bounds, ignoring angular bounds from older checkpoints."""
     result = {}
     for name, (limit_low, limit_high) in self.limits.items():
       low, high = (float(value) for value in ranges[name])

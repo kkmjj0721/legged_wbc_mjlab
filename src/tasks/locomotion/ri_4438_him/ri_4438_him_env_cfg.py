@@ -466,7 +466,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.5,
+      weight = 0.3,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
@@ -507,7 +507,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "stand_still": RewardTermCfg(
       func = him_mdp.stand_still,
-      weight = -1.0,
+      weight = -0.5,
       params = {
         "command_name": "twist",
         "command_threshold": 0.1,
@@ -568,12 +568,9 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         params = {
           "command_name": "twist",
           "linear_threshold": 0.8,
-          "angular_threshold": 0.8,
           "linear_increment": 0.1,
-          "angular_increment": 0.1,
           "lin_vel_x_limit": (-1.0, 1.0),
           "lin_vel_y_limit": (-1.0, 1.0),
-          "ang_vel_z_limit": (-2.0, 2.0),
           "check_interval_s": 10.0,
         },
       ),
