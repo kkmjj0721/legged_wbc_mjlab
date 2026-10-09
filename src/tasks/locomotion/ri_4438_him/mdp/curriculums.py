@@ -197,8 +197,6 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
     if self.scores[0] > self.thresholds[0]:
       self._expand("lin_vel_x", self.increments[0])
       self._expand("lin_vel_y", self.increments[0])
-    if self.scores[1] > self.thresholds[1]:
-      self._expand("ang_vel_z", self.increments[1])
     self.reward_sums.zero_()
     self.episode_count = 0
     self.last_check_step = env.common_step_counter
@@ -282,6 +280,8 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
     return True
 
   def _checked_ranges(self, ranges: dict) -> dict[str, tuple[float, float]]:
+    ranges = dict(ranges)
+    ranges["ang_vel_z"] = self.command_term.cfg.ranges.ang_vel_z
     result = {}
     for name, (limit_low, limit_high) in self.limits.items():
       low, high = (float(value) for value in ranges[name])

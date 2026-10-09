@@ -33,7 +33,7 @@ class Ri4438HimCfg(Ri4438Cfg):
             # Match the initial reward-based curriculum before the first reset.
             lin_vel_x = [-0.5, 0.5]
             lin_vel_y = [-0.5, 0.5]
-            ang_vel_yaw = [-0.5, 0.5]
+            ang_vel_yaw = [-2.0, 2.0]
 
     class env(Ri4438Cfg.env):
         num_envs = 1024

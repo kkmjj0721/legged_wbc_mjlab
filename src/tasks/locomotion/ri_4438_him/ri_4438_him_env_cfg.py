@@ -213,6 +213,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         rel_standing_envs = float(ri_4438_cfg.comaman.rel_standing_envs),
         rel_forward_envs = float(ri_4438_cfg.comaman.rel_forward_envs),
         stair_forward_fraction = 0.1,
+        heading_control_stiffness = 0.5,
         heading_command = ri_4438_cfg.comaman.heading_command,
         debug_vis = True,
         ranges = UniformVelocityCommandCfg.Ranges(
@@ -415,7 +416,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
-      weight = 1.0,
+      weight = 1.5,
       params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "body_orientation_l2": RewardTermCfg(
@@ -576,7 +577,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
           "angular_increment": 0.1,
           "lin_vel_x_limit": (-1.0, 1.0),
           "lin_vel_y_limit": (-1.0, 1.0),
-          "ang_vel_z_limit": (-1.0, 1.0),
+          "ang_vel_z_limit": (-2.0, 2.0),
           "check_interval_s": 10.0,
         },
       ),
