@@ -63,9 +63,6 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   # Observations
   ##
 
-  # Keep this order in sync with ``Ri4438HimCfg`` and the estimator target
-  # slices.  The actor history is represented as six frame-major observations,
-  # each containing the following 47 features.
   actor_terms = {
     "base_ang_vel": ObservationTermCfg(
       func = mdp.builtin_sensor,
@@ -212,7 +209,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         resampling_time_range = tuple(ri_4438_cfg.comaman.resampling_time),
         rel_standing_envs = float(ri_4438_cfg.comaman.rel_standing_envs),
         rel_forward_envs = float(ri_4438_cfg.comaman.rel_forward_envs),
-        stair_forward_fraction = 0.1,
+        stair_forward_fraction = 0.15,
         heading_control_stiffness = 0.5,
         heading_command = ri_4438_cfg.comaman.heading_command,
         debug_vis = True,
@@ -256,8 +253,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       func = mdp.reset_joints_by_offset,
       mode = "reset",
       params = {
-        "position_range": (-0.0, 0.0),
-        "velocity_range": (-0.0, 0.0),
+        **deepcopy(ri_4438_cfg.reset.joint_offset),
         "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       },
     ),
@@ -416,7 +412,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "track_angular_velocity": RewardTermCfg(
       func = him_mdp.track_angular_velocity,
-      weight = 1.5,
+      weight = 1.0,
       params = {"command_name": "twist", "std": math.sqrt(0.25)},
     ),
     "body_orientation_l2": RewardTermCfg(

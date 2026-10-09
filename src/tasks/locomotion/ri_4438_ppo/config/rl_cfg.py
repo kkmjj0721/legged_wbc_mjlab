@@ -30,22 +30,23 @@ def ri_4438_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       obs_normalization = True,
     ),
 
-    algorithm = RslRlPpoAlgorithmCfg(
-      value_loss_coef = 1.0,
-      use_clipped_value_loss = True,
-      clip_param = 0.2,
-      entropy_coef = 0.01,
-      num_learning_epochs = 5,
-      num_mini_batches = 4,
-      learning_rate = 1.0e-3,
-      schedule = "adaptive",
-      gamma = 0.99,
-      lam = 0.95,
-      desired_kl = 0.01,
-      max_grad_norm = 1.0,
+    algorithm=RslRlPpoAlgorithmCfg(
+      value_loss_coef=ri_4438_ppo_cfg.algorithm.value_loss_coef,
+      use_clipped_value_loss=ri_4438_ppo_cfg.algorithm.use_clipped_value_loss,
+      clip_param=ri_4438_ppo_cfg.algorithm.clip_param,
+      entropy_coef=ri_4438_ppo_cfg.algorithm.entropy_coef,
+      num_learning_epochs=ri_4438_ppo_cfg.algorithm.num_learning_epochs,
+      num_mini_batches=ri_4438_ppo_cfg.algorithm.num_mini_batches,
+      learning_rate=ri_4438_ppo_cfg.algorithm.learning_rate,
+      schedule=ri_4438_ppo_cfg.algorithm.schedule,
+      gamma=ri_4438_ppo_cfg.algorithm.gamma,
+      lam=ri_4438_ppo_cfg.algorithm.lam,
+      desired_kl=ri_4438_ppo_cfg.algorithm.desired_kl,
+      max_grad_norm=ri_4438_ppo_cfg.algorithm.max_grad_norm,
     ),
 
     logger = "tensorboard",         # tensorboard or wandb
+    
     experiment_name = ri_4438_ppo_cfg.runner.experiment_name,
     save_interval = int(ri_4438_ppo_cfg.runner.save_interval),
     num_steps_per_env = int(ri_4438_ppo_cfg.runner.num_steps_per_env),

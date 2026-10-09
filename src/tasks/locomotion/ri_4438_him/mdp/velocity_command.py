@@ -332,7 +332,7 @@ class HeadingHoldVelocityCommand(_MjlabUniformVelocityCommand):
     low = min(0.3, high)
     self.vel_command_b[ids, 0] = low + torch.rand(len(ids), device=self.device) * (high - low)
     self.vel_command_b[ids, 1:] = 0
-    # self.is_heading_env[ids] = False
+    self.is_heading_env[ids] = False
     self.is_world_env[ids] = False
     self.is_forward_env[ids] = True
 

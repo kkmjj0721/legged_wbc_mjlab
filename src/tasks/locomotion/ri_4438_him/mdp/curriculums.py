@@ -102,14 +102,7 @@ def commands_vel(
         cfg.ranges.lin_vel_y = stage["lin_vel_y"]
       if "ang_vel_z" in stage and stage["ang_vel_z"] is not None:
         cfg.ranges.ang_vel_z = stage["ang_vel_z"]
-  return {
-    # "lin_vel_x_min": torch.tensor(cfg.ranges.lin_vel_x[0]),
-    # "lin_vel_x_max": torch.tensor(cfg.ranges.lin_vel_x[1]),
-    # "lin_vel_y_min": torch.tensor(cfg.ranges.lin_vel_y[0]),
-    # "lin_vel_y_max": torch.tensor(cfg.ranges.lin_vel_y[1]),
-    # "ang_vel_z_min": torch.tensor(cfg.ranges.ang_vel_z[0]),
-    # "ang_vel_z_max": torch.tensor(cfg.ranges.ang_vel_z[1]),
-  }
+  return {}
 
 
 class RewardBasedVelocityCurriculum(ManagerTermBase):
@@ -211,14 +204,10 @@ class RewardBasedVelocityCurriculum(ManagerTermBase):
     ))
 
   def _metrics(self) -> dict[str, torch.Tensor | float]:
-    result: dict[str, torch.Tensor | float] = {
-      "linear_score": self.scores[0], "angular_score": self.scores[1]
+    return {
+      "linear_score": self.scores[0],
+      "angular_score": self.scores[1],
     }
-    for name in self._range_names:
-      low, high = getattr(self.command_term.cfg.ranges, name)
-      result[f"{name}_min"] = low
-      result[f"{name}_max"] = high
-    return result
 
   def state_dict(self) -> dict:
     return {
