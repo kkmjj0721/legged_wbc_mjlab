@@ -32,7 +32,7 @@ class Ri4438HimCfg(Ri4438Cfg):
         class ranges(Ri4438Cfg.comaman.ranges):
             # Match the initial reward-based curriculum before the first reset.
             lin_vel_x = [-0.5, 0.5]
-            lin_vel_y = [-0.5, 0.5]
+            lin_vel_y = [-1.0, 1.0]
             ang_vel_yaw = [-2.0, 2.0]
 
     class env(Ri4438Cfg.env):

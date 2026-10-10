@@ -560,7 +560,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   def _build_curriculum():
     curriculum = {
       "terrain_levels": CurriculumTermCfg(
-        func = mdp.terrain_levels_vel,
+        func = him_mdp.terrain_levels_vel,
         params = {"command_name": "twist"},
       ),
       "command_vel": CurriculumTermCfg(
@@ -600,7 +600,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     max_merge_distance=3,
   )
 
-  stair_widths = (0.18, 0.20, 0.22, 0.25)
+  stair_widths = (0.17, 0.20, 0.22, 0.25)
   target_steps = 5
 
   for name in ("pyramid_stairs", "pyramid_stairs_inv"):
@@ -615,7 +615,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
       )
       terrain_cfg.sub_terrains[f"{name}_{i}"] = replace(
         base,
-        step_height_range=(0.05, 0.18),
+        step_height_range=(0.05, 0.16),
         step_width=width,
         platform_width=platform_width,
         proportion=base.proportion / len(stair_widths),
