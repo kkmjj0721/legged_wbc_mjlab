@@ -9,8 +9,10 @@ from mjlab.entity import Entity
 from mjlab.managers.manager_base import ManagerTermBase
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 
-from .velocity_command import UniformVelocityCommandCfg
-from mjlab.tasks.velocity.mdp import UniformVelocityCommand
+from mjlab.tasks.velocity.mdp import (
+  UniformVelocityCommand,
+  UniformVelocityCommandCfg,
+)
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -66,10 +68,14 @@ def terrain_levels_vel(
     * time_left.clamp(min=0.0)
   )
 
-  move_up = distance > torch.clamp(
-    commanded_distance * promotion_fraction,
-    max=terrain_generator.size[0] / 2,
+  # 所有地形均按距地形原点的距离判定晋级。
+  terrain_distance = torch.norm(
+      asset.data.root_link_pos_w[env_ids, :2]
+      - env.scene.env_origins[env_ids, :2],
+      dim=1,
   )
+
+  move_up = terrain_distance > terrain_generator.size[0] / 2
   move_up &= commanded_distance >= min_commanded_distance
 
   move_down = distance < commanded_distance * 0.5
@@ -78,6 +84,10 @@ def terrain_levels_vel(
   if env.common_step_counter == 0:
     move_up = torch.zeros_like(move_up)
     move_down = torch.zeros_like(move_down)
+
+  has_episode = env.episode_length_buf[env_ids] > 0
+  move_up &= has_episode
+  move_down &= has_episode
 
   terrain.update_env_origins(env_ids, move_up, move_down)
 

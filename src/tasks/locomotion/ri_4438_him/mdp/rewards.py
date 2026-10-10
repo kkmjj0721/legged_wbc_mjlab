@@ -90,8 +90,15 @@ def body_angular_velocity_penalty(
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
   asset: Entity = env.scene[asset_cfg.name]
-  velocity = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids, :].squeeze(1)
-  return torch.square(velocity[:, :2]).sum(dim=1)
+  velocity_w = asset.data.body_link_ang_vel_w[
+    :, asset_cfg.body_ids, :
+  ].squeeze(1)
+  quat_w = asset.data.body_link_quat_w[
+    :, asset_cfg.body_ids, :
+  ].squeeze(1)
+
+  velocity_b = quat_apply_inverse(quat_w, velocity_w)
+  return torch.square(velocity_b[:, :2]).sum(dim=1)
 
 
 def feet_gait(

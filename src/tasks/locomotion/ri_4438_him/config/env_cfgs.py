@@ -198,10 +198,8 @@ def ri_4438_rough_env_cfg(
     # Effectively infinite episode length.
     cfg.episode_length_s = int(1e9)
     cfg.auto_reset = True
-    cfg.commands["twist"].stair_forward_fraction = 0.0
     cfg.commands["twist"].ranges.lin_vel_x = (-1.0, 1.0)
     cfg.commands["twist"].ranges.lin_vel_y = (-1.0, 1.0)
-    cfg.commands["twist"].ranges.ang_vel_z = (-1.0, 1.0)
 
     cfg.observations["actor"].enable_corruption = False
     for term in cfg.observations["actor"].terms.values():

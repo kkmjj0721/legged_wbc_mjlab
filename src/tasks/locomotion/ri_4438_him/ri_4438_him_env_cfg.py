@@ -26,9 +26,7 @@ from mjlab.scene import SceneCfg
 from mjlab.sensor import GridPatternCfg, ObjRef, RayCastSensorCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab.tasks.velocity import mdp
-from src.tasks.locomotion.ri_4438_him.mdp.velocity_command import (
-  HeadingHoldVelocityCommandCfg as UniformVelocityCommandCfg,
-)
+from src.tasks.locomotion.ri_4438_him.mdp.velocity_command import HeadingHoldVelocityCommandCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.terrains import BoxRandomGridTerrainCfg
 from mjlab.terrains.config import ROUGH_TERRAINS_CFG
@@ -204,16 +202,16 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   ##
   def _build_commands():
     commands: dict[str, CommandTermCfg] = {
-      "twist": UniformVelocityCommandCfg(
+      "twist": HeadingHoldVelocityCommandCfg(
         entity_name = "robot",
         resampling_time_range = tuple(ri_4438_cfg.comaman.resampling_time),
         rel_standing_envs = float(ri_4438_cfg.comaman.rel_standing_envs),
         rel_forward_envs = float(ri_4438_cfg.comaman.rel_forward_envs),
-        stair_forward_fraction = 0.15,
-        heading_control_stiffness = 0.5,
+        rel_heading_envs = float(ri_4438_cfg.comaman.rel_heading_envs),
+        heading_control_stiffness = float(ri_4438_cfg.comaman.heading_control_stiffness),
         heading_command = ri_4438_cfg.comaman.heading_command,
         debug_vis = True,
-        ranges = UniformVelocityCommandCfg.Ranges(
+        ranges = HeadingHoldVelocityCommandCfg.Ranges(
           lin_vel_x=tuple(ri_4438_cfg.comaman.ranges.lin_vel_x),
           lin_vel_y=tuple(ri_4438_cfg.comaman.ranges.lin_vel_y),
           ang_vel_z=tuple(ri_4438_cfg.comaman.ranges.ang_vel_yaw),
@@ -417,7 +415,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "body_orientation_l2": RewardTermCfg(
       func = him_mdp.body_orientation_l2,
-      weight = -0.25,
+      weight = -0.2,
       params={"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "pose": RewardTermCfg(
@@ -443,7 +441,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "body_ang_vel": RewardTermCfg(
       func = him_mdp.body_angular_velocity_penalty,
-      weight = -0.08,  # Override per-robot
+      weight = -0.05,  # Override per-robot
       params = {"asset_cfg": SceneEntityCfg("robot", body_names=())},  # Set per-robot.
     ),
     "angular_momentum": RewardTermCfg(
@@ -466,7 +464,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "foot_gait": RewardTermCfg(
       func = him_mdp.feet_gait,
-      weight = 0.3,
+      weight = 0.5,
       params = {
         "period": 0.6,
         "offset": [0.0, 0.5, 0.5, 0.0],
@@ -601,25 +599,42 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
   )
 
   stair_widths = (0.17, 0.20, 0.22, 0.25)
-  target_steps = 5
+  target_steps = 6             # 总阶数，包含中央平台对应的最后一级
+  spawn_platform_width = 2.5   # 出生平台边长，米
 
   for name in ("pyramid_stairs", "pyramid_stairs_inv"):
     base = terrain_cfg.sub_terrains.pop(name)
 
     for i, width in enumerate(stair_widths):
-      platform_width = (
+      border_width = (
         min(terrain_cfg.size)
-        - 2 * base.border_width
+        - spawn_platform_width
         - 2 * (target_steps - 1) * width
-        - 1e-6  # 避免浮点误差导致 int() 少算一阶
-      )
+      ) / 2
+
+      if border_width < 0:
+        raise ValueError("地形尺寸不足，需要增大尺寸或减小踏面宽度")
+
       terrain_cfg.sub_terrains[f"{name}_{i}"] = replace(
         base,
         step_height_range=(0.05, 0.16),
         step_width=width,
-        platform_width=platform_width,
+        border_width=border_width,
+        platform_width=spawn_platform_width - 1e-6,
         proportion=base.proportion / len(stair_widths),
       )
+
+  flat_fraction = 0.15
+
+  other_weight = sum(
+      cfg.proportion
+      for name, cfg in terrain_cfg.sub_terrains.items()
+      if name != "flat"
+  )
+
+  terrain_cfg.sub_terrains["flat"].proportion = (
+      other_weight * flat_fraction / (1 - flat_fraction)
+  )
 
   return ManagerBasedRlEnvCfg(
     scene = SceneCfg(
