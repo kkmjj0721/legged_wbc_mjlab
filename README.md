@@ -2,7 +2,7 @@
 
 基于 [MjLab](https://github.com/mujocolab/mjlab)、MuJoCo 和 RSL-RL 的足式机器人强化学习项目，主要用于 RI-4438 与 Unitree Go2 四足机器人的速度跟踪、复杂地形运动以及策略的 sim-to-sim 验证。
 
-项目目前包含标准 PPO 和 HIM（History Information Model）两类策略，支持平地/复杂地形训练、课程学习、动力学随机化、多 GPU 训练、检查点推理和 ONNX 策略部署。当前较完整的部署链路是 RI-4438 HIM 的 MuJoCo sim2sim。
+项目目前包含标准 PPO 和 HIM（History Information Model）两类策略，并提供基于 HIM + PPO 的独立 LP-ACRL 任务，用于比较 Uniform、LP 和 ALP 课程采样。支持平地/复杂地形训练、动力学随机化、检查点评价和 ONNX 导出；原 PPO/HIM 任务支持多 GPU 训练，LP-ACRL 当前使用单 GPU。当前较完整的部署链路是 RI-4438 HIM 的 MuJoCo sim2sim。
 
 > 本仓库面向研究与仿真验证。当前部署程序不包含 RI-4438 实机所需的电机、CAN 或 DDS 驱动，请勿直接连接真实机器人。
 
@@ -12,6 +12,7 @@
 - RI-4438、Unitree Go2 机器人模型与任务配置
 - PPO 与带历史编码器/状态估计器的 HIM 策略
 - 平地、楼梯、离散障碍等地形及地形课程
+- RI-4438 HIM LP-ACRL 的地形与速度联合任务采样、固定试验表评价和课程状态恢复
 - 质量、质心、摩擦、执行器增益、控制延迟等随机化
 - 单 GPU、多 GPU 和 CPU 训练入口
 - TensorBoard 训练记录、模型检查点与自动 ONNX 导出
@@ -23,6 +24,8 @@
 | --- | --- | --- | --- |
 | `Ri-4438-HIM-Rough` | RI-4438 | HIM + PPO | 复杂地形 |
 | `Ri-4438-HIM-Flat` | RI-4438 | HIM + PPO | 平地 |
+| `Ri-4438-HIM-LPACRL-Rough` | RI-4438 | HIM + PPO + LP-ACRL | 起伏、上下楼梯；默认 18 个任务 |
+| `Ri-4438-HIM-LPACRL-Flat` | RI-4438 | HIM + PPO + LP-ACRL | 平地；默认 3 个任务 |
 | `Ri-4438-Rough` | RI-4438 | PPO | 复杂地形 |
 | `Ri-4438-Flat` | RI-4438 | PPO | 平地 |
 | `Unitree-Go2-HIM-Rough` | Unitree Go2 | HIM + PPO | 复杂地形 |
@@ -30,10 +33,12 @@
 | `Unitree-Go2-Rough` | Unitree Go2 | PPO | 复杂地形 |
 | `Unitree-Go2-Flat` | Unitree Go2 | PPO | 平地 |
 
+LP-ACRL 注册任务分别使用 `ri_joint_smoke` 和 `ri_flat_smoke` 预设；自定义任务空间使用下文的任务内训练入口。
+
 ## 环境要求
 
 - Ubuntu 22.04（推荐）
-- Python 3.11（仓库当前固定为 `3.11.16`）
+- Python 3.11（`pyproject.toml` 要求 `>=3.11,<3.12`，安装脚本默认使用 `3.11`）
 - NVIDIA GPU（推荐用于训练）
 - NVIDIA 驱动 550 或更高版本（推荐）
 
@@ -115,13 +120,13 @@ uv run python scripts/train.py Ri-4438-HIM-Rough \
 
 命令行参数会覆盖 Python 配置，因此一般不需要为一次实验直接修改源码。复杂地形与平地 HIM 任务保持相同的 critic 观测结构，可以在两者之间加载兼容的检查点。
 
-RI-4438 HIM 训练默认自动复位，并在复位前保存经过运动学刷新后的终止目标，避免重复执行整批碰撞计算和地形射线检测。HIM 的下一步监督只保存 50 维 `estimator` 观测，actor/critic 网络输入保持不变。原训练命令即可使用；用 `--env.auto-reset False` 可切回手动复位路径作对比。性能实测与验证边界见 [性能优化验证](docs/RI4438-HIM性能优化验证.md)。
+RI-4438 HIM 训练默认自动复位，并在复位前保存经过运动学刷新后的终止目标，避免重复执行整批碰撞计算和地形射线检测。HIM 的下一步监督只保存 50 维 `estimator` 观测，actor/critic 网络输入保持不变。原训练命令即可使用；用 `--env.auto-reset False` 可切回手动复位路径作对比。
 
-RI-4438 HIM Rough 使用平地、上楼梯、下楼梯和随机粗糙高度场，基于 mjlab 的 `ROUGH_TERRAINS_CFG` 独立复制后移除坡地和波浪地形。楼梯踏面宽 0.3 m、中央平台宽 3 m，每级台阶高度范围为 0.05–0.15 m；四类地形权重依次为 0.2、0.2、0.2、0.1。求解器使用 `cg`，`njmax=300`。此配置替换了原来的 7 种楼梯和离散障碍，历史性能报告中的耗时不能直接作为当前配置的基准。
+RI-4438 HIM Rough 当前使用平地、正/反金字塔楼梯和随机箱体障碍，基于 mjlab 的 `ROUGH_TERRAINS_CFG` 独立复制后移除坡地、波浪和随机粗糙高度场。楼梯每级高度为 0.05–0.16 m、中央平台约 2.5 m；箱体网格宽 0.8 m、高度为 0.02–0.10 m；平地权重折算为总权重的 15%。地形晋级要求距地形原点超过地形宽度的一半，且目标行进距离至少为 1 m；降级依据实际位移与目标行进距离。默认启用航向命令，纯前进采样关闭航向控制。求解器使用 `cg`，`njmax=300`。具体几何与课程参数以当前任务配置为准。
 
 ### 训练输出
 
-输出默认保存在：
+通过通用 `scripts/train.py` 训练时，输出默认保存在：
 
 ```text
 logs/rsl_rl/<experiment_name>/<timestamp>_<run_name>/
@@ -141,6 +146,8 @@ uv run tensorboard --logdir logs/rsl_rl
 
 ### 选择 best 模型与检查收敛
 
+本节的仿真比较适用于原 RI-4438 HIM/PPO 任务。LP-ACRL 的任务协议和课程评价使用下文的独立评价入口。
+
 完整操作步骤见 [best_model 工具使用](docs/tool使用.md)：包含当前日志的可复制命令、续训用法、并行与种子设置、报告位置和模型回放。
 
 仿真 best 表示本轮第一名，尚不能认定为唯一最优。相同输出目录再次评测时，HTML 会核对上次的模型、测试条件和逐回合成绩，报告排名是否变化；固定种子不能保证 GPU 物理仿真逐位一致。复测方法见上述文档的“常见问题”。
@@ -155,23 +162,23 @@ uv run tensorboard --logdir logs/rsl_rl
 uv sync --extra analysis
 
 # 生成分析报告，不复制或导出模型
-uv run python scripts/best_model.py --run /path/to/logs/rsl_rl/ri_4438_him/<run>
+uv run python scripts/best_model.py --run '/path/to/logs/rsl_rl/ri_4438_him/<run>'
 
 # 最新 run 自动追溯历史，统一仿真比较全部模型
-uv run --extra analysis python scripts/best_model.py --run /path/to/<latest_run> --evaluate --eval-parallel 8
+uv run --extra analysis python scripts/best_model.py --run '/path/to/<latest_run>' --evaluate --eval-parallel 8
 
 # 直接传实验总目录；以后新增续训 run，无需修改路径
 uv run --extra analysis python scripts/best_model.py \
   --run '/home/sunteng/Downloads/legged_wbc_mjlab/logs/rsl_rl/ri_4438_him' --evaluate --eval-parallel 8
 
 # 旧日志仅保存了正则来源时，按原始训练到最新续训的顺序指定
-uv run --extra analysis python scripts/best_model.py --runs /path/to/<original_run> /path/to/<resumed_run> --evaluate
+uv run --extra analysis python scripts/best_model.py --runs '/path/to/<original_run>' '/path/to/<resumed_run>' --evaluate
 
 # 复制当前阶段日志评分候选，并从该 checkpoint 重新导出 ONNX（CPU）
-uv run python scripts/best_model.py --run /path/to/<run> --write-best --export-onnx
+uv run python scripts/best_model.py --run '/path/to/<run>' --write-best --export-onnx
 
 # 调整统计窗口，并添加明确的任务目标；不指定目标时最多判为平台期
-uv run python scripts/best_model.py --run /path/to/<run> \
+uv run python scripts/best_model.py --run '/path/to/<run>' \
   --window 100 --min-samples 50 --top-k 3 \
   --goal 'survival_ratio>=0.95' \
   --goal 'track_linear_velocity_index>=0.7' \
@@ -259,20 +266,20 @@ best/
 
 ```bash
 uv run --extra analysis python scripts/best_model.py \
-  --run /path/to/logs/rsl_rl/ri_4438_him/<run> --evaluate
+  --run '/path/to/logs/rsl_rl/ri_4438_him/<run>' --evaluate
 
 # 指定要比较的模型编号；降低并行环境数可以节省显存
 uv run --extra analysis python scripts/best_model.py \
-  --run /path/to/<run> --evaluate --eval-checkpoints 500 700 900 \
+  --run '/path/to/<run>' --evaluate --eval-checkpoints 500 700 900 \
   --eval-num-envs 12 --eval-seeds 0 1 2 --eval-duration 12
 
 # 默认已评测整条续训链的全部有效 checkpoint；也可显式指定 8 个模型并行
 uv run --extra analysis python scripts/best_model.py \
-  --run /path/to/<run> --evaluate --eval-parallel 8
+  --run '/path/to/<run>' --evaluate --eval-parallel 8
 
 # 全部模型、3 组种子；上下楼梯均包含固定的 5、10、15 cm 台阶
 uv run --extra analysis python scripts/best_model.py \
-  --run /path/to/<run> --evaluate --eval-seeds 0 1 2 \
+  --run '/path/to/<run>' --evaluate --eval-seeds 0 1 2 \
   --eval-terrains flat rough stairs_up stairs_down
 ```
 
@@ -359,17 +366,132 @@ HTML / Markdown 包含分高度的上下楼梯通过率表，场景筛选、稳�
 
 ```bash
 uv run python scripts/play.py Ri-4438-HIM-Rough \
-  --checkpoint-file /path/to/<run>/best/model_best_eval.pt --num-envs 1
+  --checkpoint-file '/path/to/<run>/best/model_best_eval.pt' --num-envs 1
 ```
 
 **平台期**指最近几个训练窗口的主要指标变化很小。它可能意味着学得稳定，也可能意味着卡住，
 因此报告把训练趋势和实际仿真表现分开展示。课程还在升级、刚续训样本不足时，不会宣布最终收敛。
 
-验证工具：
+查看分析工具的完整参数：
 
 ```bash
-uv run --extra analysis python -m unittest discover -s tests -v
+uv run --extra analysis python scripts/best_model.py --help
 ```
+
+## HIM LP-ACRL
+
+LP-ACRL 在每次复位时联合采样地形与速度任务，任务和命令在整回合内保持固定。`lp` 使用相邻两次全任务评价的平均回报差，并保留负号；`alp` 使用差分绝对值；`uniform` 均匀采样。默认 softmax 温度为 1、均匀混合比例为 0。训练开始前执行第零次评价，之后默认每 50 次 PPO 更新评价一次，每个任务使用 8 个固定试验。
+
+任务的配置、MDP、runner 和评价代码位于 `src/tasks/locomotion/ri_4438_him_lpacrl/`，共享 mjlab 基础框架、RI-4438 机器人资产及 RSL-RL HIM/PPO。默认参数集中在 [ri_4438_him_lpacrl_config.py](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。
+
+### 预设与配置
+
+| 预设 | 默认任务数 | 任务空间 |
+| --- | --- | --- |
+| `ri_flat_smoke` | 3 | 平地 × 3 个纵向速度绝对值箱；横移、转向为零 |
+| `ri_joint_smoke` | 18 | 起伏、上楼梯、下楼梯各 2 个等级 × 3 个纵向速度箱 |
+| `paper_flat_velocity` | 8 | 平地 × 8 个纵向速度箱，绝对值范围 0–4 m/s |
+| `paper_terrain_types` | 6 | 平地、起伏、上下楼梯、上下坡各一档；速度在任务内连续采样 |
+| `paper_joint_space` | 600 | 5 个纵向速度箱 × 6 个转向速度箱 × 5 类地形 × 4 个等级 |
+| `custom` | 编译后确定 | YAML 定义命令轴、地形等级、副本和组合筛选 |
+
+配置优先级为：默认值 < `--preset` < `--config YAML` < `--set 路径=YAML值`。列表、`task_space.terrains` 和单个命令轴整体替换；改变轴模式时传入完整轴配置，例如 `--set 'task_space.command_axes.vx={mode: fixed, value: 0.5}'`。任务数量由编译后的有效任务表推导，几何副本数和并行环境数独立配置。
+
+`paper_*` 预设用于对齐论文的任务定义，机器人、HIM 网络、奖励和具体几何仍采用本项目配置。600 任务预设默认每次评价最多约 486.4 万个环境槽步，约为每阶段训练槽步的 95%；选择预设前可用 `--describe` 查看评价预算。
+
+### 预检与训练
+
+以下命令均从仓库根目录执行。纯配置预检不创建仿真环境，也不分配 GPU tensor：
+
+```bash
+# 默认联合任务预检：18 个任务
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
+  --preset ri_joint_smoke --describe
+
+# 自定义示例预检：42 个任务、14 个几何实例
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
+  --preset custom \
+  --config src/tasks/locomotion/ri_4438_him_lpacrl/examples/custom_42.yaml \
+  --describe
+
+# GPU 接线短跑：2 次更新、0.12 秒回合，仅验证工程链路
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
+  --preset ri_joint_smoke \
+  --config src/tasks/locomotion/ri_4438_him_lpacrl/examples/smoke.yaml
+
+# 正式训练：LP 采样，种子 0
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
+  --preset ri_joint_smoke \
+  --set curriculum.method=lp \
+  --set training.seed=0
+```
+
+默认使用 `cuda:0`、1024 个训练环境、每次更新 100 步、20000 次更新，每 200 次更新保存模型；训练和评价回合时限均为 20 秒。可通过 `--device cuda:1`、`--num-envs 512`、`--max-iterations 1000` 和 `--output-dir PATH` 调整运行参数。当前只支持单进程、单 GPU。
+
+比较课程时，分别运行 `uniform`、`lp`、`alp`，每种方法都使用 0、1、2 三个种子，保持任务表、训练预算、评价调度、网络、随机化和奖励一致。短跑结果只验证链路，不能据此判断收敛或课程优劣。
+
+通用 `scripts/train.py` 可以加载两个已注册 LP-ACRL 任务的默认预设；修改任务空间、奖励、网络或评价协议时，使用上述任务内入口，在创建环境前完成配置编译。
+
+### 恢复与独立评价
+
+```bash
+# 恢复课程与优化器状态；额外执行 1000 次 PPO 更新
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
+  --config '/path/to/<run>/experiment.yaml' \
+  --resume '/path/to/<run>/model_200.pt' \
+  --max-iterations 1000
+
+# 从兼容的 HIM 权重开始新实验，重新建立课程历史
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
+  --preset ri_joint_smoke \
+  --warm-start '/path/to/<run>/model_200.pt'
+
+# 按 checkpoint 保存的任务协议独立评价
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.evaluation.evaluate \
+  --checkpoint '/path/to/<run>/model_200.pt' \
+  --output-dir '/path/to/<report>' \
+  --num-envs 128
+```
+
+`--resume` 校验任务、几何、奖励、课程、HIM 和评价协议指纹；允许改变训练/评价并行环境数。`--max-iterations` 表示本次额外更新次数。旧 HIM 检查点或更换任务集合时使用 `--warm-start`，清空课程历史并重新执行第零次评价，权重仍须满足 HIM 接口。
+
+独立评价默认读取 checkpoint 内保存的任务与试验协议；`--config YAML` 可显式覆盖，报告会标记为外部协议。评价使用名义动力学、确定性策略和固定试验表，输出累计回报、速度 RMSE、失败率、边界率和时限率。有限地形在所属地块边界截断；当前粗糙地形报告不计算论文的 EPTE-SP 指标。
+
+### 输出与检查
+
+任务内训练入口默认将结果写入：
+
+```text
+src/tasks/locomotion/ri_4438_him_lpacrl/outputs/<timestamp>_<method>_seed<seed>/
+├── experiment.yaml         # 合并后的实验配置，用于恢复训练
+├── compiled.json           # 任务表、几何映射、试验表、指纹和评价预算
+├── agent.yaml              # HIM/PPO 配置
+├── curriculum.jsonl        # 各次评价的回报、LP、任务概率和统计
+├── events.out.tfevents.*    # TensorBoard 训练与 LPACRL 指标
+├── model_<iteration>.pt    # 模型、优化器及课程状态
+├── policy.onnx             # 每次保存模型时更新
+└── evaluations/
+    └── update_<n>/
+        ├── evaluation.json # 逐试验/逐任务结果及协议
+        └── per_task.csv    # 逐任务汇总
+```
+
+查看日志与运行任务测试：
+
+```bash
+uv run tensorboard --logdir src/tasks/locomotion/ri_4438_him_lpacrl/outputs
+
+# 配置、任务表、课程状态与评价逻辑测试
+PYTHONDONTWRITEBYTECODE=1 uv run python -m unittest discover \
+  -s src/tasks/locomotion/ri_4438_him_lpacrl/tests -v
+
+# 显式启用 GPU 仿真测试
+LPACRL_RUN_SIM_TESTS=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 \
+  uv run python -m unittest discover \
+  -s src/tasks/locomotion/ri_4438_him_lpacrl/tests -v
+```
+
+更多配置语义和运行约定见 [LP-ACRL 使用说明](src/tasks/locomotion/ri_4438_him_lpacrl/USAGE.txt)；设计背景见 [实现与复现方案](docs/RI-4438-HIM-LPACRL实现与复现方案.md)。
 
 ## 策略回放
 
@@ -377,7 +499,7 @@ uv run --extra analysis python -m unittest discover -s tests -v
 
 ```bash
 uv run python scripts/play.py Ri-4438-HIM-Rough \
-  --checkpoint-file logs/rsl_rl/ri_4438_him/<run>/model_<iteration>.pt \
+  --checkpoint-file 'logs/rsl_rl/ri_4438_him/<run>/model_<iteration>.pt' \
   --num-envs 1 \
   --viewer native
 ```
@@ -419,7 +541,7 @@ bash setup.sh --extra urdf-tools
 | 参数 | 说明 |
 | --- | --- |
 | `MODEL.urdf` | 待检查的 URDF。默认只读检查，不写回输入文件。 |
-| `--profile generic|go2|ri4438` | 选择规则集；默认 `generic`。`go2` 和 `ri4438` 会对四足腿部使用 hip `+X`、thigh/calf `+Y` 的关节轴约定，机械臂不会套用四足规则。 |
+| `--profile generic\|go2\|ri4438` | 选择规则集；默认 `generic`。`go2` 和 `ri4438` 会对四足腿部使用 hip `+X`、thigh/calf `+Y` 的关节轴约定，机械臂不会套用四足规则。 |
 | `--mesh-root PATH` | 补充网格搜索根目录，用于解析相对路径、绝对路径和 `package://` 资源。可重复传入。 |
 | `--rules FILE.json` | 按关节名覆盖轴、限位和 mimic；`axis` 在工具规范化后的 joint frame 中表达。非共线改轴必须同时给出新的限位；相关 mimic 需要显式覆盖。 |
 | `--report report.json` | 写出 JSON 报告，包含 `issues`、`changes`、`joint_coordinate_map` 和 `validation`。问题项记录等级、对象、原值/候选值和待确认状态；变化项记录 `before`、`after`、`kind` 和 `object`。 |
@@ -466,7 +588,7 @@ bash setup.sh --extra sim2sim
 
 uv run python deploy/main.py \
   --task ri_4438_him \
-  --policy logs/rsl_rl/ri_4438_him/<run>/policy.onnx
+  --policy 'logs/rsl_rl/ri_4438_him/<run>/policy.onnx'
 ```
 
 不加载 ONNX 的后端与状态机冒烟测试：
@@ -494,6 +616,10 @@ uv run python deploy/main.py \
 | `src/tasks/locomotion/ri_4438_him/mdp/` | 自定义观测、奖励、课程和速度命令 |
 | `src/config/ri_4438/ri_4438_config.py` | RI-4438 控制增益、初始状态与通用 PPO 参数 |
 | `src/config/ri_4438/ri_4438_him_config.py` | HIM 历史维度、网络结构、估计器和训练周期 |
+| `src/config/ri_4438/ri_4438_him_lpacrl_config.py` | 独立 LP-ACRL 的机器人、HIM、任务空间、课程及训练/评价默认值 |
+| `src/tasks/locomotion/ri_4438_him_lpacrl/config/experiment_cfg.py` | LP-ACRL 配置合并、校验、任务/几何/试验表编译与指纹 |
+| `src/tasks/locomotion/ri_4438_him_lpacrl/rl/train.py` | LP-ACRL 预检、训练、恢复和 warm-start 入口 |
+| `src/tasks/locomotion/ri_4438_him_lpacrl/evaluation/evaluate.py` | 按保存协议或显式外部协议评价 LP-ACRL 检查点 |
 | `src/assets/robots/ri_4438/` | RI-4438 MuJoCo 模型、网格与资产配置 |
 | `rsl_rl/` | 项目内置的 RSL-RL 与 HIM 扩展 |
 | `deploy/task/ri_4438_him/` | RI-4438 HIM sim2sim 配置、入口与测试 |
@@ -509,9 +635,17 @@ legged_wbc_mjlab/
 │   ├── assets/              # 机器人 XML、网格与资产配置
 │   ├── config/              # 机器人和算法公共参数
 │   └── tasks/               # locomotion / WBC 任务实现
+│       └── locomotion/ri_4438_him_lpacrl/
+│           ├── config/      # 预设、配置编译和环境/算法配置
+│           ├── mdp/         # 任务表、联合采样、命令、地形与奖励
+│           ├── rl/          # 任务内训练入口与 LP-ACRL runner
+│           ├── evaluation/  # 固定试验表评价
+│           ├── examples/    # 42 任务自定义配置与短跑配置
+│           ├── tests/       # 单元测试与可选 GPU 测试
+│           └── outputs/     # 任务内训练输出（运行后生成）
 ├── rsl_rl/                  # 本地 RSL-RL 与 HIM 实现
 ├── deploy/                  # sim2sim 部署框架与任务配置
-├── tools/                   # 安装、模型和机器人描述处理工具
+├── tools/                   # 安装、模型分析、楼梯诊断和 URDF 工具
 ├── docs/                    # 安装说明、方案与论文阅读笔记
 ├── logs/                    # 训练输出（运行后生成）
 ├── pyproject.toml
@@ -522,7 +656,7 @@ legged_wbc_mjlab/
 
 ### 显存不足
 
-优先降低 `--env.scene.num-envs`。视频录制和可视化也会占用额外显存，训练吞吐测试时建议关闭。
+通用训练入口优先降低 `--env.scene.num-envs`；LP-ACRL 任务内入口使用 `--num-envs`，并可用 `--set evaluation.num_envs=64` 降低评价批量。视频录制和可视化也会占用额外显存，训练吞吐测试时建议关闭。
 
 ### 找不到 `rsl_rl` 或其他依赖
 
@@ -539,6 +673,9 @@ legged_wbc_mjlab/
 ## 更多文档
 
 - [安装配置文档](docs/setup.md)
+- [best_model 工具使用](docs/tool使用.md)
+- [RI-4438 HIM LP-ACRL 使用说明](src/tasks/locomotion/ri_4438_him_lpacrl/USAGE.txt)
+- [RI-4438 HIM LP-ACRL 实现与复现方案](docs/RI-4438-HIM-LPACRL实现与复现方案.md)
+- [LP-ACRL 阅读笔记](docs/LP-ACRL阅读笔记.md)
 - [RI-4438 HIM sim2sim](deploy/task/ri_4438_him/README.md)
-- [RI-4438 HIM 二阶段蒸馏实施方案](docs/RI4438-HIM二阶段蒸馏实施方案.md)
 - [足臂全身控制项目分析与迁移方案](docs/足臂全身控制项目分析与迁移方案.md)
