@@ -8,8 +8,6 @@
 LP 评估参数是本项目的工程设置，不代表论文未公开的超参数。
 """
 
-import math
-
 # HIM 数值边界；独立保留，避免其他任务调整后影响本任务。
 ACTION_CLIP = 10.0
 OBSERVATION_CLIP = 100.0
@@ -129,7 +127,8 @@ class Ri4438HimLpacrlCfg:
         # 每个任务的几何难度固定；LP 只改变任务被采样的概率。
         # rough 按高度上限分级，每张图采样 [0, height_max_m]；这是项目定义。
         # 楼梯保留 RI-4438 的 0.05–0.16 m 范围，论文使用 0.05–0.20 m。
-        # 坡角按 0°/0.10°/0.20°/0.30° 分级；生成器使用 tan(坡角) 作为梯度。
+        # gradient = 高差 / 水平距离，不是角度：0/0.10/0.20/0.30
+        # 对应约 0°/5.71°/11.31°/16.70°；盲走起步暂不使用论文上限 0.40。
         # 两类坡地的 l0 都是平地，保留各自任务标签；不另加 flat 地形类别。
         levels = {
             "random_rough": {
@@ -152,15 +151,15 @@ class Ri4438HimLpacrlCfg:
             },
             "slope_outward_up": {
                 "l0": {"gradient": 0.0},
-                "l1": {"gradient": math.tan(math.radians(0.10))},
-                "l2": {"gradient": math.tan(math.radians(0.20))},
-                "l3": {"gradient": math.tan(math.radians(0.30))},
+                "l1": {"gradient": 0.10},
+                "l2": {"gradient": 0.20},
+                "l3": {"gradient": 0.30},
             },
             "slope_outward_down": {
                 "l0": {"gradient": 0.0},
-                "l1": {"gradient": math.tan(math.radians(0.10))},
-                "l2": {"gradient": math.tan(math.radians(0.20))},
-                "l3": {"gradient": math.tan(math.radians(0.30))},
+                "l1": {"gradient": 0.10},
+                "l2": {"gradient": 0.20},
+                "l3": {"gradient": 0.30},
             },
         }
         # 地形类别的基础几何参数，levels 中的字段覆盖基础参数；长度单位为 m。
@@ -182,11 +181,11 @@ class Ri4438HimLpacrlCfg:
                 "holes": False,
             },
             "slope": {
-                "gradient": math.tan(math.radians(0.20)),  # 默认坡角 0.20°。
+                "gradient": 0.20,  # 高差 / 水平距离，对应约 11.31°。
                 "platform_width": 2.0,
                 "border_width": 0.25,
                 "horizontal_scale": 0.1,
-                "vertical_scale": 0.0001,  # 0.1 mm 量化，保留小坡角的高度差。
+                "vertical_scale": 0.001,  # 1 mm 高度量化。
             },
         }
         replicas = 1  # 每档地形的副本数；地形图的列对应等级，行对应副本。
@@ -200,17 +199,24 @@ class Ri4438HimLpacrlCfg:
 
     class curriculum:
         method = "lp"  # lp：有符号进步；alp：进步绝对值；uniform：均匀采样。
-        temperature = 1.0  # LP softmax 温度；越小越集中。
-        uniform_mix = 0.0  # 混入均匀分布的比例，范围 [0, 1)。
+        # 总回合回报单位；根据旧运行至 update 1300 的 LP 回放选取的起点，
+        # 不是论文参数，也不是概率上限。改奖励尺度后需要重新标定。
+        temperature = 25.0
+        uniform_mix = 0.15  # 保留探索；复现纯 LP 时设 0，uniform 方法也须设 0。
 
     class evaluation:
-        protocol_version = 2  # 固定时长；出界重置同一任务继续评估，物理失败结束。
+        protocol_version = 3  # 保留 v2 时长语义，增加奖励分项、EPTE-SP 和配对诊断。
         interval_updates = 50  # 按 PPO 更新次数触发，不是 episode 数。
         trials_per_task = 8  # 每个任务固定试验数，与并行环境数独立。
         num_envs = 512  # 600 × 8 = 4800 次试验，分 10 批评估；128 环境需 38 批。
         horizon_s = 20.0
         seed = 314159
         max_consecutive_failures = 3
+        # 变指令/零指令下的项目约定：逐步 |误差| / max(|指令|, floor)，
+        # 对存活段求均值后截到 [0, 1]；再按论文公式补足失败后的最坏误差。
+        relative_error_floors = (0.1, 0.1, 0.1)  # vx/vy: m/s；wz: rad/s。
+        success_alive_fraction = 0.9  # 严格大于；1000 步试验对应 >900 存活步。
+        success_tracking_error = 0.3  # vx、wz 的 EPTE-SP 均须严格小于此值。
 
 
 class Ri4438HimLpacrlCfgPPO:

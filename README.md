@@ -380,118 +380,50 @@ uv run --extra analysis python scripts/best_model.py --help
 
 ## HIM LP-ACRL
 
-LP-ACRL 在每次复位时联合采样地形与速度任务，任务和命令在整回合内保持固定。`lp` 使用相邻两次全任务评价的平均回报差，并保留负号；`alp` 使用差分绝对值；`uniform` 均匀采样。默认 softmax 温度为 1、均匀混合比例为 0。训练开始前执行第零次评价，之后默认每 50 次 PPO 更新评价一次，每个任务使用 8 个固定试验。
+LP-ACRL 在复位时联合采样地形与速度任务。任务在回合内固定，命令每 2 秒在同一分箱内重采样。HIM actor 保持盲走：47 维单帧观测、6 帧历史；地形高度只进入 critic，不进入 actor 或估计器目标。
 
-任务的配置、MDP、runner 和评价代码位于 `src/tasks/locomotion/ri_4438_him_lpacrl/`，共享 mjlab 基础框架、RI-4438 机器人资产及 RSL-RL HIM/PPO。默认参数集中在 [ri_4438_him_lpacrl_config.py](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。
+默认参数集中在 [ri_4438_him_lpacrl_config.py](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。Rough 为 600 个任务：5 个纵向速度绝对值箱 × 6 个转向速度绝对值箱 × 5 类地形 × 4 档。纵向速度在 ±1 m/s，转向速度在 ±1 rad/s，横向速度在 ±0.5 m/s 内连续采样。上下坡直接使用无量纲坡度比 `gradient = 高差 / 水平距离`：`0/0.10/0.20/0.30`，对应约 `0°/5.71°/11.31°/16.70°`，高度量化为 1 mm。保留平地起始档，未直接采用论文最高梯度 0.40。楼梯仍为 `0.05/0.08/0.12/0.16 m`。
 
-### 预设与配置
+`lp` 使用相邻全任务评估的平均总回报差，保留负号；`alp` 使用差分绝对值；`uniform` 均匀采样。默认温度为 **25（总回合回报单位）**，均匀混合比例为 **0.15**。这两个值是根据本项目历史 LP 回放选取的工程起点，不是论文超参数，不保证采样概率上限或新训练性能。纯 LP 对照将 `uniform_mix` 设为 0；`uniform` 方法也须将它设为 0。没有加入概率硬上限或自适应温度。
 
-| 预设 | 默认任务数 | 任务空间 |
-| --- | --- | --- |
-| `ri_flat_smoke` | 3 | 平地 × 3 个纵向速度绝对值箱；横移、转向为零 |
-| `ri_joint_smoke` | 18 | 起伏、上楼梯、下楼梯各 2 个等级 × 3 个纵向速度箱 |
-| `paper_flat_velocity` | 8 | 平地 × 8 个纵向速度箱，绝对值范围 0–4 m/s |
-| `paper_terrain_types` | 6 | 平地、起伏、上下楼梯、上下坡各一档；速度在任务内连续采样 |
-| `paper_joint_space` | 600 | 5 个纵向速度箱 × 6 个转向速度箱 × 5 类地形 × 4 个等级 |
-| `custom` | 编译后确定 | YAML 定义命令轴、地形等级、副本和组合筛选 |
+### 训练与恢复
 
-配置优先级为：默认值 < `--preset` < `--config YAML` < `--set 路径=YAML值`。列表、`task_space.terrains` 和单个命令轴整体替换；改变轴模式时传入完整轴配置，例如 `--set 'task_space.command_axes.vx={mode: fixed, value: 0.5}'`。任务数量由编译后的有效任务表推导，几何副本数和并行环境数独立配置。
-
-`paper_*` 预设用于对齐论文的任务定义，机器人、HIM 网络、奖励和具体几何仍采用本项目配置。600 任务预设默认每次评价最多约 486.4 万个环境槽步，约为每阶段训练槽步的 95%；选择预设前可用 `--describe` 查看评价预算。
-
-### 预检与训练
-
-以下命令均从仓库根目录执行。纯配置预检不创建仿真环境，也不分配 GPU tensor：
+使用公共入口；旧版文档中的任务内 `rl.train`、预设/YAML 入口和独立评价命令已不适用于当前代码。
 
 ```bash
-# 默认联合任务预检：18 个任务
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
-  --preset ri_joint_smoke --describe
+# 新实验：修改中央配置后启动
+uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough
 
-# 自定义示例预检：42 个任务、14 个几何实例
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
-  --preset custom \
-  --config src/tasks/locomotion/ri_4438_him_lpacrl/examples/custom_42.yaml \
-  --describe
+# 使用旧的兼容 HIM 权重，在新坡度和评价协议下开始新课程
+uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough \
+  --warm-start '/path/to/old_run/model_1200.pt'
 
-# GPU 接线短跑：2 次更新、0.12 秒回合，仅验证工程链路
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
-  --preset ri_joint_smoke \
-  --config src/tasks/locomotion/ri_4438_him_lpacrl/examples/smoke.yaml
+# 同一任务、几何、奖励和评价协议下完整续训
+uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough \
+  --agent.resume True \
+  --agent.load-run '<run_directory_name>' \
+  --agent.load-checkpoint 'model_200.pt' \
+  --agent.max-iterations 1000
 
-# 正式训练：LP 采样，种子 0
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
-  --preset ri_joint_smoke \
-  --set curriculum.method=lp \
-  --set training.seed=0
+# CPU 回归测试，不启动训练
+PYTHONDONTWRITEBYTECODE=1 uv run python -m unittest tools.test_ri4438_lpacrl -v
 ```
 
-默认使用 `cuda:0`、1024 个训练环境、每次更新 100 步、20000 次更新，每 200 次更新保存模型；训练和评价回合时限均为 20 秒。可通过 `--device cuda:1`、`--num-envs 512`、`--max-iterations 1000` 和 `--output-dir PATH` 调整运行参数。当前只支持单进程、单 GPU。
+默认 1024 个训练环境，每次 PPO 更新 100 步，每 200 次更新保存；目前只支持单进程、单 GPU。`--agent.max-iterations` 是本次额外更新次数。输出位于 `logs/rsl_rl/ri_4438_him_lpacrl/<timestamp>/`。
 
-比较课程时，分别运行 `uniform`、`lp`、`alp`，每种方法都使用 0、1、2 三个种子，保持任务表、训练预算、评价调度、网络、随机化和奖励一致。短跑结果只验证链路，不能据此判断收敛或课程优劣。
+`--warm-start` 与 `--agent.resume True` 互斥。Warm-start 加载兼容的 actor、critic、HIM 估计器及其观测归一化状态，清空优化器和 LP 历史，从 update 0 重新评估；权重来源及哈希记在 `params/warm_start.yaml`。它是新实验，训练曲线不会自动接到旧实验上。完整续训会严格校验指纹；旧坡度、旧评价协议或旧课程状态版本须使用 warm-start。
 
-通用 `scripts/train.py` 可以加载两个已注册 LP-ACRL 任务的默认预设；修改任务空间、奖励、网络或评价协议时，使用上述任务内入口，在创建环境前完成配置编译。
+### 评价与诊断
 
-### 恢复与独立评价
+训练开始前执行第零次评价，之后每 50 次 PPO 更新执行一次。每个任务 8 个固定试验，Rough 共 4800 次；512 个评价环境分十批执行。评价策略冻结，使用名义动力学。协议 v3 保留固定 20 秒预算：出界重置同一任务、保留命令时钟并继续累计，物理失败结束试验。指标使用重置前状态。
 
-```bash
-# 恢复课程与优化器状态；额外执行 1000 次 PPO 更新
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
-  --config '/path/to/<run>/experiment.yaml' \
-  --resume '/path/to/<run>/model_200.pt' \
-  --max-iterations 1000
+`evaluations/update_<n>/evaluation.json` 保存逐试验结果、按地形汇总及协议；`per_task.csv` 保存逐任务指标。`curriculum.jsonl` 与 TensorBoard 的 `LPACRL/*` 保存课程状态和汇总。
 
-# 从兼容的 HIM 权重开始新实验，重新建立课程历史
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.train \
-  --preset ri_joint_smoke \
-  --warm-start '/path/to/<run>/model_200.pt'
-
-# 按 checkpoint 保存的任务协议独立评价
-uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.evaluation.evaluate \
-  --checkpoint '/path/to/<run>/model_200.pt' \
-  --output-dir '/path/to/<report>' \
-  --num-envs 128
-```
-
-`--resume` 校验任务、几何、奖励、课程、HIM 和评价协议指纹；允许改变训练/评价并行环境数。`--max-iterations` 表示本次额外更新次数。旧 HIM 检查点或更换任务集合时使用 `--warm-start`，清空课程历史并重新执行第零次评价，权重仍须满足 HIM 接口。
-
-独立评价默认读取 checkpoint 内保存的任务与试验协议；`--config YAML` 可显式覆盖，报告会标记为外部协议。评价使用名义动力学、确定性策略和固定试验表，输出累计回报、速度 RMSE、失败率、边界率和时限率。有限地形在所属地块边界截断；当前粗糙地形报告不计算论文的 EPTE-SP 指标。
-
-### 输出与检查
-
-任务内训练入口默认将结果写入：
-
-```text
-src/tasks/locomotion/ri_4438_him_lpacrl/outputs/<timestamp>_<method>_seed<seed>/
-├── experiment.yaml         # 合并后的实验配置，用于恢复训练
-├── compiled.json           # 任务表、几何映射、试验表、指纹和评价预算
-├── agent.yaml              # HIM/PPO 配置
-├── curriculum.jsonl        # 各次评价的回报、LP、任务概率和统计
-├── events.out.tfevents.*    # TensorBoard 训练与 LPACRL 指标
-├── model_<iteration>.pt    # 模型、优化器及课程状态
-├── policy.onnx             # 每次保存模型时更新
-└── evaluations/
-    └── update_<n>/
-        ├── evaluation.json # 逐试验/逐任务结果及协议
-        └── per_task.csv    # 逐任务汇总
-```
-
-查看日志与运行任务测试：
-
-```bash
-uv run tensorboard --logdir src/tasks/locomotion/ri_4438_him_lpacrl/outputs
-
-# 配置、任务表、课程状态与评价逻辑测试
-PYTHONDONTWRITEBYTECODE=1 uv run python -m unittest discover \
-  -s src/tasks/locomotion/ri_4438_him_lpacrl/tests -v
-
-# 显式启用 GPU 仿真测试
-LPACRL_RUN_SIM_TESTS=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 \
-  uv run python -m unittest discover \
-  -s src/tasks/locomotion/ri_4438_him_lpacrl/tests -v
-```
-
-更多配置语义和运行约定见 [LP-ACRL 使用说明](src/tasks/locomotion/ri_4438_him_lpacrl/USAGE.txt)；设计背景见 [实现与复现方案](docs/RI-4438-HIM-LPACRL实现与复现方案.md)。
+- **总回报及奖励分项**：分项包含权重和与总回报相同的 dt 缩放，跨出界重置继续累计；分项之和须等于总回报。PPO 奖励及其权重未改变，课程仍使用总回报差。
+- **EPTE-SP**：采用论文的稳定性聚合 `(epsilon * k + K - k) / K`。本项目对变指令的误差约定为：逐步计算 `abs(actual-command)/max(abs(command), floor)`，对未发生物理失败的步求均值后截到 `[0,1]`。三个轴的默认 floor 均为 0.1，单位分别为 m/s、m/s、rad/s；物理失败当步不计入存活段，正常完成 K 步没有稳定性惩罚。这个近零指令约定是项目设置，不能宣称与论文实验完全等价。
+- **成功率**：逐试验存活步数严格大于 `0.9*K`，且 vx、wz 的 EPTE-SP 都严格小于 0.3；按任务平均，再做宏平均。它不单独证明穿越了楼梯，应结合行走距离、台阶接触和停滞时长。
+- **配对 LP 诊断**：按 `(task_id, trial_id)` 对齐相邻评价，记录 LP 标准误、最大单试验变化的绝对贡献占比、移除该试验后的 LP。第一阶段没有配对基线，单试验配置无法估计标准误。标准误只描述固定试验的波动，不代表泛化置信度，也不改变采样分数。配对基线随检查点保存。
+- **采样分布**：记录概率极值、归一化熵、有效任务数 `1/sum(p²)`、LP 范围和温度，便于识别过度集中。
 
 ## 策略回放
 
@@ -617,9 +549,9 @@ uv run python deploy/main.py \
 | `src/config/ri_4438/ri_4438_config.py` | RI-4438 控制增益、初始状态与通用 PPO 参数 |
 | `src/config/ri_4438/ri_4438_him_config.py` | HIM 历史维度、网络结构、估计器和训练周期 |
 | `src/config/ri_4438/ri_4438_him_lpacrl_config.py` | 独立 LP-ACRL 的机器人、HIM、任务空间、课程及训练/评价默认值 |
-| `src/tasks/locomotion/ri_4438_him_lpacrl/config/experiment_cfg.py` | LP-ACRL 配置合并、校验、任务/几何/试验表编译与指纹 |
-| `src/tasks/locomotion/ri_4438_him_lpacrl/rl/train.py` | LP-ACRL 预检、训练、恢复和 warm-start 入口 |
-| `src/tasks/locomotion/ri_4438_him_lpacrl/evaluation/evaluate.py` | 按保存协议或显式外部协议评价 LP-ACRL 检查点 |
+| `src/tasks/locomotion/ri_4438_him_lpacrl/config/curriculum_cfg.py` | LP-ACRL 配置快照、校验、任务/几何/试验表编译与指纹 |
+| `scripts/train.py` | 公共训练、恢复和 LP-ACRL warm-start 入口 |
+| `src/tasks/locomotion/ri_4438_him_lpacrl/rl/evaluator.py` | 冻结策略的全任务周期评价及指标导出 |
 | `src/assets/robots/ri_4438/` | RI-4438 MuJoCo 模型、网格与资产配置 |
 | `rsl_rl/` | 项目内置的 RSL-RL 与 HIM 扩展 |
 | `deploy/task/ri_4438_him/` | RI-4438 HIM sim2sim 配置、入口与测试 |

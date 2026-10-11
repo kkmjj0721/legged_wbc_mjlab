@@ -454,6 +454,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
 
         from ..mdp.task_catalog import plain
         from .evaluator import TaskEvaluator, export_result
+        from .metrics import annotate_progress
 
         state = self.controller.state
         update = state.completed_policy_updates
@@ -468,6 +469,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
             self.evaluator = TaskEvaluator(self.setup, self.device)
         try:
             result = self.evaluator.evaluate(self.alg.get_policy())
+            annotate_progress(result, state.trial_returns)
             # Export before commit: output failure must not partially advance the clock.
             if self.logger.log_dir:
                 export_result(
@@ -503,12 +505,18 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 "slot_steps": self.controller.slot_steps,
                 "macro": result["macro"],
                 "diagnostics": state.diagnostics(),
+                "paired_progress_available": result["paired_progress_available"],
             }
             with (Path(self.logger.log_dir) / "curriculum.jsonl").open("a") as handle:
                 handle.write(json.dumps(plain(data), allow_nan=False) + "\n")
         if self.logger.writer is not None:
             for key, value in {**result["macro"], **state.diagnostics()}.items():
                 self.logger.writer.add_scalar("LPACRL/" + key, value, update)
+            for terrain, metrics in result["by_terrain"].items():
+                for key, value in metrics.items():
+                    self.logger.writer.add_scalar(
+                        f"LPACRL/terrain/{terrain}/{key}", value, update
+                    )
 
     def save(self, path, infos=None):
         self._validate_numerics()
@@ -590,6 +598,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         if (
             self.controller.mode != "train"
             or self.controller.state.completed_policy_updates
+            or self.controller.state.mean_returns is not None
         ):
             raise ValueError("Warm-start requires a fresh train-mode runner")
         checkpoint = torch.load(path, weights_only=False, map_location=self.device)

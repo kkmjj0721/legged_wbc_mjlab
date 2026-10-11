@@ -17,7 +17,7 @@ from .task_catalog import plain
 class LPState:
     """纯课程统计：评估成功后一次性提交回报、学习进步和采样概率。"""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, num_tasks, cfg, fingerprints=None):
         if num_tasks < 1 or not math.isfinite(cfg.temperature) or cfg.temperature <= 0:
@@ -33,6 +33,7 @@ class LPState:
         self.fingerprints = fingerprints or {}
         self.probabilities = np.full(num_tasks, 1.0 / num_tasks, dtype=np.float64)
         self.mean_returns = None
+        self.trial_returns = None  # Canonical [task_id, trial_id], for paired diagnostics.
         self.lp = np.zeros(num_tasks, dtype=np.float64)
         self.counts = np.zeros(num_tasks, dtype=np.int64)
         self.completed_policy_updates = 0
@@ -42,12 +43,19 @@ class LPState:
     def commit_evaluation(self, result, update_count, trials_per_task):
         means = np.asarray(result["mean_returns"], dtype=np.float64)
         counts = np.asarray(result["counts"])
+        trials = np.asarray(result["trial_returns"], dtype=np.float64)
         if means.shape != (self.num_tasks,) or counts.shape != means.shape:
             raise ValueError("Evaluation must cover the complete ordered task catalog")
         if not np.isfinite(means).all() or not np.all(counts == trials_per_task):
             raise ValueError(
                 "Incomplete/nonfinite evaluation; previous curriculum retained"
             )
+        if (
+            trials.shape != (self.num_tasks, trials_per_task)
+            or not np.isfinite(trials).all()
+            or not np.allclose(trials.mean(axis=1), means, rtol=1e-10, atol=1e-10)
+        ):
+            raise ValueError("Invalid paired trial returns; previous curriculum retained")
         if update_count < 0 or (
             self.mean_returns is not None and update_count <= self.last_evaluated_update
         ):
@@ -74,6 +82,7 @@ class LPState:
             raise ValueError("Invalid sampling distribution")
         # Commit only after every validation/calculation succeeds.
         self.mean_returns, self.counts = means.copy(), counts.astype(np.int64)
+        self.trial_returns = trials.copy()
         self.lp, self.probabilities = delta, probabilities
         self.last_evaluated_update = update_count
         self.consecutive_failures = 0
@@ -88,6 +97,7 @@ class LPState:
             if self.mean_returns is None
             else self.mean_returns.copy(),
             "lp": self.lp.copy(),
+            "trial_returns": None if self.trial_returns is None else self.trial_returns.copy(),
             "counts": self.counts.copy(),
             "completed_policy_updates": self.completed_policy_updates,
             "last_evaluated_update": self.last_evaluated_update,
@@ -125,8 +135,24 @@ class LPState:
             raise ValueError("Invalid checkpoint clock")
         if (arrays["mean_returns"] is None) != (evaluated == -1):
             raise ValueError("Inconsistent evaluation baseline")
+        trials = state["trial_returns"]
+        if arrays["mean_returns"] is None:
+            if trials is not None:
+                raise ValueError("Unexpected paired evaluation baseline")
+        else:
+            trials = np.asarray(trials, dtype=np.float64)
+            if (
+                trials.ndim != 2 or trials.shape[0] != self.num_tasks
+                or trials.shape[1] < 1
+                or not np.isfinite(trials).all()
+                or not np.all(arrays["counts"] == trials.shape[1])
+                or not np.allclose(trials.mean(axis=1), arrays["mean_returns"], rtol=1e-10, atol=1e-10)
+            ):
+                raise ValueError("Invalid checkpoint paired trial returns")
+            trials = trials.copy()
         for name, value in arrays.items():
             setattr(self, name, value)
+        self.trial_returns = trials
         self.completed_policy_updates, self.last_evaluated_update = completed, evaluated
         self.consecutive_failures = 0
 
@@ -134,12 +160,22 @@ class LPState:
         p = self.probabilities
         positive = p[p > 0]
         entropy = -np.sum(positive * np.log(positive))
+        score = np.abs(self.lp) if self.cfg.method == "alp" else self.lp
         return {
             "entropy_normalized": float(entropy / math.log(self.num_tasks))
             if self.num_tasks > 1
             else 0.0,
             "zero_probability_tasks": int(np.count_nonzero(p == 0)),
             "max_probability": float(p.max()),
+            "min_probability": float(p.min()),
+            "effective_tasks": float(1.0 / np.square(p).sum()),
+            "lp_min": float(self.lp.min()),
+            "lp_max": float(self.lp.max()),
+            "lp_std": float(self.lp.std()),
+            "lp_logit_range": float(np.ptp(score) / self.cfg.temperature)
+            if self.cfg.method != "uniform" else 0.0,
+            "temperature": float(self.cfg.temperature),
+            "uniform_mix": float(self.cfg.uniform_mix),
         }
 
 

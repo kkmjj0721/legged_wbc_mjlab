@@ -25,6 +25,8 @@ class TrainConfig:
   env: ManagerBasedRlEnvCfg
   agent: RslRlBaseRunnerCfg
   motion_file: str | None = None
+  warm_start: str | None = None
+  """Checkpoint weights for a new LPACRL run; resets optimizers and curriculum."""
   video: bool = False
   video_length: int = 200
   video_interval: int = 2000
@@ -40,6 +42,8 @@ class TrainConfig:
 
 
 def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
+  runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
+  warm_start_path = resolve_warm_start(cfg, runner_cls)
   cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
   if cuda_visible == "":
     device = "cpu"
@@ -118,10 +122,6 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   agent_cfg = asdict(cfg.agent)
   env_cfg = asdict(cfg.env)
 
-  runner_cls = load_runner_cls(task_id)
-  if runner_cls is None:
-    runner_cls = MjlabOnPolicyRunner
-
   runner_kwargs = {}
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
 
@@ -129,6 +129,9 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if resume_path is not None:
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     runner.load(str(resume_path))
+  elif warm_start_path is not None:
+    print(f"[INFO]: Warm-starting new curriculum from: {warm_start_path}")
+    runner.warm_start(str(warm_start_path))
 
   # Only write config files from rank 0 to avoid race conditions.
   if rank == 0:
@@ -137,12 +140,34 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     from src.utils.training_chain import write_lineage
     write_lineage(log_dir, task_id, resume_path,
                   runner.current_learning_iteration if resume_path is not None else None)
+    if warm_start_path is not None:
+      # This is a new experiment, not a continuation of the old return curves.
+      from src.utils.training_logs import sha256
+      dump_yaml(log_dir / "params" / "warm_start.yaml", {
+        "checkpoint": str(warm_start_path),
+        "checkpoint_sha256": sha256(warm_start_path),
+        "reset_optimizer_and_curriculum": True,
+      })
 
   runner.learn(
     num_learning_iterations=cfg.agent.max_iterations, init_at_random_ep_len=True
   )
 
   env.close()
+
+
+def resolve_warm_start(cfg: TrainConfig, runner_cls) -> Path | None:
+  """Validate before allocating the simulation or loading any weights."""
+  if cfg.warm_start is None:
+    return None
+  if cfg.agent.resume:
+    raise ValueError("--warm-start and --agent.resume are mutually exclusive")
+  if not callable(getattr(runner_cls, "warm_start", None)):
+    raise ValueError("This task runner does not support --warm-start")
+  path = Path(cfg.warm_start).expanduser().resolve()
+  if not path.is_file():
+    raise FileNotFoundError(f"Warm-start checkpoint not found: {path}")
+  return path
 
 
 def launch_training(task_id: str, args: TrainConfig | None = None):

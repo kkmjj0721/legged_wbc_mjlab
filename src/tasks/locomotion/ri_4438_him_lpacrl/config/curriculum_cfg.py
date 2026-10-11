@@ -147,8 +147,15 @@ def validate(cfg):
             raise ValueError(f"{name} must be finite and positive")
     if cfg.curriculum.method not in {"lp", "alp", "uniform"}:
         raise ValueError("curriculum.method must be lp, alp or uniform")
-    if cfg.evaluation.protocol_version != 2:
-        raise ValueError("This evaluator requires protocol_version=2")
+    if cfg.evaluation.protocol_version != 3:
+        raise ValueError("This evaluator requires protocol_version=3")
+    floors = cfg.evaluation.relative_error_floors
+    if len(floors) != 3 or any(not math.isfinite(x) or x <= 0 for x in floors):
+        raise ValueError("relative_error_floors must contain three positive finite values")
+    for name in ("success_alive_fraction", "success_tracking_error"):
+        value = getattr(cfg.evaluation, name)
+        if not math.isfinite(value) or not 0 < value < 1:
+            raise ValueError(f"{name} must be in (0, 1)")
     if (
         not math.isfinite(cfg.curriculum.uniform_mix)
         or not 0 <= cfg.curriculum.uniform_mix < 1

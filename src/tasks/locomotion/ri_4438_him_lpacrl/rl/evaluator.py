@@ -18,6 +18,7 @@ from tensordict import TensorDict
 from ..config.env_cfgs import build_env_cfg
 from ..mdp.curriculums import get_controller
 from ..mdp.task_catalog import plain
+from .metrics import epte_sp, relative_tracking_error, reward_terms_for_step
 
 
 def freeze_actor(actor, device):
@@ -126,6 +127,9 @@ class TaskEvaluator:
         table = self.setup.trials
         e = env.num_envs
         device = env.device
+        evaluation_cfg = self.setup.cfg.evaluation
+        reward_names = tuple(env.reward_manager.active_terms)
+        floors = torch.tensor(evaluation_cfg.relative_error_floors, device=device)
         rows, slot_steps = [], 0
         max_steps = math.ceil(self.setup.cfg.evaluation.horizon_s / env.step_dt)
         for offset in range(0, len(table), e):
@@ -138,6 +142,10 @@ class TaskEvaluator:
             returns = torch.zeros(e, dtype=torch.float64, device=device)
             lengths = torch.zeros(e, dtype=torch.int64, device=device)
             errors = torch.zeros(e, 3, dtype=torch.float64, device=device)
+            relative_errors = torch.zeros_like(errors)
+            term_returns = torch.zeros(
+                e, len(reward_names), dtype=torch.float64, device=device
+            )
             boundary_counts = torch.zeros(e, dtype=torch.long, device=device)
             traversal = TraversalMetrics(env, controller)
             for _ in range(max_steps):
@@ -166,6 +174,13 @@ class TaskEvaluator:
                 returns[active] += rewards[active].double()
                 lengths[active] += 1
                 errors[active] += difference[active].double().square()
+                # Only physical failures end the alive portion; a boundary
+                # reset or normal time limit is not a fall.
+                alive = active & ~terminated
+                relative_errors[alive] += relative_tracking_error(
+                    actual, commands, floors
+                )[alive].double()
+                term_returns[active] += reward_terms_for_step(env)[active]
                 slot_steps += e
                 traversal.observe(active, commands)
                 done = terminated | truncated
@@ -189,6 +204,12 @@ class TaskEvaluator:
                             "return": float(returns[slot]),
                             "steps": int(lengths[slot]),
                             "squared_error": errors[slot].cpu().tolist(),
+                            "relative_error_sum": relative_errors[slot].cpu().tolist(),
+                            "alive_steps": int(lengths[slot]) - int(terminated[slot]),
+                            "horizon_steps": max_steps,
+                            "reward_terms": dict(
+                                zip(reward_names, term_returns[slot].cpu().tolist())
+                            ),
                             "terminated": bool(terminated[slot]),
                             "truncated": bool(time_limit[slot] and not terminated[slot]),
                             "boundary": bool(boundary_counts[slot] > 0),
@@ -213,15 +234,25 @@ class TaskEvaluator:
             else:
                 raise RuntimeError("Evaluation horizon exhausted with active trials")
         result = summarize_trials(
-            rows, self.setup.catalog, self.setup.cfg.evaluation.trials_per_task
+            rows, self.setup.catalog, evaluation_cfg.trials_per_task,
+            success_alive_fraction=evaluation_cfg.success_alive_fraction,
+            success_tracking_error=evaluation_cfg.success_tracking_error,
         )
         result["simulated_slot_steps"] = slot_steps
         result["geometry_checks"] = monitor.summary() if monitor is not None else {}
         result["protocol"] = (
-            "v2: nominal, deterministic policy, fixed trial horizon; "
+            "v3: nominal, deterministic policy, fixed trial horizon; "
             "boundary resets continue the same task and command clock; "
-            "physical failure ends the trial; not paper EPTE-SP"
+            "physical failure ends the trial; EPTE-SP stability aggregation from Eq. (8), "
+            "project-relative-error convention for changing/near-zero commands"
         )
+        result["metric_settings"] = {
+            "relative_error_floors": list(evaluation_cfg.relative_error_floors),
+            "success_alive_fraction": evaluation_cfg.success_alive_fraction,
+            "success_tracking_error": evaluation_cfg.success_tracking_error,
+            "reward_terms": "weighted contributions, same dt scaling as total return",
+            "relative_error": "clip(mean_alive(abs(error)/max(abs(command),floor)),0,1)",
+        }
         return result
 
     def close(self):
@@ -233,7 +264,10 @@ class TaskEvaluator:
                 self.env = None
 
 
-def summarize_trials(rows, catalog, trials_per_task):
+def summarize_trials(
+    rows, catalog, trials_per_task, *,
+    success_alive_fraction=0.9, success_tracking_error=0.3,
+):
     if len(rows) != catalog.num_tasks * trials_per_task:
         raise ValueError("Missing evaluation trials")
     grouped = [[] for _ in catalog.records]
@@ -249,13 +283,41 @@ def summarize_trials(rows, catalog, trials_per_task):
         ):
             raise ValueError("Nonfinite or empty trial")
         grouped[row["task_id"]].append(row)
-    per_task = []
+    per_task, trial_returns = [], []
+    reward_names = tuple(rows[0]["reward_terms"])
     for tid, group in enumerate(grouped):
         if len(group) != trials_per_task or {r["trial_id"] for r in group} != set(
             range(trials_per_task)
         ):
             raise ValueError("Incomplete per-task trial coverage")
+        group.sort(key=lambda r: r["trial_id"])
         returns = [r["return"] for r in group]
+        trial_returns.append(returns)
+        for row in group:
+            if (
+                row["steps"] > row["horizon_steps"]
+                or row["alive_steps"] != row["steps"] - int(row["terminated"])
+                or (not row["terminated"] and row["steps"] != row["horizon_steps"])
+                or set(row["reward_terms"]) != set(reward_names)
+                or not np.isfinite(list(row["reward_terms"].values())).all()
+                or not np.isclose(
+                    sum(row["reward_terms"].values()), row["return"],
+                    rtol=1e-5,
+                    # The manager sums float32 terms before we accumulate in
+                    # float64; tolerate cancellation relative to component size.
+                    atol=1e-6 * max(1.0, sum(abs(v) for v in row["reward_terms"].values())),
+                )
+            ):
+                raise ValueError("Invalid trial duration or reward decomposition")
+            scores = epte_sp(
+                row["relative_error_sum"], row["alive_steps"], row["horizon_steps"]
+            )
+            row.update(zip(("vx_epte_sp", "vy_epte_sp", "wz_epte_sp"), scores.tolist()))
+            row["success"] = bool(
+                row["alive_steps"] > success_alive_fraction * row["horizon_steps"]
+                and scores[0] < success_tracking_error
+                and scores[2] < success_tracking_error
+            )
         steps = np.array([r["steps"] for r in group])
         rmse = np.sqrt(
             np.sum([r["squared_error"] for r in group], axis=0) / steps.sum()
@@ -264,13 +326,26 @@ def summarize_trials(rows, catalog, trials_per_task):
             {
                 "task_id": tid,
                 "task_key": catalog.decode(tid).key,
+                "terrain": catalog.decode(tid).terrain,
+                "level": catalog.decode(tid).level,
                 "count": len(group),
                 "mean_return": float(np.mean(returns)),
                 "std_return": float(np.std(returns)),
+                "return_standard_error": float(np.std(returns, ddof=1) / np.sqrt(len(group)))
+                if len(group) > 1 else None,
                 "mean_length": float(steps.mean()),
                 "vx_rmse": float(rmse[0]),
                 "vy_rmse": float(rmse[1]),
                 "wz_rmse": float(rmse[2]),
+                **{
+                    axis + "_epte_sp": float(np.mean([r[axis + "_epte_sp"] for r in group]))
+                    for axis in ("vx", "vy", "wz")
+                },
+                "success_rate": float(np.mean([r["success"] for r in group])),
+                **{
+                    "reward/" + name: float(np.mean([r["reward_terms"][name] for r in group]))
+                    for name in reward_names
+                },
                 "failure_rate": float(np.mean([r["terminated"] for r in group])),
                 "boundary_rate": float(
                     np.mean([r["boundary"] and not r["terminated"] for r in group])
@@ -298,11 +373,22 @@ def summarize_trials(rows, catalog, trials_per_task):
                 ),
             }
         )
-    numeric = [k for k in per_task[0] if k not in {"task_id", "task_key", "count"}]
+    numeric = [
+        k for k, v in per_task[0].items()
+        if k not in {"task_id", "count"} and isinstance(v, (int, float))
+    ]
+    by_terrain = {}
+    for terrain in sorted({r["terrain"] for r in per_task}):
+        tasks = [r for r in per_task if r["terrain"] == terrain]
+        by_terrain[terrain] = {
+            k: float(np.mean([r[k] for r in tasks])) for k in numeric
+        }
     return {
         "mean_returns": [r["mean_return"] for r in per_task],
         "counts": [r["count"] for r in per_task],
+        "trial_returns": trial_returns,
         "per_task": per_task,
         "trials": rows,
         "macro": {k: float(np.mean([r[k] for r in per_task])) for k in numeric},
+        "by_terrain": by_terrain,
     }
