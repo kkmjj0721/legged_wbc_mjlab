@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING
 import torch
 
 if TYPE_CHECKING:
-  from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.envs import ManagerBasedRlEnv
 
 
 def gait_phase(env: ManagerBasedRlEnv, period: float) -> torch.Tensor:
-  """Return cycle phase in [0, 1), taking the remainder before scaling time."""
-  if period <= 0.0:
-    raise ValueError("Gait period must be positive.")
-  steps_per_period = period / env.step_dt
-  return torch.remainder(env.episode_length_buf, steps_per_period) / steps_per_period
+    """Return cycle phase in [0, 1), taking the remainder before scaling time."""
+    if period <= 0.0:
+        raise ValueError("Gait period must be positive.")
+    steps_per_period = period / env.step_dt
+    return torch.remainder(env.episode_length_buf, steps_per_period) / steps_per_period

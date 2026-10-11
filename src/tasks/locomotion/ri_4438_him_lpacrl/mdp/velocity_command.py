@@ -1,5 +1,7 @@
-"""Commands are sampled only by the joint task allocator, once per episode."""
+"""Keep the task fixed while following its pre-sampled, in-bin command sequence."""
+
 from dataclasses import dataclass
+
 import torch
 from mjlab.managers.command_manager import CommandTerm, CommandTermCfg
 
@@ -19,11 +21,17 @@ class TaskVelocityCommand(CommandTerm):
         return {}
 
     def compute(self, dt, env_ids=None):
-        # Neither timers nor terminal recorder compute calls may change the task.
-        pass
+        from .curriculums import get_controller
+
+        del dt  # 由 episode_length_buf 索引；terminal recorder 的重复调用是幂等的。
+        controller = get_controller(self._env)
+        ids = controller._ids(env_ids)
+        controller.update_commands(ids)
+        self.vel_command_b[ids] = controller.commands[ids]
 
     def _resample_command(self, env_ids):
         from .curriculums import get_controller
+
         self.vel_command_b[env_ids] = get_controller(self._env).commands[env_ids]
 
     def _update_command(self, env_ids=None):
