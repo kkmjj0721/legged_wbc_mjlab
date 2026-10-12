@@ -476,7 +476,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
     ),
     "feet_air_time": RewardTermCfg(
       func = him_mdp.feet_air_time,
-      weight = 1.0,
+      weight = 0.2,
       params = {
         "sensor_name": "feet_ground_contact",
         "gait_name": "foot_gait",  # Target time and support pair follow this gait.
