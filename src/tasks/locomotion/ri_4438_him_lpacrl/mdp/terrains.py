@@ -30,13 +30,17 @@ FAMILIES = {
     "stairs_outward_down",
     "slope_outward_up",
     "slope_outward_down",
+} | {
+    f"stairs_{depth}_outward_{direction}"
+    for depth in ("018", "021", "025", "028")
+    for direction in ("up", "down")
 }
 
 
 def geometry_parameters(family, values, size):
     if family not in FAMILIES:
         raise ValueError(f"Unsupported terrain family: {family}")
-    category = family.split("_outward_")[0]
+    category = "stairs" if family.startswith("stairs_") else family.split("_outward_")[0]
     defaults = deepcopy(Ri4438HimLpacrlCfg.terrain.defaults[category])
     if set(values) - set(defaults):
         raise ValueError(
@@ -230,10 +234,11 @@ class TraversalMetrics:
         self.stalled_seconds = torch.zeros(n, device=device)
         self.previous_xy = self.robot.data.root_link_pos_w[:, :2].clone()
         # 使用生成器离散踏步后实际形成的平台宽度，而非仅用请求值。
-        half_platforms = []
+        half_platforms, widths, heights, step_counts = [], [], [], []
         for task in controller.catalog.records:
             if not task.terrain.startswith("stairs"):
                 half_platforms.append((math.inf, math.inf))
+                widths.append(1.0); heights.append(0.0); step_counts.append(0)
                 continue
             column = controller.terrain_map.columns.index((task.terrain, task.level))
             params = controller.terrain_map.parameters[column]
@@ -247,14 +252,35 @@ class TraversalMetrics:
             half_platforms.append(
                 tuple(s / 2 - count * params["step_width"] for s in inner)
             )
+            widths.append(params["step_width"])
+            heights.append(params["step_height_m"] * (1 if task.terrain.endswith("up") else -1))
+            step_counts.append(count)
         self.half_platform = torch.tensor(half_platforms, device=device)[
             controller.episode_task_id
         ]
+        task_ids = controller.episode_task_id
+        self.width = torch.tensor(widths, device=device)[task_ids]
+        self.height = torch.tensor(heights, device=device)[task_ids]
+        self.step_count = torch.tensor(step_counts, device=device)[task_ids]
+        self.levels = torch.arange(1, max(step_counts, default=0) + 1, device=device)
+        self.support_seconds = torch.zeros(n, len(self.levels), device=device)
+        self.crossed_steps = torch.zeros(n, dtype=torch.long, device=device)
+        self.segment_start_z = self.robot.data.root_link_pos_w[:, 2].clone()
+        self.displacement_xy = torch.zeros(n, 2, device=device)
+        self.yaw_error = torch.zeros(n, device=device)
+        self.action_delta_sum = torch.zeros(n, device=device)
+        self.action_delta_count = torch.zeros(n, device=device)
+        self.previous_actions = None
+        self.action_valid = torch.zeros(n, dtype=torch.bool, device=device)
+        self.foot_slip_sum = torch.zeros(n, device=device)
+        self.foot_contact_count = torch.zeros(n, device=device)
 
-    def observe(self, active, commands):
+    def observe(self, active, commands, actions=None):
         robot, dt = self.robot, self.env.step_dt
         xy = robot.data.root_link_pos_w[:, :2]
-        self.distance[active] += (xy - self.previous_xy).norm(dim=-1)[active]
+        delta = xy - self.previous_xy
+        self.distance[active] += delta.norm(dim=-1)[active]
+        self.displacement_xy[active] += delta[active]
         self.previous_xy.copy_(xy)
         feet = robot.data.site_pos_w[:, self.foot_ids, :2]
         outside = (
@@ -273,15 +299,68 @@ class TraversalMetrics:
             & (robot.data.root_link_lin_vel_b[:, :2].norm(dim=-1) < 0.05)
         )
         self.stalled_seconds[active] += stalled[active] * dt
+        self.yaw_error[active] += (
+            robot.data.root_link_ang_vel_b[:, 2] - commands[:, 2]
+        )[active] * dt
+        foot_speed = robot.data.site_lin_vel_w[:, self.foot_ids, :2].norm(dim=-1)
+        self.foot_slip_sum[active] += (foot_speed * touching).sum(dim=-1)[active]
+        self.foot_contact_count[active] += touching.sum(dim=-1)[active]
+        if actions is not None:
+            if self.previous_actions is not None:
+                valid = active & self.action_valid
+                self.action_delta_sum[valid] += (
+                    actions - self.previous_actions
+                ).square().mean(dim=-1)[valid]
+                self.action_delta_count[valid] += 1
+            self.previous_actions = actions.clone()
+            self.action_valid.copy_(active)
+
+        # Conservative geometric proxy: root outside the platform and moving
+        # vertically in the staircase direction, with >=2 feet supported on
+        # actual treads at this level or farther, continuously for >=0.1 s.
+        # Foot sites are sphere centres (RI-4438 radius 15.73 mm). The height
+        # tolerance admits contact compliance, but excludes neighbouring treads.
+        origins = self.env.scene.env_origins
+        excess = ((feet - origins[:, None, :2]).abs() - self.half_platform[:, None, :]).amax(dim=-1)
+        foot_level = (torch.floor(excess / self.width[:, None]) + 1).clamp_min(0)
+        on_stairs = (foot_level > 0) & (foot_level <= self.step_count[:, None])
+        surface_z = origins[:, None, 2] + foot_level * self.height[:, None]
+        clearance = robot.data.site_pos_w[:, self.foot_ids, 2] - surface_z
+        supported = touching & on_stairs & (clearance >= -0.005) & (clearance <= 0.035)
+        root_excess = ((xy - origins[:, :2]).abs() - self.half_platform).amax(dim=-1)
+        root_level = (torch.floor(root_excess / self.width) + 1).clamp_min(0)
+        vertical = (robot.data.root_link_pos_w[:, 2] - self.segment_start_z) * self.height.sign()
+        levels = self.levels[None, :]
+        evidence = (
+            (root_level[:, None] >= levels)
+            & (levels <= self.step_count[:, None])
+            & (vertical[:, None] >= self.height.abs()[:, None] * (levels - 0.5))
+            & ((supported[:, :, None] & (foot_level[:, :, None] >= levels[:, None, :])).sum(dim=1) >= 2)
+        )
+        self.support_seconds[active] = torch.where(
+            evidence[active], self.support_seconds[active] + dt, 0.0,
+        )
+        if len(self.levels):
+            crossed = torch.where(self.support_seconds >= 0.1 - 1e-6, levels, 0).amax(dim=1)
+            self.crossed_steps[active] = torch.maximum(self.crossed_steps[active], crossed[active])
 
     def reset_segments(self, env_ids):
         self.previous_xy[env_ids] = self.robot.data.root_link_pos_w[env_ids, :2]
+        self.segment_start_z[env_ids] = self.robot.data.root_link_pos_w[env_ids, 2]
+        self.support_seconds[env_ids] = 0
+        self.action_valid[env_ids] = False
 
     def trial(self, slot):
         return {
             "distance_m": float(self.distance[slot]),
             "stair_contact_seconds": float(self.stair_contact_seconds[slot]),
             "stalled_seconds": float(self.stalled_seconds[slot]),
+            "net_displacement_m": float(self.displacement_xy[slot].norm()),
+            "integrated_yaw_error_rad": float(self.yaw_error[slot]),
+            "action_delta_rms": float((self.action_delta_sum[slot] / self.action_delta_count[slot].clamp_min(1)).sqrt()),
+            "foot_slip_m_s": float(self.foot_slip_sum[slot] / self.foot_contact_count[slot].clamp_min(1)),
+            "stair_steps_crossed": int(self.crossed_steps[slot]),
+            "stair_step_count": int(self.step_count[slot]),
         }
 
 

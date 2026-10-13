@@ -89,10 +89,11 @@ def export_result(result, output_dir, catalog, fingerprints):
 
 
 class TaskEvaluator:
-    def __init__(self, setup, device, env_factory=None):
+    def __init__(self, setup, device, env_factory=None, step_callback=None):
         self.setup, self.device = setup, device
         self.env = None
         self.env_factory = env_factory
+        self.step_callback = step_callback
 
     def _get_env(self):
         if self.env is None:
@@ -148,7 +149,7 @@ class TaskEvaluator:
             )
             boundary_counts = torch.zeros(e, dtype=torch.long, device=device)
             traversal = TraversalMetrics(env, controller)
-            for _ in range(max_steps):
+            for step in range(max_steps):
                 actions = actor(obs)
                 # step() 返回时指令可能已更新；误差必须对应刚执行动作的指令。
                 commands = controller.commands.clone()
@@ -182,7 +183,9 @@ class TaskEvaluator:
                 )[alive].double()
                 term_returns[active] += reward_terms_for_step(env)[active]
                 slot_steps += e
-                traversal.observe(active, commands)
+                traversal.observe(active, commands, actions)
+                if self.step_callback is not None:
+                    self.step_callback(env, batch, active, step)
                 done = terminated | truncated
                 if monitor is not None:
                     monitor.observe(done | ~active)
@@ -247,6 +250,10 @@ class TaskEvaluator:
             "project-relative-error convention for changing/near-zero commands"
         )
         result["metric_settings"] = {
+            "traversal_version": 1,
+            "stair_progress": ">=2 outward treads; >=2 supported feet and root vertical progress for >=0.1 s; survives trial",
+            "terrain_traversal": "same as stair_progress, but reaches all treads; defined only for stairs; inspect by_terrain",
+            "action_delta_rms": "unscaled policy actions; boundary-reset transitions excluded",
             "relative_error_floors": list(evaluation_cfg.relative_error_floors),
             "success_alive_fraction": evaluation_cfg.success_alive_fraction,
             "success_tracking_error": evaluation_cfg.success_tracking_error,
@@ -318,6 +325,11 @@ def summarize_trials(
                 and scores[0] < success_tracking_error
                 and scores[2] < success_tracking_error
             )
+            row["tracking_success"] = row["success"]
+            if "stair_steps_crossed" in row:
+                stairs = row["stair_step_count"] > 0
+                row["stair_progress_success"] = bool(stairs and row["stair_steps_crossed"] >= 2 and not row["terminated"])
+                row["terrain_traversal_success"] = bool(stairs and row["stair_steps_crossed"] >= row["stair_step_count"] and not row["terminated"])
         steps = np.array([r["steps"] for r in group])
         rmse = np.sqrt(
             np.sum([r["squared_error"] for r in group], axis=0) / steps.sum()
@@ -373,6 +385,15 @@ def summarize_trials(
                 ),
             }
         )
+        # These new diagnostics are optional for historical saved results.
+        for key in ("net_displacement_m", "action_delta_rms", "foot_slip_m_s", "stair_steps_crossed"):
+            if key in group[0]:
+                per_task[-1]["mean_" + key] = float(np.mean([r[key] for r in group]))
+        if "integrated_yaw_error_rad" in group[0]:
+            per_task[-1]["mean_abs_integrated_yaw_error_rad"] = float(np.mean([abs(r["integrated_yaw_error_rad"]) for r in group]))
+        if "terrain_traversal_success" in group[0]:
+            for key in ("tracking_success", "stair_progress_success", "terrain_traversal_success"):
+                per_task[-1][key + "_rate"] = float(np.mean([r[key] for r in group]))
     numeric = [
         k for k, v in per_task[0].items()
         if k not in {"task_id", "count"} and isinstance(v, (int, float))

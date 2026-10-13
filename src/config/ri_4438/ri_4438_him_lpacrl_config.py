@@ -1,12 +1,14 @@
 """RI-4438 HIM + LPACRL 的独立配置，不继承其他任务的配置。
 
 结构与 Ri4438Cfg / Ri4438CFGHimPPO 一致：
-- Ri4438HimLpacrlCfg：环境、机器人、命令分箱、地形和 LP 评估。
+- Ri4438HimLpacrlCfg：环境、机器人、命令分箱、地形、在线 LP 和离线评估。
 - Ri4438HimLpacrlCfgPPO：HIM 网络、PPO 算法和训练轮数。
 
 这里声明默认值；task 的配置工厂会复制它们，训练和评估不会修改这些类。
-LP 评估参数是本项目的工程设置，不代表论文未公开的超参数。
+课程统计与 teacher 更新遵循 FIBO 5813fc3；保留本项目的多地形三轴任务。
 """
+
+import math
 
 # HIM 数值边界；独立保留，避免其他任务调整后影响本任务。
 ACTION_CLIP = 10.0
@@ -60,7 +62,7 @@ class Ri4438HimLpacrlCfg:
     class reset:
         base_offset = {
             "pose_range": {
-                "x": (-0.1, 0.1),  # 配合 1.2 m 楼梯平台，避免出生时足端跨台阶。
+                "x": (-0.1, 0.1),  # 配合 2.0 m 楼梯平台，避免出生时足端跨台阶。
                 "y": (-0.1, 0.1),
                 "z": (-0.0, 0.0),
                 "roll": (-0.3, 0.3),
@@ -93,9 +95,11 @@ class Ri4438HimLpacrlCfg:
 
     class commands:
         # 任务 = 命令分箱 × 地形类型 × 该类型的等级。
-        # 保留论文的 5 × 6 分箱结构，但 vx/wz 的范围都限制为 [-1, 1]。
-        # |vx| 档宽 0.2 m/s；|wz| 档宽 1/6 rad/s。
+        # 保留 5 × 6 任务结构；heading 模式第三轴为初始航向误差（rad）。
         # 正负方向在箱内各占一半；vy 连续采样，不增加任务数量。
+        heading_command = True
+        heading_control_stiffness = 0.5  # 与独立 HIM 相同：wz = k * wrap(target-current)。
+        ang_vel_z_range = (-1.0, 1.0)  # 最终交给策略的角速度限幅，rad/s。
         axes = {
             "vx": {
                 "mode": "magnitude_bins",
@@ -106,8 +110,15 @@ class Ri4438HimLpacrlCfg:
                 "mode": "magnitude_bins",
                 "edges": [0.0, 1 / 6, 2 / 6, 0.5, 4 / 6, 5 / 6, 1.0],  # rad/s。
             },
+            "heading": {
+                "mode": "magnitude_bins",
+                "edges": [i * math.pi / 6 for i in range(7)],  # 相对出生朝向的误差，rad。
+            },
         }
-        resampling_interval_s = 2.0  # 回合内只更新箱内命令，任务/地形保持不变。
+        # 只在 reset 采样速度和目标航向；heading 固定，反馈 wz 每步更新。
+        resampling_interval_s = None
+        # 任务分箱使用中心；连续 vy 仍在范围内采样。
+        sample_bin_centers = True
         # 每个轴的完整默认值；axes 中的同名字段覆盖这里。
         axis_defaults = {
             "mode": "fixed",
@@ -119,16 +130,17 @@ class Ri4438HimLpacrlCfg:
             "positive_probability": 0.5,
             "sign_as_task_axis": False,
         }
-        include = []  # 可按 vx/vy/wz、terrain、level 筛选任务；空列表保留全部。
+        include = []  # 按 vx/vy/heading（直接模式为 wz）、terrain、level 筛选任务。
         exclude = []
 
     class terrain:
-        # 默认 Rough：5 个 vx 分箱 × 6 个 wz 分箱 × 5 类地形 × 4 档 = 600 个任务。
+        # 默认 Rough：5 个 vx 分箱 × 6 个 heading 分箱 × (8 类楼梯 × 5 档 + 3 类其他地形 × 4 档)
+        # = 1560 个任务。楼梯类别由踏步深度和上下方向共同确定。
         # 每个任务的几何难度固定；LP 只改变任务被采样的概率。
         # rough 按高度上限分级，每张图采样 [0, height_max_m]；这是项目定义。
         # 楼梯保留 RI-4438 的 0.05–0.16 m 范围，论文使用 0.05–0.20 m。
-        # gradient = 高差 / 水平距离，不是角度：0/0.10/0.20/0.30
-        # 对应约 0°/5.71°/11.31°/16.70°；盲走起步暂不使用论文上限 0.40。
+        # gradient = 高差 / 水平距离，不是角度：0、0.4/3、0.8/3、0.4。
+        # 恢复第一版的四档等间隔坡度比，对应约 0°/7.59°/14.93°/21.80°。
         # 两类坡地的 l0 都是平地，保留各自任务标签；不另加 flat 地形类别。
         levels = {
             "random_rough": {
@@ -137,29 +149,37 @@ class Ri4438HimLpacrlCfg:
                 "l2": {"height_max_m": 0.045},
                 "l3": {"height_max_m": 0.06},
             },
-            "stairs_outward_up": {
-                "l0": {"step_height_m": 0.05},
-                "l1": {"step_height_m": 0.08},
-                "l2": {"step_height_m": 0.12},
-                "l3": {"step_height_m": 0.16},
-            },
-            "stairs_outward_down": {
-                "l0": {"step_height_m": 0.05},
-                "l1": {"step_height_m": 0.08},
-                "l2": {"step_height_m": 0.12},
-                "l3": {"step_height_m": 0.16},
+            # 同一类别的深度固定，只按高度分五档；018 表示深度 0.18 m。
+            # 8 m 地块分别放置 10/8/7/6 层踏步，配套边宽保持中心平台 2 m。
+            # 边宽减去 1 nm，避免浮点取整少生成一层踏步而扩大平台。
+            **{
+                f"stairs_{label}_outward_{direction}": {
+                    f"l{i}": {
+                        "step_height_m": height,
+                        "step_width": depth,
+                        "border_width": border - 1e-9,
+                    }
+                    for i, height in enumerate((0.05, 0.08, 0.10, 0.12, 0.16))
+                }
+                for label, depth, border in (
+                    ("018", 0.18, 1.20),
+                    ("021", 0.21, 1.32),
+                    ("025", 0.25, 1.25),
+                    ("028", 0.28, 1.32),
+                )
+                for direction in ("up", "down")
             },
             "slope_outward_up": {
                 "l0": {"gradient": 0.0},
-                "l1": {"gradient": 0.10},
-                "l2": {"gradient": 0.20},
-                "l3": {"gradient": 0.30},
+                "l1": {"gradient": 0.4 / 3},
+                "l2": {"gradient": 0.8 / 3},
+                "l3": {"gradient": 0.4},
             },
             "slope_outward_down": {
                 "l0": {"gradient": 0.0},
-                "l1": {"gradient": 0.10},
-                "l2": {"gradient": 0.20},
-                "l3": {"gradient": 0.30},
+                "l1": {"gradient": 0.4 / 3},
+                "l2": {"gradient": 0.8 / 3},
+                "l3": {"gradient": 0.4},
             },
         }
         # 地形类别的基础几何参数，levels 中的字段覆盖基础参数；长度单位为 m。
@@ -175,9 +195,9 @@ class Ri4438HimLpacrlCfg:
             },
             "stairs": {
                 "step_height_m": 0.10,
-                "step_width": 0.30,
-                "platform_width": 1.2,
-                "border_width": 1.0,
+                "step_width": 0.18,  # 各楼梯类别使用 levels 中声明的固定深度。
+                "platform_width": 2.0,
+                "border_width": 1.2,  # 各深度的配套边宽在 levels 中覆盖。
                 "holes": False,
             },
             "slope": {
@@ -198,20 +218,20 @@ class Ri4438HimLpacrlCfg:
         resolution_m = 0.1  # 对应 187 条射线，与 HIM critic 的观测维度一致。
 
     class curriculum:
-        method = "lp"  # lp：有符号进步；alp：进步绝对值；uniform：均匀采样。
-        # 总回合回报单位；根据旧运行至 update 1300 的 LP 回放选取的起点，
-        # 不是论文参数，也不是概率上限。改奖励尺度后需要重新标定。
-        temperature = 25.0
-        uniform_mix = 0.15  # 保留探索；复现纯 LP 时设 0，uniform 方法也须设 0。
+        method = "lp"  # FIBO teacher 的有符号进步；uniform 为均匀对照。
+        # 仅线速度项：episode_sum / episode_steps / reward_weight，保留 dt。
+        # 每 PPO 迭代按回合求均值（空任务为 0），阶段内对迭代均值等权平均。
+        temperature = 0.05
+        uniform_mix = 0.15  # BinnedVelocityCommandCfg.eps；uniform 对照须设 0。
+        stage_length_updates = 50
+        seed_bin = 0  # 初始 |vx| 箱 seed : seed+1 = 2 : 1，其他维度均匀。
 
     class evaluation:
         protocol_version = 3  # 保留 v2 时长语义，增加奖励分项、EPTE-SP 和配对诊断。
-        interval_updates = 50  # 按 PPO 更新次数触发，不是 episode 数。
         trials_per_task = 8  # 每个任务固定试验数，与并行环境数独立。
-        num_envs = 512  # 600 × 8 = 4800 次试验，分 10 批评估；128 环境需 38 批。
+        num_envs = 512  # 1560 × 8 = 12480 次试验，分 25 批评估。
         horizon_s = 20.0
         seed = 314159
-        max_consecutive_failures = 3
         # 变指令/零指令下的项目约定：逐步 |误差| / max(|指令|, floor)，
         # 对存活段求均值后截到 [0, 1]；再按论文公式补足失败后的最坏误差。
         relative_error_floors = (0.1, 0.1, 0.1)  # vx/vy: m/s；wz: rad/s。

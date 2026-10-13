@@ -7,7 +7,6 @@ import tempfile
 import time
 import warnings
 from copy import deepcopy
-from dataclasses import asdict
 from pathlib import Path
 
 import onnx
@@ -48,7 +47,6 @@ class CurriculumEnvWrapper:
 
     def __init__(self, env):
         self.env = env
-        self._geometry_monitor = None
 
     def __getattr__(self, name):
         return getattr(self.env, name)
@@ -58,22 +56,7 @@ class CurriculumEnvWrapper:
         return self.env.unwrapped
 
     def step(self, actions):
-        controller = get_controller(self.unwrapped)
-        if controller.mode == "train":
-            controller.note_step()
         obs, reward, done, extras = self.env.step(actions)
-        if not controller.terrain_map.plane:
-            from ..mdp.terrains import GeometryMonitor
-
-            if self._geometry_monitor is None:
-                self._geometry_monitor = GeometryMonitor(self.unwrapped, controller)
-            self._geometry_monitor.observe(done.bool())
-            extras.setdefault("log", {}).update(
-                {
-                    "LPACRL/geometry/" + k: v
-                    for k, v in self._geometry_monitor.summary().items()
-                }
-            )
         if "time_outs" in extras:
             extras = dict(extras)
             extras["time_outs"] = (
@@ -87,7 +70,7 @@ class CurriculumEnvWrapper:
 
 
 class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
-    """HIM training with periodic independent LP evaluation and saved curriculum."""
+    """HIM training with lightweight online tracking-progress curriculum."""
 
     env: RslRlVecEnvWrapper
 
@@ -120,7 +103,9 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         finalize_fingerprints(self.setup, env.unwrapped.cfg)
         self.setup.fingerprints["agent"] = self._agent_fingerprint(train_cfg)
         self.controller.state.fingerprints = dict(self.setup.fingerprints)
-        self.evaluator = None  # Play never constructs an evaluation environment.
+        params = env.unwrapped.cfg.curriculum["lpacrl"].params
+        params["task_cfg"] = deepcopy(self.controller.cfg)
+        params["fingerprints"] = {k: v for k, v in self.setup.fingerprints.items() if k != "agent"}
         super().__init__(CurriculumEnvWrapper(env), train_cfg, log_dir, device)
 
     @staticmethod
@@ -304,8 +289,6 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         """Collect rollouts, reset done environments, and update HIMPPO."""
         self._validate_numerics()
         self._validate_observation_contract()
-        self._maybe_evaluate()
-
         obs = self.env.get_observations().to(self.device)
         self.alg.train_mode()
         self.logger.init_logging_writer()
@@ -337,6 +320,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         total_it = start_it + num_learning_iterations
         for it in range(start_it + 1, total_it + 1):
             start = time.time()
+            statistics_before = self.controller.statistics_host_seconds
             action_peak = torch.zeros((), device=self.device)
             action_counts = torch.zeros(3, device=self.device)
             with torch.inference_mode():
@@ -394,8 +378,10 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 self.alg.compute_returns(obs)
 
             loss_dict = self.alg.update()
-            self.controller.state.completed_policy_updates += 1
-            self._maybe_evaluate()
+            learn_time = time.time() - start
+            curriculum_start = time.perf_counter()
+            self._maybe_update_curriculum()
+            curriculum_time = time.perf_counter() - curriculum_start
             if guard is not None:
                 loss_dict["numerics/raw_action_max"] = action_peak.item()
                 loss_dict["numerics/action_clip_fraction"] = (
@@ -414,7 +400,6 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                         policy.history_size, -1
                     )[:, slice_start:slice_stop]
                     loss_dict["numerics/last_action_std_max"] = action_std.max().item()
-            learn_time = time.time() - start
             self.current_learning_iteration = it
 
             self.logger.log(
@@ -428,6 +413,11 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 action_std=self.alg.get_policy().output_std,
                 rnd_weight=None,
             )
+
+            if self.logger.writer is not None:
+                statistics_time = self.controller.statistics_host_seconds - statistics_before
+                self.logger.writer.add_scalar("Perf/curriculum_host_time", curriculum_time + statistics_time, it)
+                self.logger.writer.add_scalar("Perf/iteration_time", collect_time + learn_time + curriculum_time, it)
 
             if self.logger.writer is not None and it % self.cfg["save_interval"] == 0:
                 self.save(os.path.join(self.logger.log_dir, f"model_{it}.pt"))
@@ -449,74 +439,26 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         if self.env.num_actions != 12:
             raise ValueError("HIM requires 12 actions")
 
-    def _maybe_evaluate(self):
+    def _maybe_update_curriculum(self):
         import json
-
         from ..mdp.task_catalog import plain
-        from .evaluator import TaskEvaluator, export_result
-        from .metrics import annotate_progress
 
         state = self.controller.state
-        update = state.completed_policy_updates
-        due = (
-            state.mean_returns is None
-            or update - state.last_evaluated_update
-            >= self.controller.cfg.evaluation.interval_updates
-        )
-        if not due:
-            return
-        if self.evaluator is None:
-            self.evaluator = TaskEvaluator(self.setup, self.device)
-        try:
-            result = self.evaluator.evaluate(self.alg.get_policy())
-            annotate_progress(result, state.trial_returns)
-            # Export before commit: output failure must not partially advance the clock.
-            if self.logger.log_dir:
-                export_result(
-                    result,
-                    Path(self.logger.log_dir) / "evaluations" / f"update_{update}",
-                    self.controller.catalog,
-                    self.setup.fingerprints,
-                )
-            self.controller.commit_evaluation(result, update)
-        except Exception as exc:
-            state.consecutive_failures += 1
-            # A failed environment can contain pending resets or invalid state.
-            self.evaluator.close()
-            warnings.warn(
-                f"LPACRL evaluation failed at update {update}: {exc}; state retained"
-            )
-            if (
-                state.consecutive_failures
-                >= self.controller.cfg.evaluation.max_consecutive_failures
-            ):
-                raise RuntimeError(
-                    "LPACRL consecutive evaluation failure limit reached"
-                ) from exc
-            return
-        if self.logger.log_dir:
+        update = state.completed_policy_updates + 1
+        stage_closed = self.controller.advance(update)
+        if stage_closed and self.logger.log_dir:
             data = {
-                "update": update,
-                "mean_returns": state.mean_returns,
-                "lp": state.lp,
-                "probabilities": state.probabilities,
-                "starts": self.controller.starts,
-                "completed": self.controller.completed,
-                "slot_steps": self.controller.slot_steps,
-                "macro": result["macro"],
-                "diagnostics": state.diagnostics(),
-                "paired_progress_available": result["paired_progress_available"],
+                "update": update, "score_kind": state.SCORE_KIND,
+                "mean_scores": state.mean_scores, "stage_index": state.stage_index,
+                "lp": state.lp, "probabilities": state.probabilities,
+                "counts": state.counts, "iteration_counts": state.iteration_counts,
+                "starts": self.controller.starts, "diagnostics": state.diagnostics(),
             }
             with (Path(self.logger.log_dir) / "curriculum.jsonl").open("a") as handle:
                 handle.write(json.dumps(plain(data), allow_nan=False) + "\n")
         if self.logger.writer is not None:
-            for key, value in {**result["macro"], **state.diagnostics()}.items():
+            for key, value in state.diagnostics().items():
                 self.logger.writer.add_scalar("LPACRL/" + key, value, update)
-            for terrain, metrics in result["by_terrain"].items():
-                for key, value in metrics.items():
-                    self.logger.writer.add_scalar(
-                        f"LPACRL/terrain/{terrain}/{key}", value, update
-                    )
 
     def save(self, path, infos=None):
         self._validate_numerics()
@@ -570,19 +512,6 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 "Checkpoint has no LPACRL history; use --warm-start explicitly"
             )
         state = deepcopy(infos["lpacrl"])
-        if "agent" not in state["fingerprints"]:
-            # Older checkpoints hash the central HIM config. Accept them only
-            # when the current effective agent still matches that config.
-            from ..config.rl_cfg import ri_4438_him_runner_cfg
-
-            defaults = asdict(ri_4438_him_runner_cfg(self.controller.cfg))
-            # MjLab strips unused optional model fields in super().__init__;
-            # compare both configurations before that normalization.
-            if self._agent_fingerprint(defaults) != self.setup.fingerprints["agent"]:
-                raise ValueError(
-                    "Legacy resume requires the saved central HIM settings"
-                )
-            state["fingerprints"]["agent"] = self.setup.fingerprints["agent"]
         self.controller.load_state_dict(state)
         self.alg.load(checkpoint, None, strict)
         self._validate_numerics()
@@ -598,7 +527,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         if (
             self.controller.mode != "train"
             or self.controller.state.completed_policy_updates
-            or self.controller.state.mean_returns is not None
+            or self.controller.state.counts.any()
         ):
             raise ValueError("Warm-start requires a fresh train-mode runner")
         checkpoint = torch.load(path, weights_only=False, map_location=self.device)
@@ -628,5 +557,5 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         self.env.reset()
 
     def close(self):
-        if self.evaluator is not None:
-            self.evaluator.close()
+        # The caller owns the training environment. No second simulation exists.
+        pass

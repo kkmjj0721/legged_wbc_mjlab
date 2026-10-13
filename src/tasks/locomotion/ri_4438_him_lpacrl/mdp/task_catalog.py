@@ -150,7 +150,8 @@ class TaskRecord:
 
     def metadata(self):
         values = {"terrain": self.terrain, "level": self.level}
-        for name, axis in zip(("vx", "vy", "wz"), self.axes):
+        rotation_axis = "heading" if "/heading=" in self.key else "wz"
+        for name, axis in zip(("vx", "vy", rotation_axis), self.axes):
             values[name] = axis.name
             values[name + "_sign"] = axis.sign
         return values
@@ -158,12 +159,19 @@ class TaskRecord:
 
 class TaskCatalog:
     def __init__(self, cfg):
-        if set(cfg.command_axes) != {"vx", "vy", "wz"}:
-            raise ValueError("command_axes must define vx, vy, wz")
+        self.heading_command = getattr(cfg, "heading_command", False)
+        self.axis_names = ("vx", "vy", "heading" if self.heading_command else "wz")
+        if set(cfg.command_axes) != set(self.axis_names):
+            raise ValueError(f"command_axes must define {', '.join(self.axis_names)}")
         self.axis_bins = {
             axis: compile_axis(axis, cfg.command_axes[axis])
-            for axis in ("vx", "vy", "wz")
+            for axis in self.axis_names
         }
+        if self.heading_command and any(
+            b.low < -math.pi or b.high > math.pi + 1e-12
+            for b in self.axis_bins["heading"]
+        ):
+            raise ValueError("Heading offsets must be within [-pi, pi] radians")
         candidates = []
         for axes in itertools.product(*self.axis_bins.values()):
             for terrain, family in cfg.terrains.items():
@@ -178,7 +186,7 @@ class TaskCatalog:
                     parts = [
                         f"{name}={a.name}"
                         + (f":{a.sign}" if a.sign != "within" else "")
-                        for name, a in zip(("vx", "vy", "wz"), axes)
+                        for name, a in zip(self.axis_names, axes)
                     ]
                     key = "/".join(parts + [f"terrain={terrain}", f"level={level}"])
                     candidates.append(TaskRecord(key, terrain, level, axes))
@@ -203,9 +211,16 @@ class TaskCatalog:
         self._ids = {t.key: i for i, t in enumerate(self.records)}
         if not self.records or len(self._ids) != len(self.records):
             raise ValueError("Empty catalog or duplicate semantic keys")
-        self.fingerprint = fingerprint(
-            {"records": self.records, "axes": cfg.command_axes}
-        )
+        self.sample_bin_centers = getattr(cfg, "sample_bin_centers", False)
+        signature = {"records": self.records, "axes": cfg.command_axes}
+        # Preserve the historical uniform-in-bin signature for offline playback.
+        if self.sample_bin_centers:
+            signature["sample_bin_centers"] = True
+        self.fingerprint = fingerprint(signature)
+        self._binned_axes = np.array([
+            cfg.command_axes[axis].mode in {"magnitude_bins", "signed_bins"}
+            for axis in self.axis_names
+        ])
         self._lo = np.array(
             [[a.low for a in t.axes] for t in self.records], dtype=np.float64
         )
@@ -230,12 +245,30 @@ class TaskCatalog:
         return self.records[task_id]
 
     def sample_commands(self, ids, rng):
+        """Sample task axes; the third value is a heading offset in heading mode."""
         ids = np.asarray(ids, dtype=np.int64)
         values = self._lo[ids] + rng.random((len(ids), 3)) * (
             self._hi[ids] - self._lo[ids]
         )
+        if self.sample_bin_centers:
+            values[:, self._binned_axes] = (
+                (self._lo[ids] + self._hi[ids]) / 2
+            )[:, self._binned_axes]
         signs = np.where(rng.random((len(ids), 3)) < self._positive[ids], 1.0, -1.0)
         return np.where(self._mag[ids], values * signs, values)
+
+    def initial_teacher_probabilities(self, seed_bin):
+        """Lift FIBO's 2:1 vx seed-bin prior across all retained other axes."""
+        available = [b for b in self.axis_bins["vx"]
+                     if any(t.axes[0] == b for t in self.records)]
+        if not 0 <= seed_bin < len(available):
+            raise ValueError("seed_bin is outside the retained vx bins")
+        weights = np.zeros(self.num_tasks)
+        for index, mass in ((seed_bin, 1.0), (seed_bin + 1, 0.5)):
+            if index < len(available):
+                mask = np.array([t.axes[0] == available[index] for t in self.records])
+                weights[mask] = mass / mask.sum()
+        return weights / weights.sum()
 
     def classify_axis(self, axis: str, value: float) -> list[str]:
         _finite(value)
@@ -271,15 +304,31 @@ class TaskCatalog:
 
 def make_trial_table(catalog, cfg):
     trials = []
+    interval = cfg.task_space.resampling_interval_s
+    count = 1 if interval is None else math.ceil(cfg.evaluation.horizon_s / interval) + 1
     for tid, task in enumerate(catalog.records):
         for trial_id in range(cfg.evaluation.trials_per_task):
             rng = np.random.default_rng(
                 stable_seed(cfg.evaluation.seed, task.key + f"/trial={trial_id}")
             )
-            count = math.ceil(
-                cfg.evaluation.horizon_s / cfg.task_space.resampling_interval_s
-            ) + 1
-            commands = catalog.sample_commands([tid] * count, rng).tolist()
+            parameters = catalog.sample_commands([tid] * count, rng)
+            replica = int(rng.integers(cfg.geometry.replicas))
+            yaw = float(rng.uniform(-math.pi, math.pi))
+            commands = parameters.copy()
+            heading = {}
+            if catalog.heading_command:
+                targets = (yaw + parameters[:, 2] + math.pi) % (2 * math.pi) - math.pi
+                errors = (targets - yaw + math.pi) % (2 * math.pi) - math.pi
+                commands[:, 2] = np.clip(
+                    cfg.task_space.heading_control_stiffness * errors,
+                    *cfg.task_space.ang_vel_z_range,
+                )
+                heading = {
+                    "heading_target": float(targets[0]),
+                    "heading_offset": float(parameters[0, 2]),
+                    "heading_sequence": targets.tolist(),
+                }
+            commands = commands.tolist()
             trials.append(
                 {
                     "task_id": tid,
@@ -287,8 +336,9 @@ def make_trial_table(catalog, cfg):
                     "trial_id": trial_id,
                     "command": commands[0],
                     "command_sequence": commands,
-                    "replica": int(rng.integers(cfg.geometry.replicas)),
-                    "yaw": float(rng.uniform(-math.pi, math.pi)),
+                    "replica": replica,
+                    "yaw": yaw,
+                    **heading,
                 }
             )
     return trials

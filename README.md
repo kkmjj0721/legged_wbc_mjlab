@@ -24,8 +24,8 @@
 | --- | --- | --- | --- |
 | `Ri-4438-HIM-Rough` | RI-4438 | HIM + PPO | 复杂地形 |
 | `Ri-4438-HIM-Flat` | RI-4438 | HIM + PPO | 平地 |
-| `Ri-4438-HIM-LPACRL-Rough` | RI-4438 | HIM + PPO + LP-ACRL | 起伏、上下楼梯；默认 18 个任务 |
-| `Ri-4438-HIM-LPACRL-Flat` | RI-4438 | HIM + PPO + LP-ACRL | 平地；默认 3 个任务 |
+| `Ri-4438-HIM-LPACRL-Rough` | RI-4438 | HIM + PPO + LP-ACRL | 起伏、上下楼梯、上下坡；默认 1560 个任务 |
+| `Ri-4438-HIM-LPACRL-Flat` | RI-4438 | HIM + PPO + LP-ACRL | 平地；默认 30 个任务 |
 | `Ri-4438-Rough` | RI-4438 | PPO | 复杂地形 |
 | `Ri-4438-Flat` | RI-4438 | PPO | 平地 |
 | `Unitree-Go2-HIM-Rough` | Unitree Go2 | HIM + PPO | 复杂地形 |
@@ -380,50 +380,92 @@ uv run --extra analysis python scripts/best_model.py --help
 
 ## HIM LP-ACRL
 
-LP-ACRL 在复位时联合采样地形与速度任务。任务在回合内固定，命令每 2 秒在同一分箱内重采样。HIM actor 保持盲走：47 维单帧观测、6 帧历史；地形高度只进入 critic，不进入 actor 或估计器目标。
+LP-ACRL 在每回合开始时联合采样地形和命令任务。默认 `commands.heading_command = True`：采样相对出生朝向的航向偏差，得到固定世界坐标目标 `heading_target = wrap(spawn_yaw + heading_offset)`；每步生成 `wz = clip(0.5 * wrap(heading_target-current_heading), -1, 1)`，单位 rad/s。任务、vx/vy 和目标航向在回合内保持固定，实际 wz 随反馈更新。`commands.resampling_interval_s = None` 关闭回合内目标重采样，训练拒绝正数间隔；历史变命令 checkpoint 仍可离线评估。`commands.sample_bin_centers = True`：vx / heading 使用分箱中心并采样正负方向，连续 vy 保留范围内采样。评估出界重置时保留同一目标航向。HIM actor 仍使用三维速度命令：47 维单帧观测、6 帧历史；目标角度不增加策略输入，地形高度只进入 critic。
 
-默认参数集中在 [ri_4438_him_lpacrl_config.py](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。Rough 为 600 个任务：5 个纵向速度绝对值箱 × 6 个转向速度绝对值箱 × 5 类地形 × 4 档。纵向速度在 ±1 m/s，转向速度在 ±1 rad/s，横向速度在 ±0.5 m/s 内连续采样。上下坡直接使用无量纲坡度比 `gradient = 高差 / 水平距离`：`0/0.10/0.20/0.30`，对应约 `0°/5.71°/11.31°/16.70°`，高度量化为 1 mm。保留平地起始档，未直接采用论文最高梯度 0.40。楼梯仍为 `0.05/0.08/0.12/0.16 m`。
+默认参数集中在 [ri_4438_him_lpacrl_config.py](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。Rough 仍为 1560 个任务：5 个纵向速度绝对值箱 × 6 个初始航向误差绝对值箱 ×（8 类楼梯 × 5 档高度 + 3 类其他地形 × 4 档）。航向误差分箱覆盖 ±π，档宽 π/6；反馈系数由 `heading_control_stiffness` 控制，输出由 `ang_vel_z_range` 限幅。任务标签使用 `heading=...`，不把动态 wz 当作固定任务标签。设 `heading_command=False` 可使用原来的六档直接角速度命令。纵向速度在 ±1 m/s，横向速度在 ±0.5 m/s 内连续采样。上下坡仍使用 `gradient = 高差 / 水平距离`：`0、0.4/3、0.8/3、0.4`，对应约 `0°、7.59°、14.93°、21.80°`，高度量化为 1 mm。
 
-`lp` 使用相邻全任务评估的平均总回报差，保留负号；`alp` 使用差分绝对值；`uniform` 均匀采样。默认温度为 **25（总回合回报单位）**，均匀混合比例为 **0.15**。这两个值是根据本项目历史 LP 回放选取的工程起点，不是论文超参数，不保证采样概率上限或新训练性能。纯 LP 对照将 `uniform_mix` 设为 0；`uniform` 方法也须将它设为 0。没有加入概率硬上限或自适应温度。
+楼梯的四种踏步深度为 `0.18/0.21/0.25/0.28 m`，每种深度各有上、下两类，例如 `stairs_018_outward_up` 和 `stairs_018_outward_down`。每类高度为 `0.05/0.08/0.10/0.12/0.16 m` 五档。中心平台实际宽度保持 `2.0 m`：四种深度的外围平地边宽分别约为 `1.20/1.32/1.25/1.32 m`，配合 `8 m` 地块生成 10/8/7/6 层踏步；配置中的 1 nm 余量用于避免浮点取整少生成一层。
+
+课程统计和 teacher 算法对齐 [FIBO teacher_guided.py](https://github.com/FIBO-Physical-AI/curriculum_training/blob/5813fc351d982880e61c5e775be048ee4ee0db33/src/source/curriculum_rl/curriculum_rl/curricula/teacher_guided.py)、[mdp.py](https://github.com/FIBO-Physical-AI/curriculum_training/blob/5813fc351d982880e61c5e775be048ee4ee0db33/src/source/curriculum_rl/curriculum_rl/envs/mdp.py) 和实际生效的课程参数，固定参考提交 `5813fc351d982880e61c5e775be048ee4ee0db33`。多地形任务与 heading 命令是 RI-4438 的扩展；这不是论文总回报 LP 的严格复现。
+
+- 自然结束回合只取 `track_linear_velocity`，计算 `clip(episode_sum / actual_steps / reward_weight, 0, 1)`。按参考代码保留奖励管理器已乘入的 **dt**，不混入 yaw，不再次除 dt。PPO 仍使用原来的全部奖励。
+- 每次 PPO 更新统计本轮结束回合的各任务均值，**无样本任务为零**，然后对阶段内的迭代均值等权平均。取消最小回合门槛、按阶段回合总数加权和跨阶段保留稀疏样本。
+- `stage_length_updates=50`。保留参考代码首调用启动时钟的语义：第 **51** 次更新建立首次基线，第 **101** 次首次更新概率，以后每 50 次更新一次。基线阶段不改变初始采样。
+- 有符号 `LP = 本阶段均值 - 上阶段均值`，`p = 0.85 * softmax(LP / 0.05) + 0.15 / N`。这里 `0.15` 来自实际命令配置的 `eps`，不是 teacher 构造函数单独的默认值 `0.05`。保留 dt 后分数通常远小于 1，因此这个温度下采样可能较平；不擅自调整参考温度来增强选择性。
+- 初始 `seed_bin=0`：前两个 |vx| 箱概率质量为 **2/3、1/3**；在每个 vx 箱内对保留的其他任务组合均匀分配。原项目只做 8 个前进速度箱；这里保留 1560 个多地形三轴任务，因此这一先验分配是明确的维度扩展。`uniform` 对照始终均匀，需设置 `uniform_mix=0`。
+- reset 前归属任务，手动 reset 不计入统计。HIM、timeout bootstrap、观测历史和数值检查保留。
+
+直接执行上游源码的对齐检查（不需要 Isaac Lab）：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 uv run python tools/test_lpacrl_fibo_parity.py \
+  --reference-root /path/to/curriculum_training
+```
+
+检查要求参考仓库处于上述提交且相关源码未修改；覆盖实际回合统计入口、空箱、稀疏样本、阶段时钟、2:1 初始化和阶段中恢复。仅替换框架对象与 CSV 输出。
 
 ### 训练与恢复
 
-使用公共入口；旧版文档中的任务内 `rl.train`、预设/YAML 入口和独立评价命令已不适用于当前代码。
-
 ```bash
-# 新实验：修改中央配置后启动
-uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough
+uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough --env.scene.num-envs 2048
 
-# 使用旧的兼容 HIM 权重，在新坡度和评价协议下开始新课程
+# 旧版评估式课程只加载兼容权重，重新开始在线课程
 uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough \
-  --warm-start '/path/to/old_run/model_1200.pt'
+  --env.scene.num-envs 2048 --warm-start '/path/to/old_run/model_1000.pt'
 
-# 同一任务、几何、奖励和评价协议下完整续训
+# 在线课程完整续训；max-iterations 是本次额外更新次数
 uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough \
-  --agent.resume True \
-  --agent.load-run '<run_directory_name>' \
-  --agent.load-checkpoint 'model_200.pt' \
+  --env.scene.num-envs 2048 --agent.resume True \
+  --agent.load-run '<run_directory_name>' --agent.load-checkpoint 'model_200.pt' \
   --agent.max-iterations 1000
 
-# CPU 回归测试，不启动训练
 PYTHONDONTWRITEBYTECODE=1 uv run python -m unittest tools.test_ri4438_lpacrl -v
 ```
 
-默认 1024 个训练环境，每次 PPO 更新 100 步，每 200 次更新保存；目前只支持单进程、单 GPU。`--agent.max-iterations` 是本次额外更新次数。输出位于 `logs/rsl_rl/ri_4438_him_lpacrl/<timestamp>/`。
+中央默认仍为 1024 个环境，每次 PPO 更新 100 步，每 200 次保存；对照实验明确使用 2048 个环境。目前支持单进程、单 GPU。运行快照记录实际环境数。`--warm-start` 与 `--agent.resume True` 互斥；前者重置优化器、课程统计和迭代数，来源记录在 `params/warm_start.yaml`。
 
-`--warm-start` 与 `--agent.resume True` 互斥。Warm-start 加载兼容的 actor、critic、HIM 估计器及其观测归一化状态，清空优化器和 LP 历史，从 update 0 重新评估；权重来源及哈希记在 `params/warm_start.yaml`。它是新实验，训练曲线不会自动接到旧实验上。完整续训会严格校验指纹；旧坡度、旧评价协议或旧课程状态版本须使用 warm-start。
+在线 checkpoint 版本 4 保存每迭代统计、阶段均值累计、阶段时钟、初始概率、当前概率与任务采样 RNG。完整续训拒绝旧评估式和版本 3 的 xy/yaw 课程状态；旧权重可播放、离线评估或显式 warm-start。续训重新开始物理回合，未结束的回合不计入统计，因此不承诺仿真轨迹逐位重现。任务、几何、奖励、HIM 和课程配置仍做兼容检查；独立评估参数不再影响训练恢复。
 
-### 评价与诊断
+训练不创建评价环境、冻结策略或全量试验表，也不逐步执行几何诊断。`curriculum.jsonl` 和 TensorBoard `LPACRL/*` 记录任务样本数、分数、LP、概率、有效任务数；`Perf/learning_time` 只包含 PPO/HIM 更新，`Perf/curriculum_host_time` 记录统计 CPU 调用与阶段更新耗时（并非独立 GPU kernel 计时），`Perf/iteration_time` 包含采样、优化、课程阶段更新。
 
-训练开始前执行第零次评价，之后每 50 次 PPO 更新执行一次。每个任务 8 个固定试验，Rough 共 4800 次；512 个评价环境分十批执行。评价策略冻结，使用名义动力学。协议 v3 保留固定 20 秒预算：出界重置同一任务、保留命令时钟并继续累计，物理失败结束试验。指标使用重置前状态。
+### 离线评价与视频
 
-`evaluations/update_<n>/evaluation.json` 保存逐试验结果、按地形汇总及协议；`per_task.csv` 保存逐任务指标。`curriculum.jsonl` 与 TensorBoard 的 `LPACRL/*` 保存课程状态和汇总。
+```bash
+# 默认恢复 checkpoint 中的任务、地形、命令设置；无需加载课程历史
+uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.evaluate \
+  --checkpoint '/path/to/model_1000.pt' --output-dir '/path/to/evaluation'
 
-- **总回报及奖励分项**：分项包含权重和与总回报相同的 dt 缩放，跨出界重置继续累计；分项之和须等于总回报。PPO 奖励及其权重未改变，课程仍使用总回报差。
-- **EPTE-SP**：采用论文的稳定性聚合 `(epsilon * k + K - k) / K`。本项目对变指令的误差约定为：逐步计算 `abs(actual-command)/max(abs(command), floor)`，对未发生物理失败的步求均值后截到 `[0,1]`。三个轴的默认 floor 均为 0.1，单位分别为 m/s、m/s、rad/s；物理失败当步不计入存活段，正常完成 K 步没有稳定性惩罚。这个近零指令约定是项目设置，不能宣称与论文实验完全等价。
-- **成功率**：逐试验存活步数严格大于 `0.9*K`，且 vx、wz 的 EPTE-SP 都严格小于 0.3；按任务平均，再做宏平均。它不单独证明穿越了楼梯，应结合行走距离、台阶接触和停滞时长。
-- **配对 LP 诊断**：按 `(task_id, trial_id)` 对齐相邻评价，记录 LP 标准误、最大单试验变化的绝对贡献占比、移除该试验后的 LP。第一阶段没有配对基线，单试验配置无法估计标准误。标准误只描述固定试验的波动，不代表泛化置信度，也不改变采样分数。配对基线随检查点保存。
-- **采样分布**：记录概率极值、归一化熵、有效任务数 `1/sum(p²)`、LP 范围和温度，便于识别过度集中。
+# 比较不同历史模型时，显式使用当前共同任务空间
+# 原地转向可选 turn_left/turn_right，横移可选 left/right，直行可选 forward/backward
+MUJOCO_GL=egl uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.evaluate \
+  --checkpoint '/path/to/model_1000.pt' --protocol current \
+  --command forward --terrain stairs_025_outward_up --level l0 \
+  --num-envs 1 --trials-per-task 1 --video --output-dir '/path/to/stairs_video'
+```
+
+默认全任务评价仍为 1560×8 个固定试验、512 个环境、20 秒预算。名义动力学、冻结策略；出界重置同一任务并保留命令时钟，物理失败结束试验。`evaluation.json` 和 `per_task.csv` 保存逐试验、逐任务、分地形与宏平均结果、实际配置和 checkpoint 哈希；视频按任务/试验保存。`--previous-result` 可为相同任务、几何和固定试验添加配对总回报变化的标准误及异常试验敏感性诊断。
+
+heading 模式的试验表记录 `heading_target` / `heading_offset`，`command` 中的 wz 是初始反馈值；评价时每步跟踪实际反馈指令。`--command forward/backward/left/right` 在 heading 模式下保持出生航向，`turn_left/turn_right` 显式测试固定角速度。旧快照缺少 `heading_command` 时按直接 wz 协议恢复。新航向任务与旧角速度任务的 checkpoint 不可直接续训，可用上面的 `--warm-start` 加载旧策略重新建立课程状态。
+
+- EPTE-SP 使用论文稳定性聚合 `(epsilon*k+K-k)/K`；本项目对变指令采用 `abs(error)/max(abs(command),floor)` 的存活段均值，最后截到 `[0,1]`。三个轴的 floor 默认均为 0.1。此近零指令约定属于项目设置。
+- `success` / `tracking_success` 保留已有速度跟踪口径：存活比例严格大于 0.9，vx、wz 的 EPTE-SP 严格小于 0.3。vy 指标另列；此成功率不证明地形通过。
+- `stair_steps_crossed` 需要身体离开平台并沿楼梯方向改变高度，至少两足在对应或更外侧踏面接触，连续支持至少 0.1 秒；考虑 RI-4438 足球半径，拒绝仅碰竖直立面或平台绕圈。它是可测试的几何近似，仍需结合视频。
+- `stair_progress_success` 要求跨过至少两级且试验结束时未跌倒；`terrain_traversal_success` 要求跨过该楼梯全部踏步且未跌倒。后两项只用于楼梯，查看对应 `by_terrain`，不把混合全部地形的宏平均解释为通用通过率。
+- 同时记录累计路径、排除重置瞬移后的净位移、偏航误差积分、动作变化 RMS、接触足滑动速度、跌倒、台阶接触和停滞时间。完整奖励分解及逐步几何扫描仅在此路径执行。
+
+### 固定条件对照
+
+`tools/lpacrl_experiment.py` 默认 2048 环境、100 步 rollout、seed 0、1000 次更新。`online` 为 FIBO teacher 课程；`uniform` 仅改变采样方法；两者均为整回合固定命令，已取消 2 秒重采样实验。旧实现须使用修改前源码快照，以免把新课程误当成基线。
+
+```bash
+uv run python tools/lpacrl_experiment.py --variant online --output-dir logs/experiments/online_seed0
+uv run python tools/lpacrl_experiment.py --variant uniform --output-dir logs/experiments/uniform_seed0
+uv run python tools/lpacrl_experiment.py --variant evaluated \
+  --source-root logs/experiments/lpacrl_online_20261012/baseline_source \
+  --output-dir logs/experiments/evaluated_seed0
+```
+
+在同一 GPU 上顺序执行。候选方案用 `--seed 1`、`--seed 2` 补跑；比较时保持评价任务、试验表和命令时序一致。已有第一版共同测试工具 `tools/test_lpacrl_v1_comparison.py` 仍可用于相同 12 个历史任务；它使用旧边界终止口径，不能与上述全时长协议混算。验收须同时检查速度、偏航、动作变化、足滑、跌倒和真实楼梯通过，不能只凭训练提速认定动作改善。
 
 ## 策略回放
 

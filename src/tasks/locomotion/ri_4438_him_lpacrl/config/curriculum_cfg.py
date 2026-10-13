@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 from src.config.ri_4438.ri_4438_him_lpacrl_config import (
@@ -15,7 +15,7 @@ from src.config.ri_4438.ri_4438_him_lpacrl_config import (
     Ri4438HimLpacrlCfgPPO,
 )
 
-from ..mdp.task_catalog import TaskCatalog, fingerprint, make_trial_table, plain
+from ..mdp.task_catalog import TaskCatalog, fingerprint, make_trial_table
 from ..mdp.terrains import TerrainMap
 
 
@@ -48,9 +48,13 @@ class LpacrlCfg:
     scan_resolution_m: float
 
 
-def make_lpacrl_cfg() -> LpacrlCfg:
+def make_lpacrl_cfg(*, heading_command: bool | None = None) -> LpacrlCfg:
     """只在环境/agent 工厂调用一次，将中央默认值复制为可修改的任务参数。"""
     env_cfg, ppo_cfg = Ri4438HimLpacrlCfg, Ri4438HimLpacrlCfgPPO
+    heading_command = env_cfg.commands.heading_command if heading_command is None else heading_command
+    if type(heading_command) is not bool:
+        raise ValueError("heading_command must be boolean")
+    axes = ("vx", "vy", "heading" if heading_command else "wz")
     robot = SimpleNamespace(
         **{
             name: _copy_section(getattr(env_cfg, name))
@@ -83,12 +87,16 @@ def make_lpacrl_cfg() -> LpacrlCfg:
             seed=ppo_cfg.runner.seed,
         ),
         task_space=SimpleNamespace(
+            heading_command=heading_command,
+            heading_control_stiffness=env_cfg.commands.heading_control_stiffness,
+            ang_vel_z_range=tuple(env_cfg.commands.ang_vel_z_range),
             resampling_interval_s=env_cfg.commands.resampling_interval_s,
+            sample_bin_centers=env_cfg.commands.sample_bin_centers,
             command_axes={
                 axis: SimpleNamespace(
-                    **deepcopy({**env_cfg.commands.axis_defaults, **values})
+                    **deepcopy({**env_cfg.commands.axis_defaults, **env_cfg.commands.axes[axis]})
                 )
-                for axis, values in env_cfg.commands.axes.items()
+                for axis in axes
             },
             terrains={
                 family: SimpleNamespace(levels=deepcopy(levels))
@@ -117,17 +125,23 @@ class CurriculumSetup:
     cfg: LpacrlCfg
     catalog: TaskCatalog
     terrain_map: TerrainMap
-    trials: list
     fingerprints: dict
+    _trials: list | None = field(default=None, repr=False)
+
+    @property
+    def trials(self):
+        """Only offline evaluation materializes the fixed trial table."""
+        if self._trials is None:
+            self._trials = make_trial_table(self.catalog, self.cfg)
+        return self._trials
 
 
 def validate(cfg):
     positive_counts = {
         "replicas": cfg.geometry.replicas,
         "trials_per_task": cfg.evaluation.trials_per_task,
-        "interval_updates": cfg.evaluation.interval_updates,
+        "stage_length_updates": cfg.curriculum.stage_length_updates,
         "evaluation.num_envs": cfg.evaluation.num_envs,
-        "max_consecutive_failures": cfg.evaluation.max_consecutive_failures,
         "training.num_envs": cfg.training.num_envs,
         "rollout_steps": cfg.training.rollout_steps,
         "max_iterations": cfg.training.max_iterations,
@@ -141,12 +155,29 @@ def validate(cfg):
         "train_horizon": cfg.training.horizon_s,
         "eval_horizon": cfg.evaluation.horizon_s,
         "scan_resolution": cfg.scan_resolution_m,
-        "command_resampling_interval": cfg.task_space.resampling_interval_s,
     }.items():
         if not math.isfinite(val) or val <= 0:
             raise ValueError(f"{name} must be finite and positive")
-    if cfg.curriculum.method not in {"lp", "alp", "uniform"}:
-        raise ValueError("curriculum.method must be lp, alp or uniform")
+    interval = cfg.task_space.resampling_interval_s
+    if interval is not None and (not math.isfinite(interval) or interval <= 0):
+        raise ValueError("command_resampling_interval must be None or finite and positive")
+    heading_command = getattr(cfg.task_space, "heading_command", False)
+    if type(heading_command) is not bool:
+        raise ValueError("heading_command must be boolean")
+    if heading_command:
+        stiffness = cfg.task_space.heading_control_stiffness
+        bounds = cfg.task_space.ang_vel_z_range
+        if not math.isfinite(stiffness) or stiffness <= 0:
+            raise ValueError("heading_control_stiffness must be finite and positive")
+        if (len(bounds) != 2 or not all(math.isfinite(x) for x in bounds)
+                or not bounds[0] < 0 < bounds[1]):
+            raise ValueError("ang_vel_z_range must contain finite negative/positive limits")
+    if cfg.curriculum.method not in {"lp", "uniform"}:
+        raise ValueError("curriculum.method must be lp or uniform")
+    if type(cfg.curriculum.seed_bin) is not int or cfg.curriculum.seed_bin < 0:
+        raise ValueError("curriculum.seed_bin must be a nonnegative integer")
+    if type(cfg.task_space.sample_bin_centers) is not bool:
+        raise ValueError("sample_bin_centers must be boolean")
     if cfg.evaluation.protocol_version != 3:
         raise ValueError("This evaluator requires protocol_version=3")
     floors = cfg.evaluation.relative_error_floors
@@ -247,6 +278,15 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
     cfg = deepcopy(cfg)
     validate(cfg)
     catalog = TaskCatalog(cfg.task_space)
+    # Direct-velocity snapshots retain their historical task fingerprint.
+    command_identity = [catalog.fingerprint, cfg.task_space.resampling_interval_s]
+    if getattr(cfg.task_space, "heading_command", False):
+        command_identity.append({
+            "heading_command": True,
+            "heading_control_stiffness": cfg.task_space.heading_control_stiffness,
+            "ang_vel_z_range": cfg.task_space.ang_vel_z_range,
+            "heading_reference": "episode_spawn_yaw_plus_task_offset",
+        })
     terrains = TerrainMap(catalog, cfg)
     if not terrains.plane:
         offsets = cfg.robot.reset.base_offset.get("pose_range", {})
@@ -260,22 +300,15 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
                 raise ValueError(
                     f"Training spawn {axis} range is not inside the safe patch interior"
                 )
-    trials = make_trial_table(catalog, cfg)
-    protocol = plain(cfg.evaluation)
-    protocol.pop("num_envs")
     result = CurriculumSetup(
         cfg,
         catalog,
         terrains,
-        trials,
         {
-            "task": fingerprint(
-                [catalog.fingerprint, cfg.task_space.resampling_interval_s]
-            ),
+            "task": fingerprint(command_identity),
             "geometry": fingerprint(
                 [cfg.geometry, terrains.columns, terrains.parameters]
             ),
-            "evaluation": fingerprint([protocol, trials]),
             "curriculum": fingerprint(cfg.curriculum),
             "him": fingerprint(
                 [cfg.learning, cfg.robot, cfg.scan_size_m, cfg.scan_resolution_m]

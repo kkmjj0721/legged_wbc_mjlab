@@ -1,4 +1,4 @@
-"""Keep the task fixed while following its pre-sampled, in-bin command sequence."""
+"""Expose task velocity targets; heading mode updates feedback wz every step."""
 
 from dataclasses import dataclass
 

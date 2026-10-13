@@ -1,4 +1,4 @@
-# Adapted from RI-4438 HIM (workspace snapshot 2026-10-10).
+# Aligned with standalone RI-4438 HIM rewards (workspace 2026-10-12).
 """Basic reward terms for the standalone RI-4438 HIM task."""
 
 from __future__ import annotations
@@ -88,8 +88,15 @@ def body_angular_velocity_penalty(
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
-    velocity = asset.data.body_link_ang_vel_w[:, asset_cfg.body_ids, :].squeeze(1)
-    return torch.square(velocity[:, :2]).sum(dim=1)
+    velocity_w = asset.data.body_link_ang_vel_w[
+        :, asset_cfg.body_ids, :
+    ].squeeze(1)
+    quat_w = asset.data.body_link_quat_w[
+        :, asset_cfg.body_ids, :
+    ].squeeze(1)
+
+    velocity_b = quat_apply_inverse(quat_w, velocity_w)
+    return torch.square(velocity_b[:, :2]).sum(dim=1)
 
 
 def feet_gait(
@@ -125,48 +132,89 @@ def feet_air_time(
     command_name: str | None = None,
     command_threshold: float = 0.1,
 ) -> torch.Tensor:
-    """Reward support/air duration only while contacts match the configured gait.
+    """Reward each foot's ongoing support/air duration independently.
 
-    The triangular reward peaks at ``period * (1 - stance_fraction)`` from
-    ``gait_name``. Require half the feet in contact, with the same foot order
-    and phase offsets as that gait. Late touchdown and the wrong support pair
-    earn no reward, even if their air times are long. This term measures timing,
-    not foot height. A configured command gates both translation and yaw.
+    Scores are normalized to [0, 1] before averaging over feet.
+    Each foot contributes only while its contact state matches the gait.
     """
     gait = env.cfg.rewards[gait_name].params
-    period, stance_fraction = gait["period"], gait["threshold"]
+    period = gait["period"]
+    stance_fraction = gait["threshold"]
+
     if period <= 0.0 or not 0.0 < stance_fraction < 1.0:
-        raise ValueError("Gait period must be positive and stance threshold in (0, 1).")
-    target_time = period * (1.0 - stance_fraction)
+        raise ValueError(
+            "Gait period must be positive and stance threshold in (0, 1)."
+        )
+
+    # 支撑和腾空使用不同的参考持续时间。
+    stance_duration = period * stance_fraction
+    swing_duration = period * (1.0 - stance_fraction)
 
     sensor: ContactSensor = env.scene[sensor_name]
-    sensor_data = sensor.data
-    air_time = sensor_data.current_air_time
-    contact_time = sensor_data.current_contact_time
+    air_time = sensor.data.current_air_time
+    contact_time = sensor.data.current_contact_time
+
     assert air_time is not None and contact_time is not None, (
         "feet_air_time requires a contact sensor with track_air_time=True."
     )
-    if len(gait["offset"]) != contact_time.shape[1]:
-        raise ValueError("Gait offsets must match the contact sensor's foot order.")
-    phase = _gait_phase(env, period).unsqueeze(1)
-    offsets = torch.as_tensor(gait["offset"], device=env.device, dtype=phase.dtype)
-    desired_contact = ((phase + offsets.view(1, -1)) % 1.0) < stance_fraction
 
+    if len(gait["offset"]) != contact_time.shape[1]:
+        raise ValueError(
+            "Gait offsets must match the contact sensor's foot order."
+        )
+
+    # 每只脚的目标接触状态，形状为 [num_envs, num_feet]。
+    phase = _gait_phase(env, period).unsqueeze(1)
+    offsets = torch.as_tensor(
+        gait["offset"],
+        device=env.device,
+        dtype=phase.dtype,
+    ).view(1, -1)
+
+    foot_phase = (phase + offsets) % 1.0
+    desired_contact = foot_phase < stance_fraction
+
+    # 每只脚实际处于哪个状态，以及该状态已经持续多久。
     in_contact = contact_time > 0.0
-    in_mode_time = torch.where(in_contact, contact_time, air_time)
-    half_stance = torch.mean(in_contact.float(), dim=1) == 0.5
-    matches_gait = (in_contact == desired_contact).all(dim=1)
-    mode_time = in_mode_time.min(dim=1).values
-    reward = torch.clamp(target_time - torch.abs(mode_time - target_time), min=0.0)
-    reward = torch.where(half_stance & matches_gait, reward, 0.0)
+    mode_time = torch.where(in_contact, contact_time, air_time)
+
+    target_duration = torch.where(
+        in_contact,
+        stance_duration,
+        swing_duration,
+    )
+
+    # 归一化三角形得分：
+    # 0 倍参考时间 -> 0 分
+    # 1 倍参考时间 -> 1 分
+    # 2 倍参考时间及以上 -> 0 分
+    duration_ratio = mode_time / target_duration
+    duration_score = (
+        1.0 - torch.abs(duration_ratio - 1.0)
+    ).clamp(min=0.0)
+
+    # 各脚独立门控：某只脚不符合相位，只取消该脚的贡献。
+    matches_gait = (in_contact == desired_contact).to(
+        duration_score.dtype
+    )
+    per_foot_reward = duration_score * matches_gait
+
+    # 不再要求恰好两脚接触，也不再取四脚最小值。
+    reward = per_foot_reward.mean(dim=1)
+
+    # 保留原有运动指令门控，站立时关闭此奖励。
     if command_name is not None:
         command = env.command_manager.get_command(command_name)
-        if command is not None:
-            linear_norm = torch.norm(command[:, :2], dim=1)
-            angular_norm = torch.abs(command[:, 2])
-            total_command = linear_norm + angular_norm
-            scale = (total_command > command_threshold).float()
-            reward *= scale
+        assert command is not None, f"Command '{command_name}' not found."
+
+        command_magnitude = (
+            torch.linalg.norm(command[:, :2], dim=1)
+            + torch.abs(command[:, 2])
+        )
+        reward *= (command_magnitude > command_threshold).to(
+            reward.dtype
+        )
+
     return reward
 
 

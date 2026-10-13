@@ -200,6 +200,10 @@ def make_velocity_env_cfg(setup) -> ManagerBasedRlEnvCfg:
     ##
     def _build_commands():
         interval = setup.cfg.task_space.resampling_interval_s
+        if interval is None:
+            # 框架字段保留有限值；TaskVelocityCommand 自行更新，不使用基类计时器。
+            # 速度/目标航向由 controller 持有；heading 反馈角速度每步更新。
+            interval = max(setup.cfg.training.horizon_s, setup.cfg.evaluation.horizon_s)
         return {
             "twist": TaskVelocityCommandCfg(resampling_time_range=(interval, interval))
         }
@@ -374,7 +378,7 @@ def make_velocity_env_cfg(setup) -> ManagerBasedRlEnvCfg:
     }
 
     ##
-    # Basic PPO-style rewards, implemented and tuned locally for RI-4438 HIM.
+    # Reward terms, weights and parameters aligned with standalone RI-4438 HIM.
     ##
 
     rewards = {
@@ -394,7 +398,7 @@ def make_velocity_env_cfg(setup) -> ManagerBasedRlEnvCfg:
         ),
         "body_orientation_l2": RewardTermCfg(
             func=him_mdp.body_orientation_l2,
-            weight=-0.25,
+            weight=-0.2,
             params={
                 "asset_cfg": SceneEntityCfg("robot", body_names=())
             },  # Set per-robot.
@@ -422,7 +426,7 @@ def make_velocity_env_cfg(setup) -> ManagerBasedRlEnvCfg:
         ),
         "body_ang_vel": RewardTermCfg(
             func=him_mdp.body_angular_velocity_penalty,
-            weight=-0.08,  # Override per-robot
+            weight=-0.05,  # Override per-robot
             params={
                 "asset_cfg": SceneEntityCfg("robot", body_names=())
             },  # Set per-robot.
@@ -449,7 +453,7 @@ def make_velocity_env_cfg(setup) -> ManagerBasedRlEnvCfg:
         ),
         "foot_gait": RewardTermCfg(
             func=him_mdp.feet_gait,
-            weight=0.3,
+            weight=0.5,
             params={
                 "period": 0.6,
                 "offset": [0.0, 0.5, 0.5, 0.0],
@@ -461,7 +465,7 @@ def make_velocity_env_cfg(setup) -> ManagerBasedRlEnvCfg:
         ),
         "feet_air_time": RewardTermCfg(
             func=him_mdp.feet_air_time,
-            weight=1.0,
+            weight=0.2,
             params={
                 "sensor_name": "feet_ground_contact",
                 "gait_name": "foot_gait",  # Target time and support pair follow this gait.

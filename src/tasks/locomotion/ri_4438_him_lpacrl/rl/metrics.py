@@ -1,4 +1,4 @@
-"""Evaluation diagnostics; these scores do not replace episodic-return LP."""
+"""Offline evaluation diagnostics, independent of online tracking-progress LP."""
 
 from __future__ import annotations
 

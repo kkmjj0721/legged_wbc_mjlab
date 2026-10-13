@@ -120,10 +120,11 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
 
   agent_cfg = asdict(cfg.agent)
-  env_cfg = asdict(cfg.env)
 
   runner_kwargs = {}
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
+  # LPACRL records effective scene/CLI values during runner construction.
+  env_cfg = asdict(cfg.env)
 
   runner.add_git_repo_to_log(__file__)
   if resume_path is not None:
