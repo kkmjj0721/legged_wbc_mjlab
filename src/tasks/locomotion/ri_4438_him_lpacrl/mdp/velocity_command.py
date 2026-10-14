@@ -40,6 +40,15 @@ class TaskVelocityCommand(CommandTerm):
     def _update_metrics(self):
         pass
 
+    def create_gui(self, name, server, get_env_idx, on_change=None, request_action=None):
+        from .curriculums import get_controller
+
+        play = get_controller(self._env).play
+        if play is not None:
+            from .play_gui import create_play_gui
+
+            create_play_gui(play, name, server, get_env_idx, request_action)
+
 
 @dataclass(kw_only=True)
 class TaskVelocityCommandCfg(CommandTermCfg):

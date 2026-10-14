@@ -221,7 +221,7 @@ class Ri4438HimLpacrlCfg:
         method = "lp"  # 有符号进步；uniform 为相同覆盖条件下的均匀对照。
         # 线速度跟踪核值：去掉奖励权重与 dt，按实际完整回合平均。
         # teacher 分组 = vx 档 × 地形等级 × 前后方向；heading 在组内均匀采样。
-        temperature = 0.05
+        temperature = 0.02
         uniform_mix = 0.15
         stage_length_updates = 50
         min_episodes_per_group = 8  # 不足时保留样本和旧基线，禁止空组填零。

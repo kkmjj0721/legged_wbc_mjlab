@@ -320,6 +320,13 @@ class CurriculumController(ManagerTermBase):
         if self.mode == "evaluation":
             trials = self.setup.trials
             self.trials_by_slot = [trials[i % len(trials)] for i in range(n)]
+        # Interactive selections are runtime state, never part of the training
+        # catalog, teacher statistics, or checkpoint fingerprints.
+        self.play = None
+        if self.mode == "play":
+            from .play_control import PlayController
+
+            self.play = PlayController(self)
 
     def __call__(self, env, env_ids, **kwargs):
         ids = self._ids(env_ids)
@@ -377,6 +384,9 @@ class CurriculumController(ManagerTermBase):
         """在 reset 时联合确定任务、地形和命令，避免三者分别采样。"""
         ids = self._ids(env_ids)
         if not len(ids):
+            return
+        if self.play is not None:
+            self.play.assign(ids)
             return
         if self.mode == "evaluation":
             rows = [self.trials_by_slot[i] for i in ids.cpu().tolist()]
@@ -463,6 +473,9 @@ class CurriculumController(ManagerTermBase):
     def update_commands(self, env_ids=None, *, reset=False):
         """Hold the task target; convert heading error to policy yaw velocity."""
         ids = self._ids(env_ids)
+        if self.play is not None:
+            self.play.update_commands(ids, reset=reset)
+            return
         if self.command_interval_steps is None:
             indices = torch.zeros_like(ids)
         else:

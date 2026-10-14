@@ -253,7 +253,7 @@ def build_env_cfg(
         cfg.episode_length_s = (
             setup.cfg.evaluation.horizon_s
             if mode == "evaluation"
-            else setup.cfg.training.horizon_s
+            else int(1e9)  # Interactive play; falls/boundaries still reset the scene.
         )
         cfg.auto_reset = mode == "play"
         cfg.recorders = {}

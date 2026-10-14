@@ -529,6 +529,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 checkpoint["actor_state_dict"], strict=strict
             )
             self._validate_numerics()
+            self.controller.play.set_checkpoint_distribution(state)
             return infos
 
         if self.controller.mode != "train":
