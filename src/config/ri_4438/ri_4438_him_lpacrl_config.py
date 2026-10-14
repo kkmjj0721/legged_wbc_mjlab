@@ -5,7 +5,7 @@
 - Ri4438HimLpacrlCfgPPO：HIM 网络、PPO 算法和训练轮数。
 
 这里声明默认值；task 的配置工厂会复制它们，训练和评估不会修改这些类。
-课程统计与 teacher 更新遵循 FIBO 5813fc3；保留本项目的多地形三轴任务。
+teacher 的 signed LP/softmax 参考 FIBO 5813fc3；阶段统计和覆盖采样是本项目扩展。
 """
 
 import math
@@ -105,7 +105,7 @@ class Ri4438HimLpacrlCfg:
                 "mode": "magnitude_bins",
                 "edges": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],  # m/s。
             },
-            "vy": {"mode": "continuous", "range": (-0.5, 0.5)},  # m/s。
+            "vy": {"mode": "continuous", "range": (-1.0, 1.0)},  # m/s。
             "wz": {
                 "mode": "magnitude_bins",
                 "edges": [0.0, 1 / 6, 2 / 6, 0.5, 4 / 6, 5 / 6, 1.0],  # rad/s。
@@ -218,13 +218,18 @@ class Ri4438HimLpacrlCfg:
         resolution_m = 0.1  # 对应 187 条射线，与 HIM critic 的观测维度一致。
 
     class curriculum:
-        method = "lp"  # FIBO teacher 的有符号进步；uniform 为均匀对照。
-        # 仅线速度项：episode_sum / episode_steps / reward_weight，保留 dt。
-        # 每 PPO 迭代按回合求均值（空任务为 0），阶段内对迭代均值等权平均。
+        method = "lp"  # 有符号进步；uniform 为相同覆盖条件下的均匀对照。
+        # 线速度跟踪核值：去掉奖励权重与 dt，按实际完整回合平均。
+        # teacher 分组 = vx 档 × 地形等级 × 前后方向；heading 在组内均匀采样。
         temperature = 0.05
-        uniform_mix = 0.15  # BinnedVelocityCommandCfg.eps；uniform 对照须设 0。
+        uniform_mix = 0.15
         stage_length_updates = 50
+        min_episodes_per_group = 8  # 不足时保留样本和旧基线，禁止空组填零。
         seed_bin = 0  # 初始 |vx| 箱 seed : seed+1 = 2 : 1，其他维度均匀。
+        # 独立的前进直爬覆盖分支，不进入常规 LP 统计。比例为回合采样概率。
+        forward_stairs_fraction = 0.25
+        forward_stairs_velocity = 0.5
+        forward_stairs_heights_m = (0.05, 0.08, 0.10, 0.12)
 
     class evaluation:
         protocol_version = 3  # 保留 v2 时长语义，增加奖励分项、EPTE-SP 和配对诊断。

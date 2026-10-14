@@ -302,6 +302,74 @@ class TaskCatalog:
         return result
 
 
+class TeacherGroups:
+    """Group physical tasks by vx bin, terrain/level and actual travel direction.
+
+    The ordered physical catalog is unchanged. Rotational bins (and any lateral
+    bins) are sampled uniformly inside each group, independently of its LP.
+    """
+
+    def __init__(self, catalog):
+        self.catalog = catalog
+        grouped = {}
+        self.task_direction_to_group = {}
+        for tid, task in enumerate(catalog.records):
+            axis = task.axes[0]
+            if axis.magnitude:
+                directions = ([1] if axis.positive_probability > 0 else []) + (
+                    [-1] if axis.positive_probability < 1 else [])
+            else:
+                directions = ([1] if axis.high > 0 else []) + ([-1] if axis.low < 0 else [])
+                if not directions:
+                    directions = [0]
+            for direction in directions:
+                key = fingerprint([axis, task.terrain, task.level, direction])
+                if key not in grouped:
+                    grouped[key] = {"key": key, "vx_bin": plain(axis),
+                                    "terrain": task.terrain, "level": task.level,
+                                    "direction": direction, "task_ids": []}
+                grouped[key]["task_ids"].append(tid)
+        self.records = tuple(grouped.values())
+        self.num_groups = len(self.records)
+        self.directions = np.array([r["direction"] for r in self.records], dtype=np.int64)
+        self.members = tuple(np.array(r["task_ids"], dtype=np.int64) for r in self.records)
+        self.member_counts = np.array([len(m) for m in self.members])
+        self.member_table = np.zeros((self.num_groups, self.member_counts.max()), dtype=np.int64)
+        for gid, members in enumerate(self.members):
+            self.member_table[gid, :len(members)] = members
+        for gid, row in enumerate(self.records):
+            for tid in row["task_ids"]:
+                self.task_direction_to_group[tid, row["direction"]] = gid
+
+    def initial_probabilities(self, seed_bin):
+        task_prior = self.catalog.initial_teacher_probabilities(seed_bin)
+        p = np.zeros(self.num_groups)
+        for gid, row in enumerate(self.records):
+            # Teacher directions are balanced even when the catalog samples signs
+            # within a task. Lift the existing low-speed prior across these groups.
+            signs = sum((row["task_ids"][0], d) in self.task_direction_to_group for d in (-1, 0, 1))
+            p[gid] = task_prior[row["task_ids"]].sum() / signs
+        return p / p.sum()
+
+    def sample(self, probabilities, count, rng, command_count=1):
+        gids = rng.choice(self.num_groups, count, p=probabilities)
+        tids = self.member_table[gids, rng.integers(self.member_counts[gids])]
+        commands = self.catalog.sample_commands(np.repeat(tids, command_count), rng).reshape(count, command_count, 3)
+        magnitude = self.catalog._mag[tids, 0]
+        commands[magnitude, :, 0] = np.abs(commands[magnitude, :, 0]) * self.directions[gids[magnitude], None]
+        for i in np.flatnonzero(~magnitude):
+            tid, gid = tids[i], gids[i]
+            axis = self.catalog.records[tid].axes[0]
+            direction = self.directions[gid]
+            if axis.low < 0 < axis.high:
+                lo, hi = (0, axis.high) if direction > 0 else (axis.low, 0)
+                if self.catalog.sample_bin_centers and self.catalog._binned_axes[0]:
+                    commands[i, :, 0] = (lo + hi) / 2
+                else:
+                    commands[i, :, 0] = rng.uniform(lo, hi, command_count)
+        return gids, tids, commands
+
+
 def make_trial_table(catalog, cfg):
     trials = []
     interval = cfg.task_space.resampling_interval_s

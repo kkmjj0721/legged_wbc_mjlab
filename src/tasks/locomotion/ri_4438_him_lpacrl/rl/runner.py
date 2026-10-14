@@ -77,8 +77,6 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
     def __init__(self, env, train_cfg, log_dir=None, device="cpu"):
         from ..config.curriculum_cfg import finalize_fingerprints
 
-        if int(os.environ.get("WORLD_SIZE", "1")) != 1:
-            raise ValueError("LPACRL supports single-GPU training only")
         self.controller = get_controller(env.unwrapped)
         self.setup = self.controller.setup
         # Public scripts own CLI options. Record the effective agent directly;
@@ -291,6 +289,8 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         self._validate_observation_contract()
         obs = self.env.get_observations().to(self.device)
         self.alg.train_mode()
+        if self.is_distributed:
+            self.alg.broadcast_parameters()
         self.logger.init_logging_writer()
         unwrapped = getattr(self.env, "unwrapped", None)
         guard = None
@@ -383,6 +383,11 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
             self._maybe_update_curriculum()
             curriculum_time = time.perf_counter() - curriculum_start
             if guard is not None:
+                # The maximum was created inside inference_mode; collectives mutate it.
+                action_peak = action_peak.clone()
+                if self.is_distributed:
+                    torch.distributed.all_reduce(action_peak, op=torch.distributed.ReduceOp.MAX)
+                    torch.distributed.all_reduce(action_counts)
                 loss_dict["numerics/raw_action_max"] = action_peak.item()
                 loss_dict["numerics/action_clip_fraction"] = (
                     action_counts[0] / action_counts[1].clamp_min(1)
@@ -419,15 +424,16 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 self.logger.writer.add_scalar("Perf/curriculum_host_time", curriculum_time + statistics_time, it)
                 self.logger.writer.add_scalar("Perf/iteration_time", collect_time + learn_time + curriculum_time, it)
 
-            if self.logger.writer is not None and it % self.cfg["save_interval"] == 0:
+            if self.logger.log_dir is not None and it % self.cfg["save_interval"] == 0:
                 self.save(os.path.join(self.logger.log_dir, f"model_{it}.pt"))
 
-        if self.logger.writer is not None:
+        if self.logger.log_dir is not None:
             self.save(
                 os.path.join(
                     self.logger.log_dir, f"model_{self.current_learning_iteration}.pt"
                 )
             )
+        if self.logger.writer is not None:
             self.logger.stop_logging_writer()
 
     def _validate_observation_contract(self):
@@ -446,21 +452,39 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         state = self.controller.state
         update = state.completed_policy_updates + 1
         stage_closed = self.controller.advance(update)
-        if stage_closed and self.logger.log_dir:
+        if stage_closed and self.logger.log_dir and not self.logger.disable_logs:
             data = {
                 "update": update, "score_kind": state.SCORE_KIND,
                 "mean_scores": state.mean_scores, "stage_index": state.stage_index,
                 "lp": state.lp, "probabilities": state.probabilities,
                 "counts": state.counts, "iteration_counts": state.iteration_counts,
+                "stage_counts": state.stage_counts, "pending_counts": state.pending_counts,
+                "baseline_valid": state.baseline_valid, "comparison_valid": state.comparison_valid,
+                "teacher_groups": self.controller.groups.records,
                 "starts": self.controller.starts, "diagnostics": state.diagnostics(),
+                "group_starts": self.controller.group_starts,
+                "coverage_starts": self.controller.coverage_starts,
+                "coverage_counts": self.controller.coverage_counts,
             }
             with (Path(self.logger.log_dir) / "curriculum.jsonl").open("a") as handle:
                 handle.write(json.dumps(plain(data), allow_nan=False) + "\n")
         if self.logger.writer is not None:
             for key, value in state.diagnostics().items():
                 self.logger.writer.add_scalar("LPACRL/" + key, value, update)
+            self.logger.writer.add_scalar("LPACRL/coverage_completed_episodes", int(self.controller.coverage_counts.sum()), update)
+            self.logger.writer.add_scalar("LPACRL/coverage_started_episodes", int(self.controller.coverage_starts.sum()), update)
 
     def save(self, path, infos=None):
+        """Called by every rank; only rank zero writes the checkpoint and ONNX."""
+        self.controller.flush_samples(synchronize=True)
+        rng_states = None
+        if self.is_distributed:
+            rng_states = [None] * self.gpu_world_size
+            torch.distributed.all_gather_object(
+                rng_states, self.controller.rng.bit_generator.state
+            )
+            if self.gpu_global_rank != 0:
+                return
         self._validate_numerics()
         payload = {
             **(infos or {}),
@@ -468,6 +492,8 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
             "lpacrl": self.controller.state_dict(),
             "agent_config": deepcopy(self.cfg),
         }
+        if rng_states is not None:
+            payload["lpacrl"]["rng_states"] = rng_states
         # Base Mjlab runner persists common_step_counter as well.
         super().save(path, payload)
         self.export_policy_to_onnx(os.path.dirname(path), "policy.onnx")
@@ -512,6 +538,13 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 "Checkpoint has no LPACRL history; use --warm-start explicitly"
             )
         state = deepcopy(infos["lpacrl"])
+        rng_states = state.pop("rng_states", [state["rng_state"]])
+        if len(rng_states) != self.gpu_world_size:
+            raise ValueError(
+                f"Checkpoint has {len(rng_states)} workers, current run has "
+                f"{self.gpu_world_size}; resume with the same GPU count or use --warm-start"
+            )
+        state["rng_state"] = rng_states[self.gpu_global_rank]
         self.controller.load_state_dict(state)
         self.alg.load(checkpoint, None, strict)
         self._validate_numerics()

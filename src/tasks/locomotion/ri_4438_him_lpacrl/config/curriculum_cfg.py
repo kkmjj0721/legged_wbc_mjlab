@@ -141,6 +141,7 @@ def validate(cfg):
         "replicas": cfg.geometry.replicas,
         "trials_per_task": cfg.evaluation.trials_per_task,
         "stage_length_updates": cfg.curriculum.stage_length_updates,
+        "min_episodes_per_group": cfg.curriculum.min_episodes_per_group,
         "evaluation.num_envs": cfg.evaluation.num_envs,
         "training.num_envs": cfg.training.num_envs,
         "rollout_steps": cfg.training.rollout_steps,
@@ -174,6 +175,15 @@ def validate(cfg):
             raise ValueError("ang_vel_z_range must contain finite negative/positive limits")
     if cfg.curriculum.method not in {"lp", "uniform"}:
         raise ValueError("curriculum.method must be lp or uniform")
+    coverage = cfg.curriculum.forward_stairs_fraction
+    if not math.isfinite(coverage) or not 0 <= coverage < 1:
+        raise ValueError("forward_stairs_fraction must be in [0, 1)")
+    if (not math.isfinite(cfg.curriculum.forward_stairs_velocity)
+            or cfg.curriculum.forward_stairs_velocity <= 0):
+        raise ValueError("forward_stairs_velocity must be finite and positive")
+    heights = cfg.curriculum.forward_stairs_heights_m
+    if not heights or any(not math.isfinite(h) or h <= 0 for h in heights):
+        raise ValueError("forward_stairs_heights_m must contain positive finite heights")
     if type(cfg.curriculum.seed_bin) is not int or cfg.curriculum.seed_bin < 0:
         raise ValueError("curriculum.seed_bin must be a nonnegative integer")
     if type(cfg.task_space.sample_bin_centers) is not bool:
