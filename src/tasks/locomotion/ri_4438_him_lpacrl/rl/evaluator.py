@@ -19,6 +19,7 @@ from ..config.env_cfgs import build_env_cfg
 from ..mdp.curriculums import get_controller
 from ..mdp.task_catalog import plain
 from .metrics import epte_sp, relative_tracking_error, reward_terms_for_step
+from .deployment import DeploymentMetrics, deployment_summary
 
 
 def freeze_actor(actor, device):
@@ -149,6 +150,7 @@ class TaskEvaluator:
             )
             boundary_counts = torch.zeros(e, dtype=torch.long, device=device)
             traversal = TraversalMetrics(env, controller)
+            deployment = DeploymentMetrics(e, device, env.step_dt, evaluation_cfg)
             for step in range(max_steps):
                 actions = actor(obs)
                 # step() 返回时指令可能已更新；误差必须对应刚执行动作的指令。
@@ -184,6 +186,7 @@ class TaskEvaluator:
                 term_returns[active] += reward_terms_for_step(env)[active]
                 slot_steps += e
                 traversal.observe(active, commands, actions)
+                deployment.observe(actual, commands, active, terminated)
                 if self.step_callback is not None:
                     self.step_callback(env, batch, active, step)
                 done = terminated | truncated
@@ -219,6 +222,7 @@ class TaskEvaluator:
                             "boundary_crossings": int(boundary_counts[slot]),
                             "time_limit": bool(time_limit[slot]),
                             **traversal.trial(slot),
+                            **deployment.trial(slot),
                         }
                     )
                 active[finished] = False
@@ -231,6 +235,7 @@ class TaskEvaluator:
                     controller.evaluation_step_offsets[reset_ids] = lengths[reset_ids]
                     reset_obs, _ = env.reset(env_ids=reset_ids)
                     traversal.reset_segments(reset_ids)
+                    deployment.reset_segments(reset_ids)
                     # TensorDict iteration is explicit; this is not a plain dict.
                     for key in obs.keys():  # noqa: SIM118
                         obs[key][reset_ids] = reset_obs[key][reset_ids]
@@ -240,14 +245,16 @@ class TaskEvaluator:
             rows, self.setup.catalog, evaluation_cfg.trials_per_task,
             success_alive_fraction=evaluation_cfg.success_alive_fraction,
             success_tracking_error=evaluation_cfg.success_tracking_error,
+            deployment_stall_s=evaluation_cfg.deployment_stall_s,
         )
         result["simulated_slot_steps"] = slot_steps
         result["geometry_checks"] = monitor.summary() if monitor is not None else {}
         result["protocol"] = (
-            "v3: nominal, deterministic policy, fixed trial horizon; "
+            "v4: nominal, deterministic policy, fixed trial horizon; "
             "boundary resets continue the same task and command clock; "
             "physical failure ends the trial; EPTE-SP stability aggregation from Eq. (8), "
-            "project-relative-error convention for changing/near-zero commands"
+            "project-relative-error convention for changing/near-zero commands; "
+            "paper success retained; separate all-axis, stall and switch deployment gates"
         )
         result["metric_settings"] = {
             "traversal_version": 1,
@@ -257,6 +264,15 @@ class TaskEvaluator:
             "relative_error_floors": list(evaluation_cfg.relative_error_floors),
             "success_alive_fraction": evaluation_cfg.success_alive_fraction,
             "success_tracking_error": evaluation_cfg.success_tracking_error,
+            "success": "legacy alias of paper_success: alive fraction, vx and wz EPTE-SP",
+            "tracking_success": "alive fraction and vx/vy/wz EPTE-SP",
+            "deployment_success": "all axes within deployment absolute/relative tolerances, no physical failure, no sustained stall, all observed switches pass",
+            "deployment_tracking_error": "mean_alive(abs(error)/max(abs_tolerance,rel_tolerance*abs(command))); each axis <1",
+            "deployment": {
+                key: plain(value) for key, value in vars(evaluation_cfg).items()
+                if key.startswith("deployment_")
+            },
+            "transition_coverage": "zero observed switches/reversals -> null success, not a successful test",
             "reward_terms": "weighted contributions, same dt scaling as total return",
             "relative_error": "clip(mean_alive(abs(error)/max(abs(command),floor)),0,1)",
         }
@@ -274,6 +290,7 @@ class TaskEvaluator:
 def summarize_trials(
     rows, catalog, trials_per_task, *,
     success_alive_fraction=0.9, success_tracking_error=0.3,
+    deployment_stall_s=2.0,
 ):
     if len(rows) != catalog.num_tasks * trials_per_task:
         raise ValueError("Missing evaluation trials")
@@ -320,12 +337,46 @@ def summarize_trials(
                 row["relative_error_sum"], row["alive_steps"], row["horizon_steps"]
             )
             row.update(zip(("vx_epte_sp", "vy_epte_sp", "wz_epte_sp"), scores.tolist()))
-            row["success"] = bool(
+            row["paper_success"] = bool(
                 row["alive_steps"] > success_alive_fraction * row["horizon_steps"]
                 and scores[0] < success_tracking_error
                 and scores[2] < success_tracking_error
             )
-            row["tracking_success"] = row["success"]
+            row["success"] = row["paper_success"]  # Historical result consumers retain the paper metric.
+            row["tracking_success"] = bool(
+                row["alive_steps"] > success_alive_fraction * row["horizon_steps"]
+                and (scores < success_tracking_error).all()
+            )
+            if "max_stall_seconds" in row and "deployment_tracking_error" in row:
+                deployment_error = np.asarray(row["deployment_tracking_error"])
+                if deployment_error.shape != (3,) or not np.isfinite(deployment_error).all() or (deployment_error < 0).any():
+                    raise ValueError("Invalid deployment tracking errors")
+                counters = ("transition_count", "transition_completed", "transition_passed",
+                            "reversal_count", "reversal_passed")
+                if (any(type(row[k]) is not int or row[k] < 0 for k in counters)
+                        or not 0 <= row["transition_passed"] <= row["transition_completed"] <= row["transition_count"]
+                        or not 0 <= row["reversal_passed"] <= row["reversal_count"] <= row["transition_count"]
+                        or row["reversal_passed"] > row["transition_passed"]
+                        or not math.isfinite(row["max_stall_seconds"]) or row["max_stall_seconds"] < 0):
+                    raise ValueError("Invalid deployment temporal diagnostics")
+                row["deployment_tracking_success"] = bool((deployment_error < 1.).all())
+                row["transition_success"] = bool(
+                    not row["terminated"] and row["transition_passed"] == row["transition_count"]
+                ) if row["transition_count"] else None
+                row["reversal_success"] = bool(
+                    not row["terminated"] and row["reversal_passed"] == row["reversal_count"]
+                ) if row["reversal_count"] else None
+                row["deployment_success"] = bool(
+                    row["deployment_tracking_success"] and not row["terminated"]
+                    and row["max_stall_seconds"] + 1e-9 < deployment_stall_s
+                    and row["transition_passed"] == row["transition_count"]
+                )
+            else:
+                # Old saved trials have no time-resolved evidence. Do not
+                # invent a successful stall/transition test from episode means.
+                row["deployment_success"] = None
+                row["deployment_tracking_success"] = None
+                row["transition_success"] = row["reversal_success"] = None
             if "stair_steps_crossed" in row:
                 stairs = row["stair_step_count"] > 0
                 row["stair_progress_success"] = bool(stairs and row["stair_steps_crossed"] >= 2 and not row["terminated"])
@@ -354,6 +405,8 @@ def summarize_trials(
                     for axis in ("vx", "vy", "wz")
                 },
                 "success_rate": float(np.mean([r["success"] for r in group])),
+                "paper_success_rate": float(np.mean([r["paper_success"] for r in group])),
+                "tracking_success_rate": float(np.mean([r["tracking_success"] for r in group])),
                 **{
                     "reward/" + name: float(np.mean([r["reward_terms"][name] for r in group]))
                     for name in reward_names
@@ -385,6 +438,11 @@ def summarize_trials(
                 ),
             }
         )
+        deployed = deployment_summary(group)
+        per_task[-1].update(
+            deployment_success_rate=deployed["success_rate"],
+            deployment_evaluated_fraction=deployed["evaluated_trials"] / len(group),
+        )
         # These new diagnostics are optional for historical saved results.
         for key in ("net_displacement_m", "action_delta_rms", "foot_slip_m_s", "stair_steps_crossed"):
             if key in group[0]:
@@ -392,17 +450,21 @@ def summarize_trials(
         if "integrated_yaw_error_rad" in group[0]:
             per_task[-1]["mean_abs_integrated_yaw_error_rad"] = float(np.mean([abs(r["integrated_yaw_error_rad"]) for r in group]))
         if "terrain_traversal_success" in group[0]:
-            for key in ("tracking_success", "stair_progress_success", "terrain_traversal_success"):
+            for key in ("stair_progress_success", "terrain_traversal_success"):
                 per_task[-1][key + "_rate"] = float(np.mean([r[key] for r in group]))
     numeric = [
         k for k, v in per_task[0].items()
-        if k not in {"task_id", "count"} and isinstance(v, (int, float))
+        if k not in {"task_id", "count"} and (v is None or isinstance(v, (int, float)))
+        and any(r[k] is not None for r in per_task)
     ]
+    def mean_present(tasks, key):
+        values = [r[key] for r in tasks if r[key] is not None]
+        return float(np.mean(values)) if values else None
     by_terrain = {}
     for terrain in sorted({r["terrain"] for r in per_task}):
         tasks = [r for r in per_task if r["terrain"] == terrain]
         by_terrain[terrain] = {
-            k: float(np.mean([r[k] for r in tasks])) for k in numeric
+            k: mean_present(tasks, k) for k in numeric
         }
     return {
         "mean_returns": [r["mean_return"] for r in per_task],
@@ -410,6 +472,11 @@ def summarize_trials(
         "trial_returns": trial_returns,
         "per_task": per_task,
         "trials": rows,
-        "macro": {k: float(np.mean([r[k] for r in per_task])) for k in numeric},
+        "macro": {k: mean_present(per_task, k) for k in numeric},
         "by_terrain": by_terrain,
+        "deployment": deployment_summary(rows),
+        "by_profile": {
+            profile: deployment_summary([r for r in rows if r.get("profile") == profile])
+            for profile in sorted({r["profile"] for r in rows if "profile" in r})
+        },
     }

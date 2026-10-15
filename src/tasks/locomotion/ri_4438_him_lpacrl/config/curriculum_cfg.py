@@ -188,8 +188,8 @@ def validate(cfg):
         raise ValueError("curriculum.seed_bin must be a nonnegative integer")
     if type(cfg.task_space.sample_bin_centers) is not bool:
         raise ValueError("sample_bin_centers must be boolean")
-    if cfg.evaluation.protocol_version != 3:
-        raise ValueError("This evaluator requires protocol_version=3")
+    if cfg.evaluation.protocol_version != 4:
+        raise ValueError("This evaluator requires protocol_version=4")
     floors = cfg.evaluation.relative_error_floors
     if len(floors) != 3 or any(not math.isfinite(x) or x <= 0 for x in floors):
         raise ValueError("relative_error_floors must contain three positive finite values")
@@ -197,6 +197,21 @@ def validate(cfg):
         value = getattr(cfg.evaluation, name)
         if not math.isfinite(value) or not 0 < value < 1:
             raise ValueError(f"{name} must be in (0, 1)")
+    for name in ("deployment_stall_s", "deployment_stall_window_s",
+                 "deployment_transition_grace_s", "deployment_transition_window_s",
+                 "deployment_segment_s"):
+        if not math.isfinite(getattr(cfg.evaluation, name)) or getattr(cfg.evaluation, name) <= 0:
+            raise ValueError(f"{name} must be positive and finite")
+    for name, size in (("deployment_stall_command", 2), ("deployment_stall_speed", 2),
+                       ("deployment_change_thresholds", 3), ("deployment_tracking_abs", 3),
+                       ("deployment_tracking_rel", 3)):
+        values = getattr(cfg.evaluation, name)
+        if len(values) != size or any(not math.isfinite(v) or v <= 0 for v in values):
+            raise ValueError(f"{name} needs {size} positive finite values")
+    if cfg.evaluation.deployment_segment_s <= (
+        cfg.evaluation.deployment_transition_grace_s + cfg.evaluation.deployment_transition_window_s
+    ):
+        raise ValueError("Deployment segments must allow grace plus a complete tracking window")
     if (
         not math.isfinite(cfg.curriculum.uniform_mix)
         or not 0 <= cfg.curriculum.uniform_mix < 1

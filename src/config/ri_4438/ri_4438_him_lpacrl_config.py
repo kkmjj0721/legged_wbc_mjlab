@@ -118,7 +118,7 @@ class Ri4438HimLpacrlCfg:
         # 只在 reset 采样速度和目标航向；heading 固定，反馈 wz 每步更新。
         resampling_interval_s = None
         # 任务分箱使用中心；连续 vy 仍在范围内采样。
-        sample_bin_centers = True
+        sample_bin_centers = False
         # 每个轴的完整默认值；axes 中的同名字段覆盖这里。
         axis_defaults = {
             "mode": "fixed",
@@ -219,10 +219,11 @@ class Ri4438HimLpacrlCfg:
 
     class curriculum:
         method = "lp"  # 有符号进步；uniform 为相同覆盖条件下的均匀对照。
-        # 线速度跟踪核值：去掉奖励权重与 dt，按实际完整回合平均。
+        # 线速度/角速度跟踪核按两项正奖励权重归一化。
+        # 物理失败按完整回合预算记分；正常超时/地形出界按实际片段平均。
         # teacher 分组 = vx 档 × 地形等级 × 前后方向；heading 在组内均匀采样。
-        temperature = 0.02
-        uniform_mix = 0.15
+        temperature = 0.025
+        uniform_mix = 0.20
         stage_length_updates = 50
         min_episodes_per_group = 8  # 不足时保留样本和旧基线，禁止空组填零。
         seed_bin = 0  # 初始 |vx| 箱 seed : seed+1 = 2 : 1，其他维度均匀。
@@ -232,7 +233,7 @@ class Ri4438HimLpacrlCfg:
         forward_stairs_heights_m = (0.05, 0.08, 0.10, 0.12)
 
     class evaluation:
-        protocol_version = 3  # 保留 v2 时长语义，增加奖励分项、EPTE-SP 和配对诊断。
+        protocol_version = 4  # 保留论文判据，另报全轴跟踪、持续停滞和切速验收。
         trials_per_task = 8  # 每个任务固定试验数，与并行环境数独立。
         num_envs = 512  # 1560 × 8 = 12480 次试验，分 25 批评估。
         horizon_s = 20.0
@@ -242,6 +243,18 @@ class Ri4438HimLpacrlCfg:
         relative_error_floors = (0.1, 0.1, 0.1)  # vx/vy: m/s；wz: rad/s。
         success_alive_fraction = 0.9  # 严格大于；1000 步试验对应 >900 存活步。
         success_tracking_error = 0.3  # vx、wz 的 EPTE-SP 均须严格小于此值。
+        # 部署指标是项目扩展；不改变论文 success 或训练指令采样。
+        # 参考 Go2 LP-ACRL 的 max(绝对容差, 相对容差*|指令|)，避免零指令百分比失真。
+        deployment_tracking_abs = (0.1, 0.15, 0.2)  # vx/vy: m/s；wz: rad/s。
+        deployment_tracking_rel = (0.3, 0.3, 0.3)
+        deployment_stall_s = 2.0  # 连续低进度达到此时间判失败。
+        deployment_stall_window_s = 0.5  # 速度滑动平均，避免原地摆动掩盖停滞。
+        deployment_stall_command = (0.2, 0.2)  # 平面速度 m/s、角速度 rad/s。
+        deployment_stall_speed = (0.05, 0.05)  # 沿指令方向的最低实际进度。
+        deployment_change_thresholds = (0.2, 0.2, 0.3)  # vx/vy/wz 的显著指令变化。
+        deployment_transition_grace_s = 1.0
+        deployment_transition_window_s = 1.0  # 宽限之后单独检查每次切换，防止均值掩盖。
+        deployment_segment_s = 3.0  # 独立平地验收序列每段长度。
 
 
 class Ri4438HimLpacrlCfgPPO:

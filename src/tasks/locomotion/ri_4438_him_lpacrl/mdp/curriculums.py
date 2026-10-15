@@ -23,8 +23,8 @@ class LPState:
     per-group baseline are local extensions, not upstream parity behavior.
     """
 
-    VERSION = 5
-    SCORE_KIND = "linear_tracking_kernel_episode_mean_v2"
+    VERSION = 6
+    SCORE_KIND = "linear_angular_tracking_failure_budget_v3"
     ARRAY_FIELDS = (
         "probabilities", "mean_scores", "lp", "counts", "pending_sums",
         "pending_counts", "stage_counts", "iteration_counts", "reported_counts",
@@ -202,15 +202,38 @@ class LPState:
         }
 
 
-def episode_tracking_scores(env, env_ids, weight):
-    """Recover the mean linear tracking kernel, independent of dt/episode length."""
+def episode_mean_tracking_kernel(env, env_ids, name, weight):
+    """Recover a bounded tracking kernel, undoing reward weight and dt once."""
     steps = env.episode_length_buf[env_ids].clamp(min=1).float()
-    terms = env.reward_manager._episode_sums["track_linear_velocity"][env_ids]
+    terms = env.reward_manager._episode_sums[name][env_ids]
     dt_scale = env.step_dt if env.cfg.scale_rewards_by_dt else 1.0
     if not math.isfinite(dt_scale) or dt_scale <= 0 or not math.isfinite(weight) or weight <= 0:
         raise ValueError("Tracking score needs positive finite weight and dt")
     raw = terms / steps / float(weight) / dt_scale
     return torch.where(torch.isfinite(raw), raw.clamp(0, 1), torch.full_like(raw, float("nan")))
+
+
+def episode_tracking_scores(env, env_ids, linear_weight, angular_weight):
+    """Joint tracking with a full-horizon budget for physical failures.
+
+    Following the reference terrain curriculum, use both accumulated tracking
+    rewards. Normalize their positive weights to keep the LP score in [0, 1].
+    For a fall, unexecuted steps contribute zero; for a normal timeout or terrain
+    boundary, use the observed segment mean. A boundary is not a fall, and a
+    simultaneous physical failure takes precedence over truncation.
+
+    This is a reward score, not the paper's EPTE-SP error metric. Its changed
+    units/semantics require a new teacher state; old score baselines cannot resume.
+    """
+    linear = episode_mean_tracking_kernel(env, env_ids, "track_linear_velocity", linear_weight)
+    angular = episode_mean_tracking_kernel(env, env_ids, "track_angular_velocity", angular_weight)
+    score = (linear_weight * linear + angular_weight * angular) / (linear_weight + angular_weight)
+    horizon = env.max_episode_length
+    if not math.isfinite(horizon) or horizon <= 0:
+        raise ValueError("Teacher score requires a positive episode horizon")
+    fraction = (env.episode_length_buf[env_ids].float() / horizon).clamp(0, 1)
+    failed = env.termination_manager.terminated[env_ids]
+    return score * torch.where(failed, fraction, torch.ones_like(fraction))
 
 
 def get_controller(env):
@@ -314,8 +337,9 @@ class CurriculumController(ManagerTermBase):
         self._diagnostics = self.state.diagnostics()
         if self.mode == "train":
             self._tracking_weight = env.reward_manager.get_term_cfg("track_linear_velocity").weight
-            if not math.isfinite(self._tracking_weight) or self._tracking_weight <= 0:
-                raise ValueError("Teacher needs a positive linear tracking reward weight")
+            self._angular_tracking_weight = env.reward_manager.get_term_cfg("track_angular_velocity").weight
+            if any(not math.isfinite(w) or w <= 0 for w in (self._tracking_weight, self._angular_tracking_weight)):
+                raise ValueError("Teacher needs positive linear and angular tracking reward weights")
         self.trials_by_slot = []
         if self.mode == "evaluation":
             trials = self.setup.trials
@@ -342,7 +366,7 @@ class CurriculumController(ManagerTermBase):
             self._coverage_counts.index_add_(0, self.episode_task_id[covered], torch.ones_like(covered))
             ended = ended[self.episode_sampling_mode[ended] == 0]
             task_ids = self.episode_group_id[ended]
-            scores = episode_tracking_scores(env, ended, self._tracking_weight)
+            scores = episode_tracking_scores(env, ended, self._tracking_weight, self._angular_tracking_weight)
             self._score_sums.index_add_(0, task_ids, scores)
             self._score_counts.index_add_(0, task_ids, torch.ones_like(task_ids))
             self.statistics_host_seconds += time.perf_counter() - start

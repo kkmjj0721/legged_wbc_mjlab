@@ -43,6 +43,9 @@ def from_snapshot(snapshot):
     for name in ("training", "geometry", "evaluation", "curriculum"):
         values = {**vars(getattr(cfg, name)), **deepcopy(snapshot[name])}
         setattr(cfg, name, NS(**values))
+    # Historical task/robot parameters remain usable with the current evaluator.
+    # The evaluation fingerprint records this upgrade; teacher state is not loaded.
+    cfg.evaluation.protocol_version = make_lpacrl_cfg().evaluation.protocol_version
     for name in ("robot", "learning"):
         setattr(
             cfg, name, NS(**{k: NS(**deepcopy(v)) for k, v in snapshot[name].items()})
@@ -128,6 +131,8 @@ def main():
     parser.add_argument("--trials-per-task", type=int)
     parser.add_argument("--horizon-s", type=float)
     parser.add_argument("--command", choices=tuple(COMMANDS))
+    parser.add_argument("--suite", choices=("task", "deployment", "both"), default="both",
+                        help="Task-space evaluation, fixed flat command sequences, or both (default)")
     parser.add_argument("--terrain", action="append")
     parser.add_argument("--level")
     parser.add_argument(
@@ -145,6 +150,10 @@ def main():
         parser.error("output directory already exists; choose a new directory")
     if args.video and args.num_envs != 1:
         parser.error("video recording requires --num-envs 1")
+    if args.video and args.suite != "task":
+        parser.error("video recording requires --suite task")
+    if args.suite == "deployment" and any((args.command, args.terrain, args.level, args.horizon_s)):
+        parser.error("deployment uses fixed flat sequences; command/terrain/level/horizon apply to --suite task or both")
     os.environ.setdefault("MUJOCO_GL", "egl")
 
     import torch
@@ -155,6 +164,7 @@ def main():
     from ..config.rl_cfg import ri_4438_him_runner_cfg
     from .evaluator import TaskEvaluator, export_result
     from .metrics import annotate_progress
+    from .deployment import make_deployment_setup
 
     saved = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     infos = saved.get("infos") or {}
@@ -186,7 +196,9 @@ def main():
     for name in ("num_envs", "trials_per_task", "horizon_s"):
         if getattr(args, name) is not None:
             setattr(cfg.evaluation, name, getattr(args, name))
-    setup = build_curriculum(cfg)
+    deployment_cfg = deepcopy(cfg)
+    setup = make_deployment_setup(cfg) if args.suite == "deployment" else build_curriculum(cfg)
+    cfg = setup.cfg
     # Evaluation settings and fixed trials have their own fingerprint, outside
     # the training resume contract. num_envs is included for reproducibility.
     setup.fingerprints["evaluation"] = fingerprint(
@@ -240,9 +252,37 @@ def main():
             checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),
             configuration=plain(cfg),
             command_suite=args.command,
+            suite=args.suite,
         )
+        if args.suite == "both":
+            deployment_setup = make_deployment_setup(deployment_cfg)
+            deployment_setup.fingerprints["evaluation"] = fingerprint(
+                [deployment_setup.cfg.evaluation, deployment_setup.trials, "traversal_v1"]
+            )
+            # Release the large terrain evaluation scene before the small suite.
+            evaluator.close()
+            evaluator.env = None
+            sequence_evaluator = TaskEvaluator(deployment_setup, args.device)
+            try:
+                sequence_env = sequence_evaluator._get_env()
+                finalize_fingerprints(deployment_setup, sequence_env.cfg)
+                sequence_result = sequence_evaluator.evaluate(actor)
+                sequence_result.update(
+                    checkpoint=result["checkpoint"], checkpoint_sha256=result["checkpoint_sha256"],
+                    checkpoint_iteration=result["checkpoint_iteration"],
+                    configuration=plain(deployment_setup.cfg), suite="deployment",
+                )
+                export_result(sequence_result, args.output_dir / "deployment", deployment_setup.catalog,
+                              deployment_setup.fingerprints)
+                result["deployment_suite"] = {
+                    "result_path": "deployment/evaluation.json",
+                    **sequence_result["deployment"], "by_profile": sequence_result["by_profile"],
+                }
+            finally:
+                sequence_evaluator.close()
         export_result(result, args.output_dir, setup.catalog, setup.fingerprints)
         print(json.dumps(result["macro"], indent=2))
+        print(json.dumps(result.get("deployment_suite", result["deployment"]), indent=2))
     finally:
         if video:
             video.close()
