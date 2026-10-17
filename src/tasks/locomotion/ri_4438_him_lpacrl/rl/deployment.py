@@ -36,6 +36,7 @@ def make_deployment_setup(source_cfg):
     from ..config.curriculum_cfg import build_curriculum
 
     cfg = deepcopy(source_cfg)
+    cfg.task_space.random_process = False
     repeats = cfg.evaluation.trials_per_task
     cfg.task_space.heading_command = False
     default_axis = vars(cfg.task_space.command_axes["vx"])
@@ -80,13 +81,25 @@ class DeploymentMetrics:
         self.cursor = 0
         for name in ("stall_run", "max_stall", "stalled_steps", "transition_count",
                      "transition_completed", "transition_passed", "reversal_count",
-                     "reversal_passed", "elapsed", "error_count"):
+                     "reversal_passed", "elapsed", "error_count", "transition_failed",
+                     "transition_unobserved", "resampling_count"):
             setattr(self, name, torch.zeros(num_envs, dtype=torch.long, device=device))
         self.pending = torch.zeros(num_envs, dtype=torch.bool, device=device)
         self.reversing = torch.zeros_like(self.pending)
         self.error_sum = torch.zeros(num_envs, 3, dtype=torch.float64, device=device)
         self.trial_error_sum = torch.zeros_like(self.error_sum)
         self.trial_steps = torch.zeros(num_envs, dtype=torch.long, device=device)
+        self.event_capacity = max(2, math.ceil(cfg.horizon_s / 2) + 2)
+        self.event_data = torch.zeros(num_envs, self.event_capacity, 14, device=device)
+        # time, delta vx/vy/wz, heading delta, pre-switch vx/vy/wz,
+        # support tile, significant, result (0 incomplete, 1 pass, -1 fail), window steps.
+        self.pending_event = torch.zeros(num_envs, dtype=torch.long, device=device)
+        self.last_actual = torch.zeros_like(self.last_command)
+        self.heading_error_sum = torch.zeros(num_envs, device=device)
+        self.heading_steps = torch.zeros(num_envs, dtype=torch.long, device=device)
+        self.heading_elapsed = torch.zeros_like(self.heading_steps)
+        self.heading_pending = torch.zeros_like(self.pending)
+        self.heading_event = torch.zeros_like(self.heading_steps)
 
     def _clear_motion_history(self, ids):
         self.history[:, ids] = 0
@@ -101,9 +114,45 @@ class DeploymentMetrics:
         self.seen[ids] = False
         self.pending[ids] = False
 
-    def observe(self, actual, commands, active, terminated):
+    def reset(self, ids):
+        """Discard only new-episode transient state, never on command changes."""
+        for name, value in vars(self).items():
+            if isinstance(value, torch.Tensor) and value.ndim and name not in {
+                "abs_tolerance", "rel_tolerance", "change_thresholds", "history"}:
+                value[ids] = 0
+        self.history[:, ids] = 0
+
+    def finish(self, ids):
+        self.transition_unobserved[ids] += self.pending[ids].long()
+        self.pending[ids] = False
+
+    def observe(self, actual, commands, active, terminated, *, event=None,
+                event_delta=None, heading_delta=None, support_tile=None, heading_error=None, support_surface=None):
+        delta = commands - self.last_command if event_delta is None else event_delta
         changed = (active & self.seen
-                   & ((commands - self.last_command).abs() >= self.change_thresholds - 1e-6).any(-1))
+                   & (delta.abs() >= self.change_thresholds - 1e-6).any(-1))
+        if event is not None:
+            changed &= event
+        sampled = changed if event is None else active & event
+        self.transition_unobserved += (changed & self.pending).long()
+        slots = sampled.nonzero(as_tuple=False).flatten()
+        indexes = self.resampling_count[slots].clamp_max(self.event_capacity - 1)
+        self.event_data[slots, indexes, 0] = self.trial_steps[slots].float() * self.dt
+        self.event_data[slots, indexes, 1:4] = delta[slots]
+        if heading_delta is not None:
+            self.event_data[slots, indexes, 4] = heading_delta[slots]
+        self.event_data[slots, indexes, 5:8] = self.last_actual[slots]
+        if support_tile is not None:
+            self.event_data[slots, indexes, 8] = support_tile[slots].float()
+        if support_surface is not None:
+            self.event_data[slots, indexes, 13] = support_surface[slots].float()
+        self.event_data[slots, indexes, 9] = changed[slots].float()
+        self.event_data[slots, indexes, 12] = -1
+        self.heading_event[slots] = indexes
+        self.heading_elapsed[slots] = 0
+        self.heading_pending[slots] = True
+        self.pending_event[slots] = indexes
+        self.resampling_count += sampled.long()
         reversed_axis = ((commands * self.last_command < 0)
                          & (commands.abs() >= self.change_thresholds)
                          & (self.last_command.abs() >= self.change_thresholds))
@@ -118,12 +167,21 @@ class DeploymentMetrics:
         self.error_count[changed] = 0
         self._clear_motion_history(changed)
         self.last_command[active] = commands[active]
+        self.last_actual[active] = actual[active]
         self.seen[active] = True
         alive = active & ~terminated
         tolerance = torch.maximum(self.abs_tolerance, self.rel_tolerance * commands.abs())
         error_ratio = (actual - commands).abs() / tolerance
-        self.trial_error_sum[alive] += error_ratio[alive].double()
-        self.trial_steps += alive.long()
+        self.trial_error_sum[active] += error_ratio[active].double()
+        self.trial_steps += active.long()
+        if heading_error is not None:
+            self.heading_error_sum[active] += heading_error[active].abs()
+            self.heading_steps += active.long()
+            self.heading_elapsed[self.heading_pending & active] += 1
+            converged = self.heading_pending & active & ~terminated & (heading_error.abs() < .15)
+            slots = converged.nonzero().flatten()
+            self.event_data[slots, self.heading_event[slots], 12] = self.heading_elapsed[slots].float() * self.dt
+            self.heading_pending[converged | terminated] = False
 
         self.history_sum[alive] -= self.history[self.cursor, alive]
         self.history[self.cursor, alive] = actual[alive]
@@ -139,8 +197,8 @@ class DeploymentMetrics:
         stalled = (alive & (self.history_count == self.window_steps) & (
             ((speed > moving) & (progress < min_linear))
             | ((commands[:, 2].abs() > turning) & (yaw_progress < min_angular))))
-        self.stall_run = torch.where(stalled, self.stall_run + 1, 0)
-        self.max_stall = torch.maximum(self.max_stall, self.stall_run)
+        self.stall_run.copy_(torch.where(stalled, self.stall_run + 1, 0))
+        self.max_stall.copy_(torch.maximum(self.max_stall, self.stall_run))
         self.stalled_steps += stalled.long()
 
         self.elapsed[self.pending & active] += 1
@@ -153,17 +211,34 @@ class DeploymentMetrics:
                   & (error < 1.).all(-1))
         self.transition_completed += complete.long()
         self.transition_passed += passed.long()
+        failed = (complete & ~passed) | (self.pending & active & terminated)
+        self.transition_failed += failed.long()
         self.reversal_passed += (passed & self.reversing).long()
+        slots = (complete | failed).nonzero(as_tuple=False).flatten()
+        self.event_data[slots, self.pending_event[slots], 10] = torch.where(passed[slots], 1., -1.)
+        self.event_data[slots, self.pending_event[slots], 11] = self.error_count[slots].float()
         self.pending[complete | terminated] = False
 
     def trial(self, slot):
+        events = self.event_data[slot, :min(int(self.resampling_count[slot]), self.event_capacity)].tolist()
         return {
             "deployment_tracking_error": (self.trial_error_sum[slot] / self.trial_steps[slot].clamp(min=1)).tolist(),
             "max_stall_seconds": float(self.max_stall[slot]) * self.dt,
             "deployment_stalled_seconds": float(self.stalled_steps[slot]) * self.dt,
             **{name: int(getattr(self, name)[slot]) for name in (
                 "transition_count", "transition_completed", "transition_passed",
-                "reversal_count", "reversal_passed")},
+                "reversal_count", "reversal_passed", "transition_failed", "resampling_count")},
+            "transition_unobserved": int(self.transition_unobserved[slot]) + int(self.pending[slot]),
+            "heading_error_mean_rad": float(self.heading_error_sum[slot] / self.heading_steps[slot].clamp_min(1)) if self.heading_steps[slot] else None,
+            "switch_events": [{"time_s": e[0], "command_delta": e[1:4], "heading_delta_rad": e[4],
+                               "velocity_before": e[5:8], "support_tile": int(e[8]),
+                               "significant": bool(e[9]),
+                               "result": ({1: "passed", -1: "failed", 0: "unobserved"}[int(e[10])] if e[9] else "not_significant"),
+                               "check_steps": int(e[11]),
+                               "window_complete": e[11] >= self.check_steps,
+                               "heading_convergence_s": e[12] if e[12] >= 0 else None,
+                               "support_surface": ("flat", "rough", "stairs", "slope", "mixed", "unsupported")[int(e[13])]}
+                              for e in events],
         }
 
 
@@ -179,4 +254,9 @@ def deployment_summary(rows):
         "transition_success_rate": float(np.mean([r["transition_success"] for r in transitions])) if transitions else None,
         "reversal_trials": len(reversals),
         "reversal_success_rate": float(np.mean([r["reversal_success"] for r in reversals])) if reversals else None,
+        "resamplings": sum(r.get("resampling_count", 0) for r in rows),
+        "significant_switches": sum(r.get("transition_count", 0) for r in rows),
+        "switch_passed": sum(r.get("transition_passed", 0) for r in rows),
+        "switch_failed": sum(r.get("transition_failed", 0) for r in rows),
+        "switch_unobserved": sum(r.get("transition_unobserved", 0) for r in rows),
     }

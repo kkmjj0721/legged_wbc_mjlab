@@ -144,9 +144,9 @@ class TerminalEstimatorRecorder(RecorderTerm):
     def record_pre_reset(self, env_ids: torch.Tensor) -> None:
         env = self._env
         self._refresh_terminal_state()
-        # Match the manual path: the terminal phase uses this step's command update.
-        # The framework subsequently resets these timers and advances them by dt=0.
-        env.command_manager.compute(dt=env.step_dt, env_ids=env_ids)
+        # Refresh heading feedback without sampling a new segment on a done state.
+        # The subsequent reset initializes the next episode's clock at dt=0.
+        env.command_manager.compute(dt=0.0, env_ids=env_ids)
         terminal = env.observation_manager.compute_group("estimator")
         assert isinstance(terminal, torch.Tensor)
         env.extras["terminal_observations"] = TensorDict(

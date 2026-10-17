@@ -147,10 +147,13 @@ class TaskRecord:
     terrain: str
     level: str
     axes: tuple[AxisBin, AxisBin, AxisBin]
+    mode: str = "fixed"
 
     def metadata(self):
-        values = {"terrain": self.terrain, "level": self.level}
-        rotation_axis = "heading" if "/heading=" in self.key else "wz"
+        values = {"terrain": self.terrain, "level": self.level, "mode": self.mode}
+        rotation_axis = "heading" if self.mode == "random_process" or "/heading=" in self.key else "wz"
+        if self.mode == "random_process":
+            values.update(Ax=self.axes[0].high, Ay=self.axes[1].high)
         for name, axis in zip(("vx", "vy", rotation_axis), self.axes):
             values[name] = axis.name
             values[name + "_sign"] = axis.sign
@@ -191,6 +194,16 @@ class TaskCatalog:
                     key = "/".join(parts + [f"terrain={terrain}", f"level={level}"])
                     candidates.append(TaskRecord(key, terrain, level, axes))
 
+        self.random_process = getattr(cfg, "random_process", False)
+        if self.random_process:
+            for terrain, family in cfg.terrains.items():
+                for level in family.levels:
+                    for ax, ay in itertools.product(cfg.process_amplitudes, repeat=2):
+                        key = f"mode=random_process/terrain={terrain}/level={level}/Ax={ax:g}/Ay={ay:g}"
+                        axes = (AxisBin(f"Ax{ax:g}", -ax, ax), AxisBin(f"Ay{ay:g}", -ay, ay),
+                                AxisBin("world_heading", *cfg.process_heading_range))
+                        candidates.append(TaskRecord(key, terrain, level, axes, "random_process"))
+
         def matches(task, rule):
             meta = task.metadata()
             if not rule or any(k not in meta for k in rule):
@@ -213,7 +226,7 @@ class TaskCatalog:
             raise ValueError("Empty catalog or duplicate semantic keys")
         self.sample_bin_centers = getattr(cfg, "sample_bin_centers", False)
         signature = {"records": self.records, "axes": cfg.command_axes}
-        # Preserve the historical uniform-in-bin signature for offline playback.
+        # Centre sampling changes the distribution and therefore the identity.
         if self.sample_bin_centers:
             signature["sample_bin_centers"] = True
         self.fingerprint = fingerprint(signature)
@@ -231,6 +244,7 @@ class TaskCatalog:
         self._positive = np.array(
             [[a.positive_probability for a in t.axes] for t in self.records]
         )
+        self.process_mask = np.array([t.mode == "random_process" for t in self.records])
 
     @property
     def num_tasks(self):
@@ -251,9 +265,8 @@ class TaskCatalog:
             self._hi[ids] - self._lo[ids]
         )
         if self.sample_bin_centers:
-            values[:, self._binned_axes] = (
-                (self._lo[ids] + self._hi[ids]) / 2
-            )[:, self._binned_axes]
+            mask = ~self.process_mask[ids, None] & self._binned_axes[None, :]
+            values = np.where(mask, (self._lo[ids] + self._hi[ids]) / 2, values)
         signs = np.where(rng.random((len(ids), 3)) < self._positive[ids], 1.0, -1.0)
         return np.where(self._mag[ids], values * signs, values)
 
@@ -315,6 +328,13 @@ class TeacherGroups:
         self.task_direction_to_group = {}
         for tid, task in enumerate(catalog.records):
             axis = task.axes[0]
+            if task.mode == "random_process":
+                key = fingerprint([task.mode, task.terrain, task.level, task.axes[:2]])
+                grouped[key] = {"key": key, "mode": task.mode, "vx_bin": plain(axis),
+                                "terrain": task.terrain, "level": task.level,
+                                "Ax": axis.high, "Ay": task.axes[1].high,
+                                "direction": 0, "task_ids": [tid]}
+                continue
             if axis.magnitude:
                 directions = ([1] if axis.positive_probability > 0 else []) + (
                     [-1] if axis.positive_probability < 1 else [])
@@ -342,6 +362,8 @@ class TeacherGroups:
                 self.task_direction_to_group[tid, row["direction"]] = gid
 
     def initial_probabilities(self, seed_bin):
+        if self.catalog.random_process:
+            return np.full(self.num_groups, 1 / self.num_groups)
         task_prior = self.catalog.initial_teacher_probabilities(seed_bin)
         p = np.zeros(self.num_groups)
         for gid, row in enumerate(self.records):
@@ -359,6 +381,8 @@ class TeacherGroups:
         commands[magnitude, :, 0] = np.abs(commands[magnitude, :, 0]) * self.directions[gids[magnitude], None]
         for i in np.flatnonzero(~magnitude):
             tid, gid = tids[i], gids[i]
+            if self.catalog.process_mask[tid]:
+                continue
             axis = self.catalog.records[tid].axes[0]
             direction = self.directions[gid]
             if axis.low < 0 < axis.high:
@@ -379,13 +403,16 @@ def make_trial_table(catalog, cfg):
             rng = np.random.default_rng(
                 stable_seed(cfg.evaluation.seed, task.key + f"/trial={trial_id}")
             )
-            parameters = catalog.sample_commands([tid] * count, rng)
+            process = task.mode == "random_process"
+            n = math.ceil(cfg.evaluation.horizon_s / cfg.task_space.process_hold_s[0]) + 1 if process else count
+            parameters = catalog.sample_commands([tid] * n, rng)
+            durations = rng.uniform(*cfg.task_space.process_hold_s, size=n) if process else None
             replica = int(rng.integers(cfg.geometry.replicas))
             yaw = float(rng.uniform(-math.pi, math.pi))
             commands = parameters.copy()
             heading = {}
             if catalog.heading_command:
-                targets = (yaw + parameters[:, 2] + math.pi) % (2 * math.pi) - math.pi
+                targets = ((0 if process else yaw) + parameters[:, 2] + math.pi) % (2 * math.pi) - math.pi
                 errors = (targets - yaw + math.pi) % (2 * math.pi) - math.pi
                 commands[:, 2] = np.clip(
                     cfg.task_space.heading_control_stiffness * errors,
@@ -406,6 +433,9 @@ def make_trial_table(catalog, cfg):
                     "command_sequence": commands,
                     "replica": replica,
                     "yaw": yaw,
+                    "task_mode": task.mode,
+                    "spawn_choice": float(rng.random()),
+                    **({"command_hold_s": durations.tolist()} if process else {}),
                     **heading,
                 }
             )

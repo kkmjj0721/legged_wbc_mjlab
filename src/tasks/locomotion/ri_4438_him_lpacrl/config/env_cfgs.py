@@ -149,6 +149,11 @@ def build_env_cfg(
         leg_ground_cfg,
         self_collision_cfg,
     )
+    if setup.terrain_map.connected:
+        cfg.scene.sensors += (ContactSensorCfg(
+            name="feet_support", primary=ContactMatch(mode="geom", pattern=geom_names, entity="robot"),
+            secondary=ContactMatch(mode="body", pattern="terrain"),
+            fields=("found", "force", "pos", "normal"), reduce="maxforce", num_slots=1),)
 
     if (
         cfg.scene.terrain is not None
@@ -238,9 +243,11 @@ def build_env_cfg(
         ):
             setattr(actuator, attr, getattr(robot_defaults.control, attr))
     if not setup.terrain_map.plane:
-        cfg.terminations["boundary_truncation"] = TerminationTermCfg(
-            func=boundary_truncation, time_out=True
-        )
+        from ..mdp.terminations import map_boundary_truncation
+
+        connected = setup.terrain_map.connected
+        cfg.terminations["map_boundary_truncation" if connected else "boundary_truncation"] = TerminationTermCfg(
+            func=map_boundary_truncation if connected else boundary_truncation, time_out=True)
     cfg.recorders["lpacrl_episode"] = RecorderTermCfg(func=NaturalEpisodeRecorder)
     if mode in ("evaluation", "play"):
         from ..mdp.domain_randomization import reset_nominal
@@ -274,6 +281,10 @@ def build_env_cfg(
             actuator.delay_hold_prob = 0.0
             actuator.delay_update_period = 0
     configure_numerical_observations(cfg)
+    if mode == "train":
+        from ..mdp.episode_diagnostics import observe_episode
+
+        cfg.events["lpacrl_diagnostics"] = EventTermCfg(func=observe_episode, mode="step")
     configure_estimator_observations(cfg, play=mode != "train")
     finalize_fingerprints(setup, cfg)
     params = cfg.curriculum["lpacrl"].params

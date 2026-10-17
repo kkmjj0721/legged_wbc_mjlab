@@ -48,7 +48,7 @@ class LpacrlCfg:
     scan_resolution_m: float
 
 
-def make_lpacrl_cfg(*, heading_command: bool | None = None) -> LpacrlCfg:
+def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str = "A3") -> LpacrlCfg:
     """只在环境/agent 工厂调用一次，将中央默认值复制为可修改的任务参数。"""
     env_cfg, ppo_cfg = Ri4438HimLpacrlCfg, Ri4438HimLpacrlCfgPPO
     heading_command = env_cfg.commands.heading_command if heading_command is None else heading_command
@@ -72,7 +72,7 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None) -> LpacrlCfg:
             )
         }
     )
-    return LpacrlCfg(
+    result = LpacrlCfg(
         robot=robot,
         learning=SimpleNamespace(
             policy=_copy_section(ppo_cfg.policy),
@@ -92,6 +92,10 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None) -> LpacrlCfg:
             ang_vel_z_range=tuple(env_cfg.commands.ang_vel_z_range),
             resampling_interval_s=env_cfg.commands.resampling_interval_s,
             sample_bin_centers=env_cfg.commands.sample_bin_centers,
+            random_process=env_cfg.commands.random_process and heading_command,
+            process_amplitudes=tuple(env_cfg.commands.process_amplitudes),
+            process_heading_range=tuple(env_cfg.commands.process_heading_range),
+            process_hold_s=tuple(env_cfg.commands.process_hold_s),
             command_axes={
                 axis: SimpleNamespace(
                     **deepcopy({**env_cfg.commands.axis_defaults, **env_cfg.commands.axes[axis]})
@@ -108,14 +112,26 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None) -> LpacrlCfg:
         geometry=SimpleNamespace(
             **{
                 name: deepcopy(getattr(env_cfg.terrain, name))
-                for name in ("replicas", "patch_size_m", "boundary_margin_m", "seed")
-            }
+                for name in ("replicas", "patch_size_m", "boundary_margin_m", "seed",
+                             "map_protocol", "core_rows", "surrounding_rings",
+                             "outer_flat_width_m", "pass_margin_m", "pass_confirm_s")
+            },
+            map_levels=deepcopy(env_cfg.terrain.levels),
         ),
         curriculum=_copy_section(env_cfg.curriculum),
         evaluation=_copy_section(env_cfg.evaluation),
         scan_size_m=tuple(env_cfg.height_scan.size_m),
         scan_resolution_m=env_cfg.height_scan.resolution_m,
     )
+    if experiment not in {"A0", "A1", "A2", "A3"}:
+        raise ValueError("experiment must be A0, A1, A2 or A3")
+    if experiment in {"A0", "A1"}:
+        result.task_space.random_process = False
+    if experiment == "A0":
+        result.geometry.map_protocol = "legacy_v6"
+    if experiment == "A2":
+        result.curriculum.method, result.curriculum.uniform_mix = "uniform", 0.0
+    return result
 
 
 @dataclass
@@ -188,8 +204,35 @@ def validate(cfg):
         raise ValueError("curriculum.seed_bin must be a nonnegative integer")
     if type(cfg.task_space.sample_bin_centers) is not bool:
         raise ValueError("sample_bin_centers must be boolean")
-    if cfg.evaluation.protocol_version != 4:
-        raise ValueError("This evaluator requires protocol_version=4")
+    if cfg.evaluation.protocol_version != 7:
+        raise ValueError("This evaluator requires protocol_version=7")
+    if cfg.geometry.map_protocol not in {"connected_v7", "legacy_v6"}:
+        raise ValueError("Unknown map protocol")
+    if cfg.geometry.map_protocol == "connected_v7":
+        if cfg.geometry.core_rows != 5 or cfg.geometry.surrounding_rings != 1:
+            raise ValueError("V7 map requires five core rows and one surrounding ring")
+        if cfg.geometry.replicas != 1:
+            raise ValueError("Connected maps use explicit spawn lists, not replica rows")
+    for name in ("outer_flat_width_m", "pass_margin_m", "pass_confirm_s"):
+        if not math.isfinite(getattr(cfg.geometry, name)) or getattr(cfg.geometry, name) <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if type(cfg.task_space.random_process) is not bool:
+        raise ValueError("random_process must be boolean")
+    if cfg.task_space.random_process:
+        if not heading_command or interval is not None:
+            raise ValueError("Random processes require heading mode and their own hold timers")
+        amplitudes = cfg.task_space.process_amplitudes
+        if (len(amplitudes) != 4 or len(set(amplitudes)) != 4
+                or any(not math.isfinite(a) or a <= 0 for a in amplitudes)):
+            raise ValueError("process_amplitudes requires four distinct positive ranges")
+        for name in ("process_hold_s", "process_heading_range"):
+            bounds = getattr(cfg.task_space, name)
+            if len(bounds) != 2 or not all(math.isfinite(x) for x in bounds) or bounds[0] >= bounds[1]:
+                raise ValueError(f"Invalid {name}")
+        if cfg.task_space.process_hold_s[0] < 2.0:
+            raise ValueError("Process holds must accommodate the complete 2 s switch window")
+        if max(abs(x) for x in cfg.task_space.process_heading_range) > math.pi:
+            raise ValueError("Process headings must be in [-pi, pi]")
     floors = cfg.evaluation.relative_error_floors
     if len(floors) != 3 or any(not math.isfinite(x) or x <= 0 for x in floors):
         raise ValueError("relative_error_floors must contain three positive finite values")
@@ -303,7 +346,7 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
     cfg = deepcopy(cfg)
     validate(cfg)
     catalog = TaskCatalog(cfg.task_space)
-    # Direct-velocity snapshots retain their historical task fingerprint.
+    # Command mode and process semantics belong to the strict resume identity.
     command_identity = [catalog.fingerprint, cfg.task_space.resampling_interval_s]
     if getattr(cfg.task_space, "heading_command", False):
         command_identity.append({
@@ -313,6 +356,14 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
             "heading_reference": "episode_spawn_yaw_plus_task_offset",
         })
     terrains = TerrainMap(catalog, cfg)
+    command_identity.append({
+        "protocol": cfg.geometry.map_protocol,
+        "task_semantics": "birth_terrain_command_process_v7",
+        "process": {k: v for k, v in vars(cfg.task_space).items() if k.startswith("process_") or k == "random_process"},
+        "spawn": cfg.robot.reset.base_offset,
+        "map": terrains.manifest,
+        "score": "whole_episode_tracking_2to1_failure_budget_admin_mean_v7",
+    })
     if not terrains.plane:
         offsets = cfg.robot.reset.base_offset.get("pose_range", {})
         for axis, size in zip(("x", "y"), cfg.geometry.patch_size_m):
@@ -332,7 +383,8 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
         {
             "task": fingerprint(command_identity),
             "geometry": fingerprint(
-                [cfg.geometry, terrains.columns, terrains.parameters]
+                [{k: v for k, v in vars(cfg.geometry).items() if not k.startswith("pass_")},
+                 terrains.columns, terrains.parameters, terrains.manifest]
             ),
             "curriculum": fingerprint(cfg.curriculum),
             "him": fingerprint(

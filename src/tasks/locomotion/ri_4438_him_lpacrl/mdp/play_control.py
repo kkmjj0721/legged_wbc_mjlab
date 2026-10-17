@@ -34,6 +34,8 @@ class SampledScene:
     replica: int
     yaw: float
     sequence: np.ndarray  # Third axis is an offset in heading-mode catalogs.
+    holds: np.ndarray | None = None
+    spawn_choice: float = 0.0
 
 
 class PlayController:
@@ -132,11 +134,13 @@ class PlayController:
         else:
             task = int(c.rng.integers(c.catalog.num_tasks))
             sequence = c.catalog.sample_commands(np.full(c.command_count, task), c.rng)
-            group = c.groups.task_direction_to_group.get((task, int(np.sign(sequence[0, 0]))), -1)
+            group = c.groups.task_direction_to_group.get((task, 0 if c.catalog.process_mask[task] else int(np.sign(sequence[0, 0]))), -1)
         return SampledScene(
             task, group, int(c.terrain_map.task_columns[task]),
             int(c.rng.integers(c.terrain_map.replicas)),
             float(c.rng.uniform(-math.pi, math.pi)), sequence.copy(),
+            c.rng.uniform(*c.cfg.task_space.process_hold_s, size=c.command_count) if c.catalog.process_mask[task] else None,
+            float(c.rng.random()) if c.terrain_map.connected else 0.0,
         )
 
     def assign(self, ids):
@@ -163,7 +167,13 @@ class PlayController:
             c.command_sequences[i] = torch.as_tensor(
                 scene.sequence, dtype=c.commands.dtype, device=c.device)
             if c.catalog.heading_command:
-                c.heading_sequences[i] = wrap_to_pi(c.yaws[i] + c.command_sequences[i, :, 2])
+                c.heading_sequences[i] = wrap_to_pi((0 if scene.holds is not None else c.yaws[i]) + c.command_sequences[i, :, 2])
+            c.command_index[i] = 0
+            c.command_deadlines[i] = torch.iinfo(torch.long).max
+            c.command_event[i] = False
+            c.switch_counts[i] = 0
+            if scene.holds is not None:
+                c.command_deadlines[i] = torch.as_tensor(np.ceil(scene.holds / c._env.step_dt).astype(np.int64).cumsum(), device=c.device)
             c._heading_reference_pending[i] = False
             self._manual[i] = selection.mode == "manual"
             self._raw_commands[i] = torch.tensor(selection.command, device=c.device)
@@ -172,9 +182,11 @@ class PlayController:
             self._holding[i] = selection.heading_hold and any(abs(x) > 1e-4 for x in selection.command[:2])
             if not c.terrain_map.plane:
                 terrain = c._env.scene.terrain
-                terrain.terrain_levels[i] = scene.replica
-                terrain.terrain_types[i] = scene.column
-                terrain.env_origins[i] = c.terrain_map.origins[scene.replica, scene.column]
+                row, col, gid = c.terrain_map.choose_spawns([scene.task], choices=[scene.spawn_choice if c.terrain_map.connected else scene.replica])
+                c.episode_geometry_id[i] = int(gid[0])
+                terrain.terrain_levels[i] = int(row[0])
+                terrain.terrain_types[i] = int(col[0])
+                terrain.env_origins[i] = c.terrain_map.origins[int(row[0]), int(col[0])]
         self.update_commands(ids, reset=True)
 
     def update_commands(self, ids, *, reset=False):
@@ -187,6 +199,21 @@ class PlayController:
         steps = torch.zeros_like(ids) if reset else c._env.episode_length_buf[ids]
         indices = (torch.zeros_like(ids) if c.command_interval_steps is None else
                    (steps // c.command_interval_steps).clamp_max(c.command_count - 1))
+        process = c.process_tasks[c.episode_task_id[ids]] & ~self._manual[ids]
+        rolled = process & (steps >= c.command_deadlines[ids, -1])
+        for i in ids[rolled].cpu().tolist():
+            offset = int(c.command_deadlines[i, -1])
+            raw = c.catalog.sample_commands(np.full(c.command_count, int(c.episode_task_id[i])), c.rng)
+            c.command_sequences[i] = torch.as_tensor(raw, dtype=c.commands.dtype, device=c.device)
+            c.heading_sequences[i] = c.command_sequences[i, :, 2]
+            holds = c.rng.uniform(*c.cfg.task_space.process_hold_s, size=c.command_count)
+            c.command_deadlines[i] = torch.as_tensor(offset + np.ceil(holds/c._env.step_dt).astype(np.int64).cumsum(), device=c.device)
+        indices = torch.where(process, (steps[:, None] >= c.command_deadlines[ids]).sum(-1).clamp_max(c.command_count - 1), indices)
+        changed = rolled | (indices != c.command_index[ids])
+        c.command_event[ids] = changed
+        c.command_index[ids] = indices
+        previous = c.commands[ids].clone()
+        previous_heading = c.heading_targets[ids].clone()
         c.commands[ids] = c.command_sequences[ids, indices]
         yaw = c.yaws[ids] if reset else c._env.scene["robot"].data.heading_w[ids]
         if c.catalog.heading_command:
@@ -211,6 +238,9 @@ class PlayController:
         c.commands[manual_ids, 2] = torch.where(hold, correction, raw[:, 2])
         c.heading_targets[manual_ids] = self._heading_reference[manual_ids]
         c.heading_error[manual_ids] = torch.where(hold, error, 0.0)
+        c.command_event_delta[ids] = c.commands[ids] - previous
+        c.command_heading_delta[ids] = wrap_to_pi(c.heading_targets[ids] - previous_heading)
+        c.switch_counts[ids] += changed.long()
         now = time.monotonic()
         if self.status_callback is not None and now - self._last_status >= 0.2:
             self._last_status = now

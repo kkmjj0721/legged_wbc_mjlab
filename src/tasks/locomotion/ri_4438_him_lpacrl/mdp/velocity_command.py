@@ -23,10 +23,9 @@ class TaskVelocityCommand(CommandTerm):
     def compute(self, dt, env_ids=None):
         from .curriculums import get_controller
 
-        del dt  # 由 episode_length_buf 索引；terminal recorder 的重复调用是幂等的。
         controller = get_controller(self._env)
         ids = controller._ids(env_ids)
-        controller.update_commands(ids)
+        controller.update_commands(ids, dt=dt)
         self.vel_command_b[ids] = controller.commands[ids]
 
     def _resample_command(self, env_ids):

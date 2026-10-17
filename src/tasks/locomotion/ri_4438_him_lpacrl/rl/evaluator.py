@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from tensordict import TensorDict
+from mjlab.utils.lab_api.math import wrap_to_pi
 
 from ..config.env_cfgs import build_env_cfg
 from ..mdp.curriculums import get_controller
@@ -155,6 +156,10 @@ class TaskEvaluator:
                 actions = actor(obs)
                 # step() 返回时指令可能已更新；误差必须对应刚执行动作的指令。
                 commands = controller.commands.clone()
+                command_event = controller.command_event.clone()
+                command_delta = controller.command_event_delta.clone()
+                heading_delta = controller.command_heading_delta.clone()
+                heading_target = controller.heading_targets.clone() if self.setup.catalog.heading_command else None
                 next_obs, rewards, terminated, truncated, _extras = env.step(actions)
                 raw_bad = getattr(env, "_him_numerics_bad", None)
                 if raw_bad is not None and raw_bad[active].any():
@@ -186,23 +191,30 @@ class TaskEvaluator:
                 term_returns[active] += reward_terms_for_step(env)[active]
                 slot_steps += e
                 traversal.observe(active, commands, actions)
-                deployment.observe(actual, commands, active, terminated)
+                deployment.observe(actual, commands, active, terminated,
+                                   event=command_event, event_delta=command_delta,
+                                   heading_delta=heading_delta,
+                                   support_tile=(traversal.connected.support_tiles if traversal.connected is not None else None),
+                                   support_surface=(traversal.connected.support_surface if traversal.connected is not None else None),
+                                   heading_error=(wrap_to_pi(heading_target - env.scene["robot"].data.heading_w) if heading_target is not None else None))
                 if self.step_callback is not None:
                     self.step_callback(env, batch, active, step)
                 done = terminated | truncated
                 if monitor is not None:
                     monitor.observe(done | ~active)
+                boundary_name = "map_boundary_truncation" if controller.terrain_map.connected else "boundary_truncation"
                 boundary = (
-                    env.termination_manager.get_term("boundary_truncation")
-                    if "boundary_truncation" in env.termination_manager.active_terms
+                    env.termination_manager.get_term(boundary_name)
+                    if boundary_name in env.termination_manager.active_terms
                     else torch.zeros_like(done)
                 )
                 boundary_counts[active] += boundary[active].long()
                 time_limit = lengths >= max_steps
                 # 出界只结束当前物理片段，不缩短试验的评分预算。物理失败仍结束试验。
-                finished = ((terminated | time_limit) & active).nonzero(
+                finished = ((terminated | time_limit | (boundary if controller.terrain_map.connected else torch.zeros_like(boundary))) & active).nonzero(
                     as_tuple=False
                 ).flatten()
+                deployment.finish(finished)
                 for slot in finished.tolist():
                     rows.append(
                         {
@@ -217,7 +229,7 @@ class TaskEvaluator:
                                 zip(reward_names, term_returns[slot].cpu().tolist())
                             ),
                             "terminated": bool(terminated[slot]),
-                            "truncated": bool(time_limit[slot] and not terminated[slot]),
+                            "truncated": bool((time_limit[slot] or boundary[slot]) and not terminated[slot]),
                             "boundary": bool(boundary_counts[slot] > 0),
                             "boundary_crossings": int(boundary_counts[slot]),
                             "time_limit": bool(time_limit[slot]),
@@ -250,16 +262,20 @@ class TaskEvaluator:
         result["simulated_slot_steps"] = slot_steps
         result["geometry_checks"] = monitor.summary() if monitor is not None else {}
         result["protocol"] = (
-            "v4: nominal, deterministic policy, fixed trial horizon; "
-            "boundary resets continue the same task and command clock; "
+            "v7: nominal, deterministic policy; connected maps end trials at the outer support boundary; "
+            "legacy_v6 maps alone continue trials after patch boundary resets; explicit sampler events; "
             "physical failure ends the trial; EPTE-SP stability aggregation from Eq. (8), "
             "project-relative-error convention for changing/near-zero commands; "
             "paper success retained; separate all-axis, stall and switch deployment gates"
         )
         result["metric_settings"] = {
-            "traversal_version": 1,
+            "traversal_version": 7 if controller.terrain_map.connected else 1,
             "stair_progress": ">=2 outward treads; >=2 supported feet and root vertical progress for >=0.1 s; survives trial",
-            "terrain_traversal": "same as stair_progress, but reaches all treads; defined only for stairs; inspect by_terrain",
+            "terrain_traversal": ("four feet beyond actual exit plus margin; >=2 real ground contacts for confirmation duration; latched even after failure"
+                                  if controller.terrain_map.connected else "legacy all internal treads; survives trial"),
+            "pass_margin_m": self.setup.cfg.geometry.pass_margin_m,
+            "pass_confirm_s": self.setup.cfg.geometry.pass_confirm_s,
+            "heading_convergence_tolerance_rad": .15,
             "action_delta_rms": "unscaled policy actions; boundary-reset transitions excluded",
             "relative_error_floors": list(evaluation_cfg.relative_error_floors),
             "success_alive_fraction": evaluation_cfg.success_alive_fraction,
@@ -267,7 +283,7 @@ class TaskEvaluator:
             "success": "legacy alias of paper_success: alive fraction, vx and wz EPTE-SP",
             "tracking_success": "alive fraction and vx/vy/wz EPTE-SP",
             "deployment_success": "all axes within deployment absolute/relative tolerances, no physical failure, no sustained stall, all observed switches pass",
-            "deployment_tracking_error": "mean_alive(abs(error)/max(abs_tolerance,rel_tolerance*abs(command))); each axis <1",
+            "deployment_tracking_error": "mean_executed(abs(error)/max(abs_tolerance,rel_tolerance*abs(command))); each axis <1",
             "deployment": {
                 key: plain(value) for key, value in vars(evaluation_cfg).items()
                 if key.startswith("deployment_")
@@ -321,7 +337,7 @@ def summarize_trials(
             if (
                 row["steps"] > row["horizon_steps"]
                 or row["alive_steps"] != row["steps"] - int(row["terminated"])
-                or (not row["terminated"] and row["steps"] != row["horizon_steps"])
+                or (not row["terminated"] and not row["boundary"] and row["steps"] != row["horizon_steps"])
                 or set(row["reward_terms"]) != set(reward_names)
                 or not np.isfinite(list(row["reward_terms"].values())).all()
                 or not np.isclose(
@@ -370,7 +386,10 @@ def summarize_trials(
                     row["deployment_tracking_success"] and not row["terminated"]
                     and row["max_stall_seconds"] + 1e-9 < deployment_stall_s
                     and row["transition_passed"] == row["transition_count"]
+                    and row["steps"] == row["horizon_steps"]
                 )
+                row["process_success"] = bool(row["deployment_success"] and row["transition_count"] > 0)
+                row["process_incomplete"] = bool(row.get("transition_unobserved", 0) > 0)
             else:
                 # Old saved trials have no time-resolved evidence. Do not
                 # invent a successful stall/transition test from episode means.
@@ -381,6 +400,11 @@ def summarize_trials(
                 stairs = row["stair_step_count"] > 0
                 row["stair_progress_success"] = bool(stairs and row["stair_steps_crossed"] >= 2 and not row["terminated"])
                 row["terrain_traversal_success"] = bool(stairs and row["stair_steps_crossed"] >= row["stair_step_count"] and not row["terminated"])
+                row["legacy_terrain_traversal_success"] = row["terrain_traversal_success"]
+            if "terrain_passed" in row:
+                row["terrain_traversal_success"] = row["terrain_passed"]
+                row["terrain_passed_without_failure"] = bool(row["terrain_passed"] and not row["terminated"] and row["steps"] == row["horizon_steps"])
+                row["obstacle_traversal_success"] = row["terrain_passed"] if row["obstacle_eligible"] else None
         steps = np.array([r["steps"] for r in group])
         rmse = np.sqrt(
             np.sum([r["squared_error"] for r in group], axis=0) / steps.sum()
@@ -391,6 +415,7 @@ def summarize_trials(
                 "task_key": catalog.decode(tid).key,
                 "terrain": catalog.decode(tid).terrain,
                 "level": catalog.decode(tid).level,
+                "task_mode": getattr(catalog.decode(tid), "mode", "fixed"),
                 "count": len(group),
                 "mean_return": float(np.mean(returns)),
                 "std_return": float(np.std(returns)),
@@ -452,6 +477,10 @@ def summarize_trials(
         if "terrain_traversal_success" in group[0]:
             for key in ("stair_progress_success", "terrain_traversal_success"):
                 per_task[-1][key + "_rate"] = float(np.mean([r[key] for r in group]))
+        if "terrain_passed_without_failure" in group[0]:
+            per_task[-1]["terrain_passed_without_failure_rate"] = float(np.mean([r["terrain_passed_without_failure"] for r in group]))
+            eligible = [r["obstacle_traversal_success"] for r in group if r["obstacle_traversal_success"] is not None]
+            per_task[-1]["obstacle_traversal_success_rate"] = float(np.mean(eligible)) if eligible else None
     numeric = [
         k for k, v in per_task[0].items()
         if k not in {"task_id", "count"} and (v is None or isinstance(v, (int, float)))
@@ -474,6 +503,24 @@ def summarize_trials(
         "trials": rows,
         "macro": {k: mean_present(per_task, k) for k in numeric},
         "by_terrain": by_terrain,
+        "by_task_mode": {
+            mode: {"episodes": len(selected), "environment_steps": sum(r["steps"] for r in selected),
+                   "zero_switch_rate": float(np.mean([r.get("resampling_count", 0) == 0 for r in selected])),
+                   "process_success_rate": float(np.mean([r.get("process_success", False) for r in selected])),
+                   "traversal_incidence": float(np.mean([r.get("terrain_passed", False) for r in selected])),
+                   "deployment": deployment_summary(selected)}
+            for mode in sorted({getattr(t, "mode", "fixed") for t in catalog.records})
+            if (selected := [r for r in rows if getattr(catalog.decode(r["task_id"]), "mode", "fixed") == mode])
+        },
+        "by_switch_surface": {
+            surface: {"attempts": len(events),
+                      **{outcome: sum(e["result"] == outcome for e in events)
+                         for outcome in ("passed", "failed", "unobserved")},
+                      "complete_windows_per_million_steps": sum(e["window_complete"] for e in events) * 1e6 / sum(r["steps"] for r in rows)}
+            for surface in ("flat", "rough", "stairs", "slope", "mixed", "unsupported")
+            if (events := [event for r in rows for event in r.get("switch_events", [])
+                           if event["significant"] and event["support_surface"] == surface])
+        },
         "deployment": deployment_summary(rows),
         "by_profile": {
             profile: deployment_summary([r for r in rows if r.get("profile") == profile])

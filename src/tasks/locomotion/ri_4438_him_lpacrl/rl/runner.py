@@ -452,6 +452,7 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         state = self.controller.state
         update = state.completed_policy_updates + 1
         stage_closed = self.controller.advance(update)
+        interactions = self.controller.episode_metrics
         if stage_closed and self.logger.log_dir and not self.logger.disable_logs:
             data = {
                 "update": update, "score_kind": state.SCORE_KIND,
@@ -465,6 +466,8 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 "group_starts": self.controller.group_starts,
                 "coverage_starts": self.controller.coverage_starts,
                 "coverage_counts": self.controller.coverage_counts,
+                "interaction_statistics": interactions.state_dict() if interactions is not None else {},
+                "map_manifest": self.controller.terrain_map.manifest,
             }
             with (Path(self.logger.log_dir) / "curriculum.jsonl").open("a") as handle:
                 handle.write(json.dumps(plain(data), allow_nan=False) + "\n")
@@ -473,6 +476,9 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 self.logger.writer.add_scalar("LPACRL/" + key, value, update)
             self.logger.writer.add_scalar("LPACRL/coverage_completed_episodes", int(self.controller.coverage_counts.sum()), update)
             self.logger.writer.add_scalar("LPACRL/coverage_started_episodes", int(self.controller.coverage_starts.sum()), update)
+            if interactions is not None:
+                for key, value in interactions.summary().items():
+                    self.logger.writer.add_scalar("LPACRL/" + key, value, update)
 
     def save(self, path, infos=None):
         """Called by every rank; only rank zero writes the checkpoint and ONNX."""

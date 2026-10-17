@@ -1,34 +1,26 @@
-"""RI-4438 HIM + LP 自动课程；训练和播放使用公共 scripts.train / scripts.play。
+"""RI-4438 HIM + LP-ACRL V7 mixed birth-task curriculum.
 
-阅读顺序：
-1. src/config/ri_4438/ri_4438_him_lpacrl_config.py：地形等级、速度分箱、LP/HIM 参数。
-2. ri_4438_him_lpacrl_env_cfg.py：观测、动作、奖励、事件和终止条件。
-3. config/env_cfgs.py：机器人绑定和 Flat/Rough/play 环境工厂。
-4. config/rl_cfg.py：HIM/PPO 配置适配；config/__init__.py 注册 task。
-5. mdp/curriculums.py：LP 概率更新和 reset 时的任务分配。
-6. rl/runner.py：在线训练、保存和续训；rl/evaluate.py：独立离线评价和视频。
+Rough keeps the 1560 fixed command tasks (520 directional teacher groups) and
+appends 832 world-heading random processes: 52 birth terrain/level pairs x
+four independent vx ranges x four independent vy ranges. The 1352 regular
+teacher groups start uniformly; signed LP, temperature .025 and uniform mix
+.20 update every 50 PPO updates, requiring eight episodes per group. The
+separate 25% forward-stair branch never enters regular LP scores.
 
-地形在 mdp/terrains.py 按类型/等级固定，mdp/task_catalog.py 将速度分箱与地形
-组合成任务。训练过程中改变的是任务采样概率，不改变每个任务的难度定义。
+The static 7 x 13 terrain grid has 55 core spawn tiles for 52 birth conditions,
+one surrounding ring and a 16 m outer flat frame. Only the whole-map edge
+truncates an otherwise live 20 s episode. Commands, tile crossings and the
+latched four-foot pass event never reset physical state or HIM history.
 
-当前 Rough 为 1560 组：|vx| 在 0–1 m/s 内分五档，初始航向误差在 0–π rad
-内分六档，八类楼梯各五档，粗糙地形和上下坡各四档。
-vy 在 ±1.0 m/s 内连续采样，不增加任务数量。
-速度和目标 heading 每回合采样一次；wz 每步由 0.5 倍航向误差生成并限幅 ±1 rad/s。
-训练目标在物理 reset 后绑定真实出生朝向；评估出界继续同一试验时保留原目标。
-粗糙地形高度上限为 0.02/0.03/0.045/0.06 m，
-楼梯深度为 0.18/0.21/0.25/0.28 m，每种深度各有上、下楼梯类别，
-高度为 0.05/0.08/0.10/0.12/0.16 m，实际中心平台宽 2 m。
-上坡、下坡的梯度为 0、0.4/3、0.8/3、0.4，
-对应坡角约 0°/7.59°/14.93°/21.80°，坡地高度量化精度为 1 mm。
-这是论文的任务组合方式；速度范围、地形高度和 HIM 策略采用本项目设置。
-训练遵循 FIBO 5813fc3：仅线速度回合奖励除步数和权重，保留 dt。
-每 PPO 迭代按回合求均值，空任务为零；阶段内对迭代均值等权平均。
-初始前两个 |vx| 箱质量 2:1，其他任务维度均匀；vx/heading 使用箱中心。
-第 51 次更新建基线、第 101 次首次更新概率，以后间隔 50 次。
-有符号 LP 的温度 0.05、均匀混合 0.15；PPO 完整奖励不变。
-参考项目仅为平地前进箱，这里保留多地形三轴任务，并非整套实验复现。
-全量评估、EPTE-SP、奖励分解、几何扫描和楼梯通过诊断仅由离线工具执行。
-在线 checkpoint v4 保存迭代/阶段累计、基线、采样 RNG 和阶段时钟。
-航向模式与旧直接 wz 任务不可互相续训，旧权重可 warm-start 或按旧快照离线评价。
+Random processes resample vx, vy and world heading together every U(2,10) s.
+Fixed tasks retain their original bins, within-bin sampling and spawn-relative
+heading offsets. Both use clipped .5 * wrapped heading error as policy wz.
+Whole-episode linear/angular tracking kernels retain their 2:1 score and
+failure-budget penalty; rewards, HIM, PPO and randomization stay unchanged.
+
+Common entry points: scripts.train / scripts.play. Rough defaults to A3;
+Rough-A0/A1/A2/A3 expose the document's ablations. Strict resume requires V7
+state and matching map/task/scoring fingerprints; V6 weights use warm-start.
+Offline rl.evaluate separately reports paper EPTE-SP, all-axis tracking,
+explicit switch outcomes, complete terrain exits and actual support exposure.
 """

@@ -62,7 +62,7 @@ class Ri4438HimLpacrlCfg:
     class reset:
         base_offset = {
             "pose_range": {
-                "x": (-0.1, 0.1),  # 配合 2.0 m 楼梯平台，避免出生时足端跨台阶。
+                "x": (-0.1, 0.1),  # 配合 2.5 m 楼梯平台，避免出生时足端跨台阶。
                 "y": (-0.1, 0.1),
                 "z": (-0.0, 0.0),
                 "roll": (-0.3, 0.3),
@@ -115,9 +115,14 @@ class Ri4438HimLpacrlCfg:
                 "edges": [i * math.pi / 6 for i in range(7)],  # 相对出生朝向的误差，rad。
             },
         }
-        # 只在 reset 采样速度和目标航向；heading 固定，反馈 wz 每步更新。
+        # 固定任务只在 reset 采样；随机过程使用独立的 process_hold_s。
         resampling_interval_s = None
-        # 任务分箱使用中心；连续 vy 仍在范围内采样。
+        # V7: independent nested velocity ranges, world-frame heading targets.
+        random_process = True
+        process_amplitudes = (0.2, 0.5, 0.8, 1.0)
+        process_heading_range = (-3.14, 3.14)
+        process_hold_s = (2.0, 10.0)
+        # 固定任务默认箱内连续采样；随机过程始终按矩形范围连续采样。
         sample_bin_centers = False
         # 每个轴的完整默认值；axes 中的同名字段覆盖这里。
         axis_defaults = {
@@ -150,7 +155,7 @@ class Ri4438HimLpacrlCfg:
                 "l3": {"height_max_m": 0.06},
             },
             # 同一类别的深度固定，只按高度分五档；018 表示深度 0.18 m。
-            # 8 m 地块分别放置 10/8/7/6 层踏步，配套边宽保持中心平台 2 m。
+            # 8 m 地块分别放置 10/8/7/6 层踏步，配套边宽保持中心平台 2.5 m。
             # 边宽减去 1 nm，避免浮点取整少生成一层踏步而扩大平台。
             **{
                 f"stairs_{label}_outward_{direction}": {
@@ -162,10 +167,10 @@ class Ri4438HimLpacrlCfg:
                     for i, height in enumerate((0.05, 0.08, 0.10, 0.12, 0.16))
                 }
                 for label, depth, border in (
-                    ("018", 0.18, 1.20),
-                    ("021", 0.21, 1.32),
-                    ("025", 0.25, 1.25),
-                    ("028", 0.28, 1.32),
+                    ("018", 0.18, 0.95),
+                    ("021", 0.21, 1.07),
+                    ("025", 0.25, 1.00),
+                    ("028", 0.28, 1.07),
                 )
                 for direction in ("up", "down")
             },
@@ -196,8 +201,8 @@ class Ri4438HimLpacrlCfg:
             "stairs": {
                 "step_height_m": 0.10,
                 "step_width": 0.18,  # 各楼梯类别使用 levels 中声明的固定深度。
-                "platform_width": 2.0,
-                "border_width": 1.2,  # 各深度的配套边宽在 levels 中覆盖。
+                "platform_width": 2.5,
+                "border_width": 0.95,  # 各深度的配套边宽在 levels 中覆盖。
                 "holes": False,
             },
             "slope": {
@@ -208,10 +213,16 @@ class Ri4438HimLpacrlCfg:
                 "vertical_scale": 0.001,  # 1 mm 高度量化。
             },
         }
-        replicas = 1  # 每档地形的副本数；地形图的列对应等级，行对应副本。
+        replicas = 1  # 仅 legacy_v6 使用副本行；V7 使用显式核心区出生列表。
         patch_size_m = (8.0, 8.0)
         boundary_margin_m = 1.1
         seed = 0
+        map_protocol = "connected_v7"  # legacy_v6 is an explicit historical control.
+        core_rows = 5
+        surrounding_rings = 1  # 5×11 核心区外扩一圈：7×13，共 91 块。
+        outer_flat_width_m = 16.0
+        pass_margin_m = 0.05
+        pass_confirm_s = 0.2
 
     class height_scan:
         size_m = (1.6, 1.0)
@@ -226,16 +237,16 @@ class Ri4438HimLpacrlCfg:
         uniform_mix = 0.20
         stage_length_updates = 50
         min_episodes_per_group = 8  # 不足时保留样本和旧基线，禁止空组填零。
-        seed_bin = 0  # 初始 |vx| 箱 seed : seed+1 = 2 : 1，其他维度均匀。
+        seed_bin = 0  # A0 保留旧 2:1 初始先验；V7 连通地图从常规组均匀分布开始。
         # 独立的前进直爬覆盖分支，不进入常规 LP 统计。比例为回合采样概率。
         forward_stairs_fraction = 0.25
         forward_stairs_velocity = 0.5
         forward_stairs_heights_m = (0.05, 0.08, 0.10, 0.12)
 
     class evaluation:
-        protocol_version = 4  # 保留论文判据，另报全轴跟踪、持续停滞和切速验收。
+        protocol_version = 7  # 连通地图、完整出口与显式指令事件。
         trials_per_task = 8  # 每个任务固定试验数，与并行环境数独立。
-        num_envs = 512  # 1560 × 8 = 12480 次试验，分 25 批评估。
+        num_envs = 512  # Rough mixed: 2392 × 8 = 19136 次试验，分 38 批评估。
         horizon_s = 20.0
         seed = 314159
         # 变指令/零指令下的项目约定：逐步 |误差| / max(|指令|, floor)，

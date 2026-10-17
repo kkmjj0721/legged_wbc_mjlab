@@ -23,12 +23,13 @@ class LPState:
     per-group baseline are local extensions, not upstream parity behavior.
     """
 
-    VERSION = 6
+    VERSION = 7
     SCORE_KIND = "linear_angular_tracking_failure_budget_v3"
     ARRAY_FIELDS = (
         "probabilities", "mean_scores", "lp", "counts", "pending_sums",
         "pending_counts", "stage_counts", "iteration_counts", "reported_counts",
         "baseline_valid", "comparison_valid",
+        "baseline_updates",
     )
     CLOCK_FIELDS = ("completed_policy_updates", "last_stage_update", "stage_index")
 
@@ -64,10 +65,11 @@ class LPState:
         self.initial_probabilities = initial.copy()
         for name in self.ARRAY_FIELDS:
             dtype = (np.bool_ if name.endswith("valid") else
-                     np.int64 if name.endswith("counts") else np.float64)
+                     np.int64 if name.endswith(("counts", "updates")) else np.float64)
             setattr(self, name, np.zeros(num_tasks, dtype=dtype))
         self.probabilities = initial.copy()
         self.completed_policy_updates = self.last_stage_update = self.stage_index = 0
+        self.probability_l1_change = 0.0
 
     def add_samples(self, score_sums, counts):
         sums, counts = np.asarray(score_sums, dtype=np.float64), np.asarray(counts)
@@ -96,6 +98,7 @@ class LPState:
         self.lp[ready] = np.where(self.baseline_valid[ready], means - self.mean_scores[ready], 0)
         self.mean_scores[ready] = means
         self.baseline_valid[ready] = True
+        self.baseline_updates[ready] = update_count
         self.stage_counts = np.where(ready, self.pending_counts, 0)
         self.pending_sums[ready] = 0
         self.pending_counts[ready] = 0
@@ -104,7 +107,9 @@ class LPState:
         # The first stage establishes baselines; later stages give missing/new
         # groups zero LP, never a fabricated zero competence score.
         if self.stage_index > 1:
+            previous = self.probabilities
             self.probabilities = self._probabilities(self.lp)
+            self.probability_l1_change = float(np.abs(self.probabilities - previous).sum())
         return True
 
     def _probabilities(self, delta):
@@ -121,6 +126,7 @@ class LPState:
             "num_groups": self.num_groups, "fingerprints": dict(self.fingerprints),
             "initial_probabilities": self.initial_probabilities.copy(),
             "curriculum_config": plain(self.cfg),
+            "probability_l1_change": self.probability_l1_change,
             **{name: getattr(self, name).copy() for name in self.ARRAY_FIELDS},
             **{name: getattr(self, name) for name in self.CLOCK_FIELDS},
         }
@@ -134,6 +140,9 @@ class LPState:
                 or not np.array_equal(state.get("initial_probabilities"), self.initial_probabilities)):
             raise ValueError("Incompatible teacher state; use explicit warm-start for older curricula")
         arrays = {}
+        probability_change = state.get("probability_l1_change", 0.0)
+        if not math.isfinite(probability_change) or not 0 <= probability_change <= 2 + 1e-12:
+            raise ValueError("Invalid checkpoint probability change")
         for name in self.ARRAY_FIELDS:
             a = np.asarray(state[name])
             if a.shape != (self.num_groups,) or not np.isfinite(a).all():
@@ -142,7 +151,7 @@ class LPState:
                 if a.dtype != np.bool_:
                     raise ValueError(f"Invalid checkpoint {name}")
                 dtype = np.bool_
-            elif name.endswith("counts"):
+            elif name.endswith(("counts", "updates")):
                 if not np.issubdtype(a.dtype, np.integer) or (a < 0).any():
                     raise ValueError(f"Invalid checkpoint {name}")
                 dtype = np.int64
@@ -169,6 +178,8 @@ class LPState:
                 or (arrays["comparison_valid"] & (arrays["stage_counts"] == 0)).any()
                 or (stage < 2 and arrays["comparison_valid"].any())
                 or (stage == 0 and arrays["baseline_valid"].any())
+                or (arrays["baseline_updates"] > completed).any()
+                or (arrays["baseline_updates"][~arrays["baseline_valid"]] != 0).any()
                 or (arrays["pending_sums"] < 0).any()
                 or (arrays["pending_sums"] > arrays["pending_counts"] + 1e-6).any()
                 or (arrays["pending_sums"][arrays["pending_counts"] == 0] != 0).any()
@@ -181,6 +192,7 @@ class LPState:
             raise ValueError("Inconsistent teacher checkpoint statistics")
         for name, value in {**arrays, **clocks}.items():
             setattr(self, name, value)
+        self.probability_l1_change = probability_change
 
     def diagnostics(self):
         p = self.probabilities
@@ -189,6 +201,7 @@ class LPState:
         return {
             "entropy_normalized": float(entropy / math.log(self.num_groups)) if self.num_groups > 1 else 0.0,
             "max_probability": float(p.max()), "min_probability": float(p.min()),
+            "probability_l1_change": self.probability_l1_change,
             "effective_groups": float(1.0 / np.square(p).sum()), "num_groups": self.num_groups,
             "lp_min": float(self.lp.min()), "lp_max": float(self.lp.max()), "lp_std": float(self.lp.std()),
             "stage_index": self.stage_index, "completed_episodes": int(self.counts.sum()),
@@ -197,6 +210,8 @@ class LPState:
             "baseline_groups": int(self.baseline_valid.sum()),
             "comparison_groups": int(self.comparison_valid.sum()),
             "pending_episodes": int(self.pending_counts.sum()),
+            "minimum_pending_samples": int(self.pending_counts.min()),
+            "maximum_baseline_age_updates": int((self.completed_policy_updates - self.baseline_updates[self.baseline_valid]).max()) if self.baseline_valid.any() else 0,
             "mean_tracking_score": float(self.mean_scores[self.baseline_valid].mean()) if self.baseline_valid.any() else 0.0,
             "temperature": float(self.cfg.temperature), "uniform_mix": float(self.cfg.uniform_mix),
         }
@@ -276,7 +291,8 @@ class CurriculumController(ManagerTermBase):
         self.terrain_map.bind(env.scene.terrain.terrain_origins)
         self.state = LPState(
             self.groups.num_groups, self.cfg.curriculum, cfg.params.get("fingerprints"),
-            self.groups.initial_probabilities(self.cfg.curriculum.seed_bin),
+            (np.full(self.groups.num_groups, 1 / self.groups.num_groups) if self.terrain_map.connected
+             else self.groups.initial_probabilities(self.cfg.curriculum.seed_bin)),
         )
         if self.mode == "train" and self.cfg.task_space.resampling_interval_s is not None:
             raise ValueError("Training commands must stay fixed for each episode")
@@ -309,6 +325,20 @@ class CurriculumController(ManagerTermBase):
                 + 1
             )
         self.command_sequences = torch.zeros(n, self.command_count, 3, device=device)
+        if self.catalog.random_process:
+            self.command_count = math.ceil(max(self.cfg.training.horizon_s, self.cfg.evaluation.horizon_s)
+                                           / self.cfg.task_space.process_hold_s[0]) + 1
+            self.command_sequences = torch.zeros(n, self.command_count, 3, device=device)
+        self.process_tasks = torch.as_tensor(self.catalog.process_mask, device=device)
+        self.command_deadlines = torch.full((n, self.command_count), torch.iinfo(torch.long).max,
+                                            dtype=torch.long, device=device)
+        self.command_index = torch.zeros(n, dtype=torch.long, device=device)
+        self.command_event = torch.zeros(n, dtype=torch.bool, device=device)
+        self.command_event_step = torch.full((n,), -1, dtype=torch.long, device=device)
+        self.command_event_delta = torch.zeros(n, 3, device=device)
+        self.command_heading_delta = torch.zeros(n, device=device)
+        self.switch_counts = torch.zeros(n, dtype=torch.long, device=device)
+        self._last_command_step = torch.full((n,), -1, dtype=torch.long, device=device)
         self.heading_sequences = torch.zeros(n, self.command_count, device=device)
         self.heading_targets = torch.zeros(n, device=device)
         self.heading_error = torch.zeros(n, device=device)
@@ -341,6 +371,8 @@ class CurriculumController(ManagerTermBase):
             if any(not math.isfinite(w) or w <= 0 for w in (self._tracking_weight, self._angular_tracking_weight)):
                 raise ValueError("Teacher needs positive linear and angular tracking reward weights")
         self.trials_by_slot = []
+        self.episode_metrics = None
+        self._saved_diagnostics = None
         if self.mode == "evaluation":
             trials = self.setup.trials
             self.trials_by_slot = [trials[i % len(trials)] for i in range(n)]
@@ -370,6 +402,8 @@ class CurriculumController(ManagerTermBase):
             self._score_sums.index_add_(0, task_ids, scores)
             self._score_counts.index_add_(0, task_ids, torch.ones_like(task_ids))
             self.statistics_host_seconds += time.perf_counter() - start
+            if self.episode_metrics is not None:
+                self.episode_metrics.finish(ids[valid])
         self._natural[ids] = False
         self.assign(ids)
         return self._diagnostics
@@ -434,7 +468,7 @@ class CurriculumController(ManagerTermBase):
                         targets + [targets[-1]] * (self.command_count - len(targets))
                     )
             commands = np.asarray(sequences)
-            group_ids = np.array([self.groups.task_direction_to_group[t, int(np.sign(c[0, 0]))]
+            group_ids = np.array([self.groups.task_direction_to_group[t, 0 if self.catalog.process_mask[t] else int(np.sign(c[0, 0]))]
                                   for t, c in zip(tasks, commands)])
             sampling_modes = np.zeros(len(ids), dtype=np.int64)
             self.yaws[ids] = torch.as_tensor(
@@ -450,7 +484,7 @@ class CurriculumController(ManagerTermBase):
                 tasks[covered] = self.rng.choice(self.coverage_tasks, int(covered.sum()))
                 commands[covered] = (self.cfg.curriculum.forward_stairs_velocity, 0, 0)
                 group_ids[covered] = [self.groups.task_direction_to_group[t, 1] for t in tasks[covered]]
-            replicas = self.rng.integers(self.terrain_map.replicas, size=len(ids))
+            replicas = None
             self.yaws[ids] = torch.as_tensor(
                 self.rng.uniform(-math.pi, math.pi, len(ids)),
                 dtype=self.yaws.dtype,
@@ -460,16 +494,35 @@ class CurriculumController(ManagerTermBase):
                 np.add.at(self.starts, tasks, 1)
                 np.add.at(self.group_starts, group_ids[sampling_modes == 0], 1)
                 np.add.at(self.coverage_starts, tasks[sampling_modes == 1], 1)
-        columns = self.terrain_map.task_columns[tasks]
+        choices = (([r.get("spawn_choice", 0.0) for r in rows] if self.terrain_map.connected else replicas)
+                   if self.mode == "evaluation" else None)
+        rows_index, columns, geometry_ids = self.terrain_map.choose_spawns(tasks, self.rng, choices)
         self.episode_task_id[ids] = torch.as_tensor(tasks, device=self.device)
         self.episode_group_id[ids] = torch.as_tensor(group_ids, device=self.device)
         self.episode_sampling_mode[ids] = torch.as_tensor(sampling_modes, device=self.device)
         self.episode_geometry_id[ids] = torch.as_tensor(
-            columns * self.terrain_map.replicas + replicas, device=self.device
+            geometry_ids, device=self.device
         )
         self.command_sequences[ids] = torch.as_tensor(
             commands, dtype=self.commands.dtype, device=self.device
         )
+        process = self.catalog.process_mask[tasks] & (sampling_modes == 0)
+        self.command_deadlines[ids] = torch.iinfo(torch.long).max
+        self.command_index[ids] = 0
+        self.command_event[ids] = False
+        self.command_event_step[ids] = -1
+        self.switch_counts[ids] = 0
+        self._last_command_step[ids] = 0
+        if process.any():
+            if self.mode == "evaluation":
+                durations = np.array([r["command_hold_s"] + [self.cfg.task_space.process_hold_s[1]] *
+                                      (self.command_count - len(r["command_hold_s"]))
+                                      for r, selected in zip(rows, process) if selected])
+            else:
+                durations = self.rng.uniform(*self.cfg.task_space.process_hold_s,
+                                             size=(int(process.sum()), self.command_count))
+            deadlines = np.ceil(durations / self._env.step_dt).astype(np.int64).cumsum(axis=1)
+            self.command_deadlines[ids[torch.as_tensor(process, device=self.device)]] = torch.as_tensor(deadlines, device=self.device)
         if self.catalog.heading_command:
             if self.mode == "evaluation":
                 targets = torch.as_tensor(heading_sequences, dtype=self.commands.dtype, device=self.device)
@@ -477,7 +530,8 @@ class CurriculumController(ManagerTermBase):
                 # The sampled third axis is an offset from the NEW spawn yaw,
                 # before the physics reset updates robot.data.heading_w.
                 offsets = self.command_sequences[ids, :, 2].clone()
-                targets = self.yaws[ids, None] + offsets
+                targets = torch.where(torch.as_tensor(process, device=self.device)[:, None],
+                                      offsets, self.yaws[ids, None] + offsets)
                 self.command_sequences[ids, :, 2] = torch.clamp(
                     self.cfg.task_space.heading_control_stiffness * wrap_to_pi(offsets),
                     *self.cfg.task_space.ang_vel_z_range,
@@ -485,28 +539,45 @@ class CurriculumController(ManagerTermBase):
             self.heading_sequences[ids] = wrap_to_pi(targets)
             # Train reset randomizes yaw after task assignment. Anchor once to
             # the actual post-reset yaw before observations reach the policy.
-            self._heading_reference_pending[ids] = self.mode != "evaluation"
+            self._heading_reference_pending[ids] = (self.mode != "evaluation") & ~torch.as_tensor(process, device=self.device)
         self.update_commands(ids, reset=True)
         if not self.terrain_map.plane:
             terrain = self._env.scene.terrain
-            row = torch.as_tensor(replicas, device=self.device)
+            row = torch.as_tensor(rows_index, device=self.device)
             col = torch.as_tensor(columns, device=self.device)
             terrain.terrain_levels[ids], terrain.terrain_types[ids] = row, col
             terrain.env_origins[ids] = self.terrain_map.origins[row, col]
+        if self.episode_metrics is not None:
+            self.episode_metrics.reset(ids)
 
-    def update_commands(self, env_ids=None, *, reset=False):
+    def update_commands(self, env_ids=None, *, reset=False, dt=None):
         """Hold the task target; convert heading error to policy yaw velocity."""
         ids = self._ids(env_ids)
         if self.play is not None:
             self.play.update_commands(ids, reset=reset)
             return
-        if self.command_interval_steps is None:
-            indices = torch.zeros_like(ids)
-        else:
-            steps = torch.zeros_like(ids) if reset else self._env.episode_length_buf[ids]
-            if self.mode == "evaluation":
-                steps = steps + self.evaluation_step_offsets[ids]
-            indices = (steps // self.command_interval_steps).clamp_max(self.command_count - 1)
+        steps = torch.zeros_like(ids) if reset else self._env.episode_length_buf[ids]
+        if self.mode == "evaluation":
+            steps = steps + self.evaluation_step_offsets[ids]
+        advance = steps > self._last_command_step[ids]
+        if dt is not None:
+            advance &= (dt[ids] > 0 if isinstance(dt, torch.Tensor) and dt.ndim else dt > 0)
+        if not reset and hasattr(self._env, "termination_manager"):
+            # No new segment on the final physical step, including the terminal observation hook.
+            advance &= ~self._env.termination_manager.terminated[ids]
+            if hasattr(self._env, "reset_buf"):
+                advance &= ~self._env.reset_buf[ids]
+        indices = (torch.zeros_like(ids) if self.command_interval_steps is None else
+                   (steps // self.command_interval_steps).clamp_max(self.command_count - 1))
+        process = self.process_tasks[self.episode_task_id[ids].clamp_min(0)]
+        process_indices = (steps[:, None] >= self.command_deadlines[ids]).sum(-1).clamp_max(self.command_count - 1)
+        indices = torch.where(process, process_indices, indices)
+        indices = torch.where(advance, indices, self.command_index[ids])
+        changed = indices != self.command_index[ids]
+        old_commands = self.commands[ids].clone()
+        old_targets = self.heading_targets[ids].clone()
+        self.command_index[ids] = indices
+        self._last_command_step[ids] = torch.where(advance, steps, self._last_command_step[ids])
         self.commands[ids] = self.command_sequences[ids, indices]
         if self.catalog.heading_command:
             if not reset:
@@ -524,10 +595,20 @@ class CurriculumController(ManagerTermBase):
                 self.cfg.task_space.heading_control_stiffness * self.heading_error[ids],
                 *self.cfg.task_space.ang_vel_z_range,
             )
+        # An explicit sampler event remains attached to the next action/observation.
+        # Repeated dt=0/terminal calls neither create nor erase it.
+        self.command_event[ids] = torch.where(advance, changed, self.command_event[ids])
+        changed_ids = ids[changed]
+        self.command_event_step[changed_ids] = steps[changed]
+        self.command_event_delta[changed_ids] = (self.commands[ids] - old_commands)[changed]
+        self.command_heading_delta[changed_ids] = wrap_to_pi(self.heading_targets[ids] - old_targets)[changed]
+        self.switch_counts[changed_ids] += 1
 
     def flush_samples(self, *, synchronize=False):
         """Flush new samples; collective calls belong only at shared update/save boundaries."""
         if synchronize and torch.distributed.is_initialized():
+            if self.episode_metrics is not None:
+                self.episode_metrics.synchronize()
             for values in (self._score_sums, self._score_counts, self._coverage_counts):
                 torch.distributed.all_reduce(values)
             # Counts include the previous global total plus this rank's new starts.
@@ -575,6 +656,9 @@ class CurriculumController(ManagerTermBase):
             "group_starts": self.group_starts.copy(),
             "coverage_starts": self.coverage_starts.copy(),
             "coverage_counts": self.coverage_counts.copy(),
+            "map_manifest": deepcopy(self.terrain_map.manifest),
+            "interaction_statistics": (self.episode_metrics.state_dict() if self.episode_metrics is not None
+                                       else deepcopy(self._saved_diagnostics)),
         }
 
     def load_state_dict(self, state):
@@ -582,6 +666,8 @@ class CurriculumController(ManagerTermBase):
             raise ValueError("Incompatible teacher state; use explicit warm-start for older curricula")
         if state["task_keys"] != [r.key for r in self.catalog.records]:
             raise ValueError("Checkpoint task table differs")
+        if state.get("map_manifest") != self.terrain_map.manifest:
+            raise ValueError("Checkpoint map/spawn protocol differs")
         starts = np.asarray(state["starts"])
         if (
             starts.shape != (self.catalog.num_tasks,)
@@ -621,6 +707,13 @@ class CurriculumController(ManagerTermBase):
         self._coverage_counts.zero_()
         self._natural.zero_()
         self._heading_reference_pending.zero_()
+        self.command_index.zero_()
+        self.command_event.zero_()
+        self.command_event_step.fill_(-1)
+        self._last_command_step.fill_(-1)
+        self.command_deadlines.fill_(torch.iinfo(torch.long).max)
+        self.episode_metrics = None
+        self._saved_diagnostics = deepcopy(state.get("interaction_statistics"))
 
 
 class NaturalEpisodeRecorder(RecorderTerm):

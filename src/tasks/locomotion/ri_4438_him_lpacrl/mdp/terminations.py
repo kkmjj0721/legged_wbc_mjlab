@@ -40,3 +40,13 @@ def boundary_truncation(env):
         - controller.cfg.geometry.boundary_margin_m
     )
     return (displacement >= limit).any(dim=1)
+
+
+def map_boundary_truncation(env):
+    """Administrative cutoff at the complete support frame in world coordinates."""
+    from .curriculums import get_controller
+
+    controller = get_controller(env)
+    xy = env.scene["robot"].data.root_link_pos_w[:, :2]
+    limit = xy.new_tensor(controller.terrain_map.support_half_extent) - controller.cfg.geometry.boundary_margin_m
+    return (xy.abs() >= limit).any(dim=-1)
