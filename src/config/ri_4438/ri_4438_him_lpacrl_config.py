@@ -94,9 +94,9 @@ class Ri4438HimLpacrlCfg:
         foot_contact_time_constant_range = [0.015, 0.03]
 
     class commands:
-        # 任务 = 命令分箱 × 地形类型 × 该类型的等级。
-        # 保留 5 × 6 任务结构；heading 模式第三轴为初始航向误差（rad）。
-        # 正负方向在箱内各占一半；vy 连续采样，不增加任务数量。
+        # 默认任务 = 4 个 Ax × 4 个 Ay × 地形类型 × 该类型的等级。
+        # 固定任务分箱供历史 A0～A3 和独立评估使用。
+        fixed_tasks = False
         heading_command = True
         heading_control_stiffness = 0.5  # 与独立 HIM 相同：wz = k * wrap(target-current)。
         ang_vel_z_range = (-1.0, 1.0)  # 最终交给策略的角速度限幅，rad/s。
@@ -117,7 +117,7 @@ class Ri4438HimLpacrlCfg:
         }
         # 固定任务只在 reset 采样；随机过程使用独立的 process_hold_s。
         resampling_interval_s = None
-        # V7: independent nested velocity ranges, world-frame heading targets.
+        # Independent nested velocity ranges, world-frame heading targets.
         random_process = True
         process_amplitudes = (0.2, 0.5, 0.8, 1.0)
         process_heading_range = (-3.14, 3.14)
@@ -139,8 +139,8 @@ class Ri4438HimLpacrlCfg:
         exclude = []
 
     class terrain:
-        # 默认 Rough：5 个 vx 分箱 × 6 个 heading 分箱 × (8 类楼梯 × 5 档 + 3 类其他地形 × 4 档)
-        # = 1560 个任务。楼梯类别由踏步深度和上下方向共同确定。
+        # 默认 Rough：4 个 Ax × 4 个 Ay × (8 类楼梯 × 5 档 + 3 类其他地形 × 4 档)
+        # = 832 个任务及 teacher 组。楼梯类别由踏步深度和上下方向共同确定。
         # 每个任务的几何难度固定；LP 只改变任务被采样的概率。
         # rough 按高度上限分级，每张图采样 [0, height_max_m]；这是项目定义。
         # 楼梯保留 RI-4438 的 0.05–0.16 m 范围，论文使用 0.05–0.20 m。
@@ -232,21 +232,21 @@ class Ri4438HimLpacrlCfg:
         method = "lp"  # 有符号进步；uniform 为相同覆盖条件下的均匀对照。
         # 线速度/角速度跟踪核按两项正奖励权重归一化。
         # 物理失败按完整回合预算记分；正常超时/地形出界按实际片段平均。
-        # teacher 分组 = vx 档 × 地形等级 × 前后方向；heading 在组内均匀采样。
+        # teacher 分组 = Ax × Ay × 出生地形类型 × 等级；方向和航向在组内采样。
         temperature = 0.025
         uniform_mix = 0.20
         stage_length_updates = 50
         min_episodes_per_group = 8  # 不足时保留样本和旧基线，禁止空组填零。
         seed_bin = 0  # A0 保留旧 2:1 初始先验；V7 连通地图从常规组均匀分布开始。
-        # 独立的前进直爬覆盖分支，不进入常规 LP 统计。比例为回合采样概率。
-        forward_stairs_fraction = 0.25
+        # 默认所有回合由 teacher 抽样；历史 A0～A3 单独恢复 25% 直爬覆盖。
+        forward_stairs_fraction = 0.0
         forward_stairs_velocity = 0.5
         forward_stairs_heights_m = (0.05, 0.08, 0.10, 0.12)
 
     class evaluation:
         protocol_version = 7  # 连通地图、完整出口与显式指令事件。
         trials_per_task = 8  # 每个任务固定试验数，与并行环境数独立。
-        num_envs = 512  # Rough mixed: 2392 × 8 = 19136 次试验，分 38 批评估。
+        num_envs = 512  # 默认 Rough：832 × 8 = 6656 次试验，分 13 批评估。
         horizon_s = 20.0
         seed = 314159
         # 变指令/零指令下的项目约定：逐步 |误差| / max(|指令|, floor)，

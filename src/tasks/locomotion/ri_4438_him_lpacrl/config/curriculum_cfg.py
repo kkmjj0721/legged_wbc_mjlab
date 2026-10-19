@@ -48,8 +48,8 @@ class LpacrlCfg:
     scan_resolution_m: float
 
 
-def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str = "A3") -> LpacrlCfg:
-    """只在环境/agent 工厂调用一次，将中央默认值复制为可修改的任务参数。"""
+def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | None = None) -> LpacrlCfg:
+    """Copy current defaults, or explicitly select a historical A0–A3 protocol."""
     env_cfg, ppo_cfg = Ri4438HimLpacrlCfg, Ri4438HimLpacrlCfgPPO
     heading_command = env_cfg.commands.heading_command if heading_command is None else heading_command
     if type(heading_command) is not bool:
@@ -92,6 +92,7 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str = "A
             ang_vel_z_range=tuple(env_cfg.commands.ang_vel_z_range),
             resampling_interval_s=env_cfg.commands.resampling_interval_s,
             sample_bin_centers=env_cfg.commands.sample_bin_centers,
+            fixed_tasks=env_cfg.commands.fixed_tasks or not heading_command,
             random_process=env_cfg.commands.random_process and heading_command,
             process_amplitudes=tuple(env_cfg.commands.process_amplitudes),
             process_heading_range=tuple(env_cfg.commands.process_heading_range),
@@ -123,8 +124,13 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str = "A
         scan_size_m=tuple(env_cfg.height_scan.size_m),
         scan_resolution_m=env_cfg.height_scan.resolution_m,
     )
+    if experiment is None:
+        return result
     if experiment not in {"A0", "A1", "A2", "A3"}:
         raise ValueError("experiment must be A0, A1, A2 or A3")
+    # Preserve the named historical experiments and their resume fingerprints.
+    result.task_space.fixed_tasks = True
+    result.curriculum.forward_stairs_fraction = 0.25
     if experiment in {"A0", "A1"}:
         result.task_space.random_process = False
     if experiment == "A0":
@@ -218,6 +224,13 @@ def validate(cfg):
             raise ValueError(f"{name} must be finite and positive")
     if type(cfg.task_space.random_process) is not bool:
         raise ValueError("random_process must be boolean")
+    fixed_tasks = getattr(cfg.task_space, "fixed_tasks", True)
+    if type(fixed_tasks) is not bool:
+        raise ValueError("fixed_tasks must be boolean")
+    if not fixed_tasks and not cfg.task_space.random_process:
+        raise ValueError("Enable fixed_tasks or random_process")
+    if not fixed_tasks and coverage:
+        raise ValueError("forward_stairs_fraction must be zero when fixed_tasks is disabled")
     if cfg.task_space.random_process:
         if not heading_command or interval is not None:
             raise ValueError("Random processes require heading mode and their own hold timers")

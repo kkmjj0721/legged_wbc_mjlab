@@ -316,9 +316,11 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 for value in evidence.values():
                     value.zero_()
 
+        # Log/checkpoint indices are zero-based, while the curriculum tracks
+        # completed updates. That count is also the next index after resume.
         start_it = self.controller.state.completed_policy_updates
         total_it = start_it + num_learning_iterations
-        for it in range(start_it + 1, total_it + 1):
+        for it in range(start_it, total_it):
             start = time.time()
             statistics_before = self.controller.statistics_host_seconds
             action_peak = torch.zeros((), device=self.device)
@@ -472,13 +474,15 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
             with (Path(self.logger.log_dir) / "curriculum.jsonl").open("a") as handle:
                 handle.write(json.dumps(plain(data), allow_nan=False) + "\n")
         if self.logger.writer is not None:
+            # Align curriculum curves with the policy update logged by _learn.
+            iteration = update - 1
             for key, value in state.diagnostics().items():
-                self.logger.writer.add_scalar("LPACRL/" + key, value, update)
-            self.logger.writer.add_scalar("LPACRL/coverage_completed_episodes", int(self.controller.coverage_counts.sum()), update)
-            self.logger.writer.add_scalar("LPACRL/coverage_started_episodes", int(self.controller.coverage_starts.sum()), update)
+                self.logger.writer.add_scalar("LPACRL/" + key, value, iteration)
+            self.logger.writer.add_scalar("LPACRL/coverage_completed_episodes", int(self.controller.coverage_counts.sum()), iteration)
+            self.logger.writer.add_scalar("LPACRL/coverage_started_episodes", int(self.controller.coverage_starts.sum()), iteration)
             if interactions is not None:
                 for key, value in interactions.summary().items():
-                    self.logger.writer.add_scalar("LPACRL/" + key, value, update)
+                    self.logger.writer.add_scalar("LPACRL/" + key, value, iteration)
 
     def save(self, path, infos=None):
         """Called by every rank; only rank zero writes the checkpoint and ONNX."""
@@ -555,7 +559,9 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         self.controller.load_state_dict(state)
         self.alg.load(checkpoint, None, strict)
         self._validate_numerics()
-        self.current_learning_iteration = self.controller.state.completed_policy_updates
+        # Preserve the source checkpoint's label for lineage, including legacy
+        # one-based checkpoints. _learn resumes from completed_policy_updates.
+        self.current_learning_iteration = checkpoint["iter"]
         self.env.unwrapped.common_step_counter = infos.get("env_state", {}).get(
             "common_step_counter", 0
         )

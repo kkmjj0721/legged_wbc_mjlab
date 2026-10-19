@@ -53,6 +53,8 @@ uv run python -m scripts.train Ri-4438-HIM-Rough \
 
 输出位于 `logs/rsl_rl/<experiment_name>/<timestamp>[_<run_name>]/`，包含检查点、`params/` 和 TensorBoard 日志。RI-4438 HIM / LP-ACRL 保存检查点时同步更新 `policy.onnx`。
 
+LP-ACRL 的训练日志与模型编号从 `0` 开始：第一次 PPO 更新后保存 `model_0.pt`，默认之后按编号 `200、400……` 保存，正常训练结束时另存最后一轮。课程状态中的 `completed_policy_updates` 仍记录实际完成次数，`curriculum.jsonl` 的 `update` 同样使用这个次数；续训依据它定位下一次更新，兼容此前从 `1` 编号的检查点。
+
 ```bash
 uv run tensorboard --logdir logs/rsl_rl
 ```
@@ -84,7 +86,7 @@ uv run --extra analysis python -m scripts.best_model \
 
 ### HIM LP-ACRL
 
-LP-ACRL 按在线学习进展调整地形与命令任务的采样概率。默认采用第七版混合任务：Rough 保留 1560 个固定任务（520 个 teacher 组），追加 832 个随机过程组，共 1352 个常规 teacher 组；Flat 为 46 个任务、26 个 teacher 组。随机过程的两轴范围独立取 0.2/0.5/0.8/1.0，每 2～10 秒同步重采速度与世界系目标航向。25% 正向直爬覆盖仍单独计数。7×13 连通地图采用 5×11 核心区、外围一圈及 16 m 平地框，允许跨子地块持续训练，只有整图外缘、物理失败或 20 秒时限结束回合。Rough 的两类坡地 l0 实际均为平地。参数见 [LP-ACRL 配置](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。
+LP-ACRL 按在线学习进展调整地形与命令任务的采样概率。默认仅使用随机变指令任务：Rough 为 4 个纵向范围 × 4 个横向范围 × 52 种出生地形/等级组合，共 832 个任务及 teacher 组；Flat 为 16 个任务及 teacher 组。全部回合由 teacher 采样，取消默认的 520 个固定指令组和 25% 正向直爬覆盖。两轴范围独立取 0.2/0.5/0.8/1.0，每 2～10 秒同步重采速度与世界系目标航向。7×13 连通地图采用 5×11 核心区、外围一圈及 16 m 平地框，允许跨子地块持续训练，只有整图外缘、物理失败或 20 秒时限结束回合。Rough 的两类坡地 l0 实际均为平地。参数见 [LP-ACRL 配置](src/config/ri_4438/ri_4438_him_lpacrl_config.py)。
 
 训练使用公共入口，将任务 ID 替换为 `Ri-4438-HIM-LPACRL-Rough` 或 `Ri-4438-HIM-LPACRL-Flat`。完整续训要求兼容的 **v7 课程状态**、配置和相同 GPU 数；从旧模型或兼容 HIM 权重开始新课程使用：
 
@@ -93,9 +95,9 @@ uv run python -m scripts.train Ri-4438-HIM-LPACRL-Rough \
   --env.scene.num-envs 2048 --warm-start '/path/to/model.pt'
 ```
 
-`--warm-start` 重置优化器、课程和迭代数，与 `--agent.resume True` 互斥。分组统计、跟踪评分和楼梯覆盖采样属于本项目扩展。第六版接续必须使用权重 warm-start，全部 teacher 基线重新建立。
+`--warm-start` 重置优化器、课程和迭代数，与 `--agent.resume True` 互斥。从原固定/混合任务切换到默认 832 组时，任务指纹和组表已改变，需使用 warm-start，重新建立 teacher 基线。第六版接续同样使用 warm-start。
 
-对照任务可直接选择 `Ri-4438-HIM-LPACRL-Rough-A0`（旧地图固定任务）、`-A1`（连通地图固定任务）、`-A2`（混合均匀采样）或 `-A3`（混合 signed-LP，默认）。四组均保留覆盖分支。设计见 [第七版混合任务设计](docs/RI-4438_LPACRL第七版混合任务设计.md)。
+历史对照任务可选择 `Ri-4438-HIM-LPACRL-Rough-A0`（旧地图固定任务）、`-A1`（连通地图固定任务）、`-A2`（混合均匀采样）或 `-A3`（混合 signed-LP）。四组均保留原有 25% 覆盖分支，A3 不再是默认 Rough 配置。历史设计见 [第七版混合任务设计](docs/RI-4438_LPACRL第七版混合任务设计.md)。
 
 独立离线评估：
 
@@ -104,7 +106,7 @@ uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.evaluate \
   --checkpoint '/path/to/model.pt' --output-dir '/path/to/new_evaluation'
 ```
 
-输出目录必须尚不存在。默认从检查点恢复任务配置，`--suite both` 运行任务表与平地部署序列；可选 `task` / `deployment` 单独执行。`--protocol current` 统一使用当前任务配置，便于比较历史模型；`--num-envs` 和 `--trials-per-task` 控制批量与重复次数。`--task-mode fixed` 保留固定任务评估，`--task-mode random_process` 使用独立种子的变指令试验；默认 `mixed` 评估两类。
+输出目录必须尚不存在。默认从检查点恢复任务配置，`--suite both` 运行任务表与平地部署序列；可选 `task` / `deployment` 单独执行。`--protocol current` 统一使用当前任务配置，便于比较历史模型；`--num-envs` 和 `--trials-per-task` 控制批量与重复次数。省略 `--task-mode` 沿用所选协议的任务族；显式选择 `fixed`、`random_process` 或 `mixed` 可分别评估固定指令、独立种子的变指令或两类任务。
 
 任务结果为 `evaluation.json`、`per_task.csv`，部署序列结果位于 `deployment/`。分别查看论文跟踪判据 `paper_success`、三轴跟踪 `tracking_success`、部署验收 `deployment_success` 、严格变指令通过 `process_success` 和完整出口通过 `terrain_traversal_success`。后者在通过后折返或摔倒仍保留，另报 `terrain_passed_without_failure`；旧跨阶指标另存 `legacy_terrain_traversal_success`。切换失败与窗口未完整观测分开计数，实际支撑地块及每次切换记录保存在试验结果中；定义见 [评估实现](src/tasks/locomotion/ri_4438_him_lpacrl/rl/evaluator.py)。
 

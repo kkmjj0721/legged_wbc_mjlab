@@ -175,17 +175,23 @@ class TaskCatalog:
             for b in self.axis_bins["heading"]
         ):
             raise ValueError("Heading offsets must be within [-pi, pi] radians")
+        for terrain, family in cfg.terrains.items():
+            if not family.levels:
+                raise ValueError(f"{terrain}: no levels")
+            for level in family.levels:
+                if any(
+                    not isinstance(x, str) or not x or any(c in x for c in "/=:")
+                    for x in (terrain, level)
+                ):
+                    raise ValueError("Invalid terrain/level name")
         candidates = []
-        for axes in itertools.product(*self.axis_bins.values()):
+        fixed_axes = (
+            itertools.product(*self.axis_bins.values())
+            if getattr(cfg, "fixed_tasks", True) else ()
+        )
+        for axes in fixed_axes:
             for terrain, family in cfg.terrains.items():
-                if not family.levels:
-                    raise ValueError(f"{terrain}: no levels")
                 for level in family.levels:
-                    if any(
-                        not isinstance(x, str) or not x or any(c in x for c in "/=:")
-                        for x in (terrain, level)
-                    ):
-                        raise ValueError("Invalid terrain/level name")
                     parts = [
                         f"{name}={a.name}"
                         + (f":{a.sign}" if a.sign != "within" else "")

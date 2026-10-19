@@ -37,6 +37,7 @@ def make_deployment_setup(source_cfg):
 
     cfg = deepcopy(source_cfg)
     cfg.task_space.random_process = False
+    cfg.task_space.fixed_tasks = True
     repeats = cfg.evaluation.trials_per_task
     cfg.task_space.heading_command = False
     default_axis = vars(cfg.task_space.command_axes["vx"])

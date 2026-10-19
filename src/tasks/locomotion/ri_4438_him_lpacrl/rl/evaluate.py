@@ -59,6 +59,7 @@ def from_snapshot(snapshot):
     for name in ("process_amplitudes", "process_heading_range", "process_hold_s"):
         task.setdefault(name, getattr(cfg.task_space, name))
     task.setdefault("random_process", False)
+    task.setdefault("fixed_tasks", True)
     for name in ("command_axes", "terrains"):
         task[name] = {k: NS(**v) for k, v in task[name].items()}
     cfg.task_space = NS(**task)
@@ -71,6 +72,7 @@ def fixed_command(cfg, name):
     """Translations retain heading hold; turn suites explicitly request constant wz."""
     cfg = deepcopy(cfg)
     cfg.task_space.random_process = False
+    cfg.task_space.fixed_tasks = True
     defaults = make_lpacrl_cfg().task_space.command_axes["vx"]
     values = COMMANDS[name]
     if values[2]:
@@ -92,6 +94,20 @@ def fixed_command(cfg, name):
     cfg.task_space.resampling_interval_s = None
     cfg.task_space.include = []
     cfg.task_space.exclude = []
+    return cfg
+
+
+def select_task_mode(cfg, mode):
+    """Choose evaluation families independently of the saved training sampler."""
+    cfg = deepcopy(cfg)
+    if mode not in (None, "mixed", "fixed", "random_process"):
+        raise ValueError(f"Unknown task mode: {mode}")
+    if mode == "random_process" and not cfg.task_space.heading_command:
+        raise ValueError("random_process requires heading mode")
+    if mode is not None:
+        cfg.task_space.fixed_tasks = mode != "random_process"
+        cfg.task_space.random_process = mode != "fixed" and cfg.task_space.heading_command
+        cfg.curriculum.forward_stairs_fraction = 0.0
     return cfg
 
 
@@ -136,8 +152,8 @@ def main():
     parser.add_argument("--trials-per-task", type=int)
     parser.add_argument("--horizon-s", type=float)
     parser.add_argument("--command", choices=tuple(COMMANDS))
-    parser.add_argument("--task-mode", choices=("mixed", "fixed", "random_process"), default="mixed",
-                        help="Evaluate both V7 families, fixed tasks only, or independent process trials")
+    parser.add_argument("--task-mode", choices=("mixed", "fixed", "random_process"),
+                        help="Override the protocol's task families; default uses its configured sampler")
     parser.add_argument("--suite", choices=("task", "deployment", "both"), default="both",
                         help="Task-space evaluation, fixed flat command sequences, or both (default)")
     parser.add_argument("--terrain", action="append")
@@ -186,13 +202,12 @@ def main():
         cfg = make_lpacrl_cfg()
     if args.command:
         cfg = fixed_command(cfg, args.command)
-    if args.task_mode == "fixed":
-        cfg.task_space.random_process = False
-    elif args.task_mode == "random_process":
-        if args.command or not cfg.task_space.heading_command:
-            parser.error("random_process requires heading mode and cannot use --command")
-        cfg.task_space.random_process = True
-        cfg.task_space.include = [{**rule, "mode": "random_process"} for rule in cfg.task_space.include or [{}]]
+    if args.command and args.task_mode in ("mixed", "random_process"):
+        parser.error("--command requires fixed tasks; omit --task-mode or select fixed")
+    try:
+        cfg = select_task_mode(cfg, args.task_mode)
+    except ValueError as error:
+        parser.error(str(error))
     if args.terrain or args.level:
         terrains = args.terrain or list(cfg.task_space.terrains)
         if set(terrains) - set(cfg.task_space.terrains):
