@@ -16,7 +16,7 @@ from rsl_rl.storage.rollout_storage import RolloutStorage
 
 
 class HIMRolloutStorage(RolloutStorage):
-    """Feed-forward RL storage that keeps the observation after every transition."""
+    """HIM storage with optional interleaved original and mirrored transitions."""
 
     class Batch(RolloutStorage.Batch):
         """PPO batch with post-step observations and episode boundaries."""
@@ -73,14 +73,21 @@ class HIMRolloutStorage(RolloutStorage):
         device: str = "cpu",
         *,
         next_observation_groups: tuple[str, ...] | list[str] | None = None,
+        transitions_per_step: int = 1,
     ) -> None:
         """Keep all current observations, but only requested next-observation groups.
 
         Omitting next_observation_groups preserves the full-batch storage API.
         HIMPPO passes its estimator groups, which need no next actor history.
+        transitions_per_step=2 allocates two interleaved streams for HOMIE.
         """
         if training_type != "rl":
             raise ValueError("HIMRolloutStorage only supports reinforcement-learning rollouts")
+        if transitions_per_step not in (1, 2):
+            raise ValueError("HIM storage supports one original or two original/mirrored transitions per step")
+        self.transitions_per_step = transitions_per_step
+        self.num_steps_per_env = num_transitions_per_env
+        num_transitions_per_env *= transitions_per_step
         self.next_observation_groups = tuple(
             obs.keys() if next_observation_groups is None else next_observation_groups
         )

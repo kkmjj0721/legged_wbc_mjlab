@@ -114,8 +114,9 @@ class HIMEstimator(nn.Module):
         gradient_reducer: Callable[[Iterable[nn.Parameter]], None] | None = None,
         numerics_guard=None,
         lr: float | None = None,
-    ) -> tuple[float, float]:
-        """Perform one estimator update and return estimation and swap losses."""
+        return_tensors: bool = False,
+    ) -> tuple[float, float] | tuple[torch.Tensor, torch.Tensor]:
+        """Update HIM; optionally return detached losses for GPU-side accumulation."""
         self._validate_history(obs_history)
         if learning_rate is None:
             learning_rate = lr
@@ -187,6 +188,9 @@ class HIMEstimator(nn.Module):
                 for parameter in self.parameters():
                     zero_loss = zero_loss + parameter.sum() * 0.0
                 optimizer_step(zero_loss)
+            if return_tensors:
+                zero = obs_history.new_zeros(())
+                return zero, zero.clone()
             return 0.0, 0.0
 
         encoded = self.encoder(obs_history)
@@ -210,6 +214,8 @@ class HIMEstimator(nn.Module):
         loss = estimation_loss + swap_loss
 
         optimizer_step(loss)
+        if return_tensors:
+            return estimation_loss.detach(), swap_loss.detach()
         return estimation_loss.item(), swap_loss.item()
 
     def _validate_history(self, obs_history: torch.Tensor) -> None:

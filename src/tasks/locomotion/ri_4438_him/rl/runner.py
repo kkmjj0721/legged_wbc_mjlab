@@ -118,7 +118,10 @@ class HIMOnPolicyRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
         self._restore_legacy_velocity_ranges(curriculum, path)
       # The wrapper reset happened before load(); refresh commands and history
       # once so training starts with the restored curriculum range.
-      self.env.reset()
+      # Delay buffers can be materialized during inference-mode rollout.
+      # Reset them in the same mode; model/optimizer loading above stays outside it.
+      with torch.inference_mode():
+        self.env.reset()
     return infos
 
   def _velocity_curriculum(self) -> RewardBasedVelocityCurriculum | None:

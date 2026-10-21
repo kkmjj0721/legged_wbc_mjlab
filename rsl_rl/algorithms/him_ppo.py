@@ -14,13 +14,16 @@ the actor, so the PPO loss does not apply a second estimator gradient.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from copy import copy
 from itertools import chain
+import math
 
 import torch
 import torch.nn as nn
 from tensordict import TensorDict
 
 from rsl_rl.env import VecEnv
+from rsl_rl.extensions.symmetry import Symmetry, resolve_symmetry_config
 from rsl_rl.models import HIMActorModel, MLPModel
 from rsl_rl.storage import HIMRolloutStorage
 from rsl_rl.utils import reduce_gradients_in_buckets, resolve_class, resolve_obs_groups, resolve_optimizer
@@ -58,6 +61,9 @@ class HIMPPO:
         estimator_velocity_slice: tuple[int, int] | list[int] | None = None,
         estimator_target_slice: tuple[int, int] | list[int] | None = None,
         estimator_target_slices: tuple[tuple[int, int], ...] | list[tuple[int, int]] | None = None,
+        symmetry_cfg: dict | None = None,
+        fused_optimizer: bool = False,
+        reference_update: bool = False,
         **kwargs,
     ) -> None:
         """Initialize PPO and the HIM estimator training configuration."""
@@ -78,6 +84,26 @@ class HIMPPO:
         self._raw_actor = self.actor
         self._raw_critic = self.critic
         self.estimator = self.actor.estimator
+        self.fused_optimizer = fused_optimizer
+        self._fused_cuda = fused_optimizer and torch.device(device).type == "cuda"
+        self.symmetry = None
+        self.reference_symmetry = False
+        self.critic_mirror_loss_coeff = 0.0
+        if symmetry_cfg is not None:
+            options = dict(symmetry_cfg)
+            implementation = options.pop("implementation", "ppo")
+            if implementation not in ("ppo", "homie"):
+                raise ValueError(f"Unknown HIM symmetry implementation: {implementation!r}")
+            self.reference_symmetry = implementation == "homie"
+            self.critic_mirror_loss_coeff = float(options.pop("critic_mirror_loss_coeff", 0.0))
+            coefficient = float(options.get("mirror_loss_coeff", 0.0))
+            if any(not math.isfinite(c) or c < 0 for c in (coefficient, self.critic_mirror_loss_coeff)):
+                raise ValueError("Symmetry loss coefficients must be finite and nonnegative")
+            self.symmetry = Symmetry(**options)
+        self.reference_update = reference_update or self.reference_symmetry
+        expected_streams = 2 if self.reference_symmetry and self.symmetry.use_data_augmentation else 1
+        if storage.transitions_per_step != expected_streams:
+            raise ValueError("HIM storage stream count does not match its symmetry configuration")
         # Keep the runner/logger contract even when RND is not configured.
         self.rnd = None
         self.intrinsic_rewards = None
@@ -86,10 +112,20 @@ class HIMPPO:
         # estimator also owns a second optimizer for its HIM objective; since
         # HIMActorModel detaches estimator outputs, PPO contributes no gradient
         # to these parameters, matching the original implementation.
-        self.optimizer = resolve_optimizer(optimizer)(
+        optimizer_class = resolve_optimizer(optimizer)
+        optimizer_options = {"fused": self._fused_cuda} if fused_optimizer else {}
+        if fused_optimizer and optimizer_class is not torch.optim.Adam:
+            raise ValueError("fused_optimizer requires the Adam optimizer")
+        self.optimizer = optimizer_class(
             chain(self.actor.parameters(), self.critic.parameters()),
             lr=learning_rate,
+            **optimizer_options,
         )
+        if fused_optimizer:
+            # Construct after moving the estimator parameters onto the target device.
+            self.estimator.optimizer = torch.optim.Adam(
+                self.estimator.parameters(), lr=self.estimator.learning_rate, fused=self._fused_cuda
+            )
         # This is only the estimator optimizer's initial LR.  Each mini-batch
         # update below synchronizes it to the current PPO LR, as in HIMLoco.
         if estimator_learning_rate is not None:
@@ -101,6 +137,7 @@ class HIMPPO:
 
         self.storage = storage
         self.transition = HIMRolloutStorage.Transition()
+        self.transition_sym = HIMRolloutStorage.Transition()
         self.clip_param = clip_param
         self.num_learning_epochs = num_learning_epochs
         self.num_mini_batches = num_mini_batches
@@ -127,12 +164,44 @@ class HIMPPO:
 
     def act(self, obs: TensorDict) -> torch.Tensor:
         """Sample actions and record the current transition."""
+        if self.storage.transitions_per_step == 2:
+            return self._act_with_mirror(obs)
         self.transition.hidden_states = (self.actor.get_hidden_state(), self.critic.get_hidden_state())
         self.transition.actions = self.actor(obs, stochastic_output=True).detach()
         self.transition.values = self.critic(obs).detach()
         self.transition.actions_log_prob = self.actor.get_output_log_prob(self.transition.actions).detach()
         self.transition.distribution_params = tuple(param.detach() for param in self.actor.output_distribution_params)
         self.transition.observations = obs
+        return self.transition.actions
+
+    def _mirror_observations(self, obs: TensorDict) -> TensorDict:
+        """Reflect a complete history or the selected next-observation groups."""
+        augmented, _ = self.symmetry.data_augmentation_func(env=self.symmetry.env, obs=obs, actions=None)
+        count = obs.batch_size[0]
+        if augmented.batch_size[0] != 2 * count:
+            raise ValueError("HOMIE mode requires exactly one left/right mirror per observation")
+        return augmented[count:]
+
+    def _act_with_mirror(self, obs: TensorDict) -> torch.Tensor:
+        """Batch original/mirrored policy inference and save both behavior distributions.
+
+        Only the original action reaches physics. The mirrored action is sampled
+        from its own behavior distribution, matching the reference implementation.
+        """
+        mirrored = self._mirror_observations(obs)
+        all_obs = torch.cat((obs, mirrored), dim=0)
+        actions = self.actor(all_obs, stochastic_output=True).detach()
+        values = self.critic(all_obs).detach()
+        log_prob = self.actor.get_output_log_prob(actions).detach()
+        params = tuple(p.detach() for p in self.actor.output_distribution_params)
+        count = obs.batch_size[0]
+        for transition, indices in ((self.transition, slice(0, count)),
+                                    (self.transition_sym, slice(count, None))):
+            transition.observations = all_obs[indices]
+            transition.actions = actions[indices]
+            transition.values = values[indices]
+            transition.actions_log_prob = log_prob[indices]
+            transition.distribution_params = tuple(p[indices] for p in params)
         return self.transition.actions
 
     def process_env_step(
@@ -149,12 +218,26 @@ class HIMPPO:
                 self.transition.values * extras["time_outs"].unsqueeze(1).to(self.device), 1
             )
         self.storage.add_transition(self.transition)
+        if self.storage.transitions_per_step == 2:
+            self.transition_sym.next_observations = self._mirror_observations(self.transition.next_observations)
+            self.transition_sym.next_observations_valid = self.transition.next_observations_valid
+            self.transition_sym.rewards = rewards.clone()
+            self.transition_sym.dones = dones.clone()
+            if "time_outs" in extras:
+                self.transition_sym.rewards += self.gamma * torch.squeeze(
+                    self.transition_sym.values * extras["time_outs"].unsqueeze(1).to(self.device), 1
+                )
+            self.storage.add_transition(self.transition_sym)
+            self.transition_sym.clear()
         self.transition.clear()
         self.actor.reset(dones)
         self.critic.reset(dones)
 
     def compute_returns(self, obs: TensorDict) -> None:
         """Compute generalized advantage and return targets."""
+        if self.storage.transitions_per_step == 2:
+            self._compute_mirrored_returns(obs)
+            return
         last_values = self.critic(obs).detach()
         advantage = 0
         for step in reversed(range(self.storage.num_transitions_per_env)):
@@ -177,6 +260,29 @@ class HIMPPO:
                 self.storage.advantages.std() + 1e-8
             )
 
+    def _compute_mirrored_returns(self, obs: TensorDict) -> None:
+        """Run GAE independently along the two interleaved rollout streams."""
+        count = self.storage.num_steps_per_env
+        streams = lambda t: t.reshape(count, 2, self.storage.num_envs, 1)
+        values, rewards, dones, returns = map(streams, (
+            self.storage.values, self.storage.rewards, self.storage.dones, self.storage.returns,
+        ))
+        # Bootstrap each stream from its own critic input, including the last step.
+        last_obs = torch.cat((obs, self._mirror_observations(obs)), dim=0)
+        last_values = self.critic(last_obs).detach().reshape(2, self.storage.num_envs, 1)
+        advantage = 0
+        for step in reversed(range(count)):
+            next_values = last_values if step == count - 1 else values[step + 1]
+            alive = 1.0 - dones[step].float()
+            delta = rewards[step] + alive * self.gamma * next_values - values[step]
+            advantage = delta + alive * self.gamma * self.lam * advantage
+            returns[step] = advantage + values[step]
+        self.storage.advantages = self.storage.returns - self.storage.values
+        if not self.normalize_advantage_per_mini_batch:
+            self.storage.advantages = (self.storage.advantages - self.storage.advantages.mean()) / (
+                self.storage.advantages.std() + 1e-8
+            )
+
     def update(self) -> dict[str, float]:
         """Optimize PPO and HIM losses over the collected rollout."""
         guard = self.numerics_guard
@@ -192,6 +298,15 @@ class HIMPPO:
         mean_entropy = 0.0
         mean_estimation_loss = 0.0
         mean_swap_loss = 0.0
+        mean_symmetry_loss = 0.0
+        mean_ppo_samples = 0.0
+        mean_estimator_samples = 0.0
+        mean_critic_symmetry_loss = 0.0
+        if self.reference_update:
+            mean_value_loss, mean_surrogate_loss, mean_entropy, mean_estimation_loss, mean_swap_loss, \
+                mean_symmetry_loss, mean_estimator_samples, mean_critic_symmetry_loss = (
+                    torch.zeros((), device=self.device) for _ in range(8)
+                )
         generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
 
         for batch in generator:
@@ -199,11 +314,29 @@ class HIMPPO:
                 with torch.no_grad():
                     batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
 
+            # The extension replaces fields in its batch. Keep the original HIM
+            # history/next-observation/valid-mask pairing in a separate container.
+            original_batch = batch
+            if self.symmetry is not None and not self.reference_symmetry:
+                original_batch_size = batch.observations.batch_size[0]
+                batch = copy(original_batch)
+                self.symmetry.augment_batch(batch, original_batch_size)
+                count = batch.observations.batch_size[0]
+                for tensor in (batch.actions, batch.old_actions_log_prob, batch.values,
+                               batch.advantages, batch.returns):
+                    if tensor.shape[0] != count:
+                        raise ValueError("Symmetry PPO batch fields have inconsistent batch sizes")
+
             self.actor(batch.observations, stochastic_output=True)
             actions_log_prob = self.actor.get_output_log_prob(batch.actions)
             values = self.critic(batch.observations)
             distribution_params = self.actor.output_distribution_params
             entropy = self.actor.output_entropy
+            if self.symmetry is not None and not self.reference_symmetry:
+                distribution_params = tuple(p[:original_batch_size] for p in distribution_params)
+                entropy = entropy[:original_batch_size]
+                if any(p.shape[0] != original_batch_size for p in batch.old_distribution_params):
+                    raise ValueError("Symmetry KL must compare the original samples only")
             if guard is not None:
                 guard.check("ppo_forward", {"values": values, "log_prob": actions_log_prob, "entropy": entropy})
                 guard.check("ppo_distribution", distribution_params)
@@ -211,10 +344,21 @@ class HIMPPO:
             if self.desired_kl is not None and self.schedule == "adaptive":
                 self._update_learning_rate(batch.old_distribution_params, distribution_params)
 
-            history = self.actor.get_observation_tensor(batch.observations)
+            if self.symmetry is not None and not self.reference_symmetry:
+                # Both sides use the same estimator version as the PPO forward.
+                # A diagnostic-only pass must neither sample nor update state.
+                with torch.set_grad_enabled(self.symmetry.use_mirror_loss):
+                    symmetry_loss = self.symmetry.compute_loss(
+                        self.actor, copy(batch), original_batch_size,
+                        action_mean_fn=self.actor.get_action_mean,
+                    )
+                if guard is not None:
+                    guard.check("symmetry_loss", symmetry_loss, limit=1e8)
+
+            history = self.actor.get_observation_tensor(original_batch.observations)
             history = self.actor.obs_normalizer(history)
-            velocity_target, target_obs = self._get_estimator_targets(batch.next_observations)
-            valid_estimator_samples = batch.next_observations_valid.reshape(-1).bool()
+            velocity_target, target_obs = self._get_estimator_targets(original_batch.next_observations)
+            valid_estimator_samples = original_batch.next_observations_valid.reshape(-1).bool()
             update_estimator = torch.tensor(
                 int(valid_estimator_samples.any()), dtype=torch.int32, device=self.device
             )
@@ -230,6 +374,7 @@ class HIMPPO:
                     learning_rate=self.learning_rate,
                     gradient_reducer=self._reduce_estimator_gradients if self.is_multi_gpu else None,
                     numerics_guard=guard,
+                    **({"return_tensors": True} if self.reference_update else {}),
                 )
             else:
                 estimation_loss = 0.0
@@ -251,6 +396,14 @@ class HIMPPO:
                 value_loss = (batch.returns - values).pow(2).mean()
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy.mean()
+            if self.reference_symmetry:
+                # Estimator has stepped. Recompute BOTH actor sides from this
+                # version; the pre-step PPO mean would be a stale target.
+                symmetry_loss, critic_symmetry_loss = self._reference_symmetry_losses(batch, values)
+            if self.symmetry is not None and self.symmetry.use_mirror_loss:
+                loss = loss + self.symmetry.mirror_loss_coeff * symmetry_loss
+                if self.reference_symmetry:
+                    loss = loss + self.critic_mirror_loss_coeff * critic_symmetry_loss
             if guard is not None:
                 guard.check("ppo_loss", {"loss": loss, "ratio": ratio}, limit=1e8)
             self.optimizer.zero_grad()
@@ -268,16 +421,25 @@ class HIMPPO:
                     "parameters": list(self._all_parameters()), "optimizer": self.optimizer.state,
                 })
 
-            mean_value_loss += value_loss.item()
-            mean_surrogate_loss += surrogate_loss.item()
-            mean_entropy += entropy.mean().item()
+            mean_value_loss += value_loss.detach() if self.reference_update else value_loss.item()
+            mean_surrogate_loss += surrogate_loss.detach() if self.reference_update else surrogate_loss.item()
+            mean_entropy += entropy.mean().detach() if self.reference_update else entropy.mean().item()
             mean_estimation_loss += estimation_loss
             mean_swap_loss += swap_loss
+            if self.symmetry is not None:
+                mean_symmetry_loss += symmetry_loss.detach() if self.reference_update else symmetry_loss.item()
+                mean_ppo_samples += batch.observations.batch_size[0]
+                mean_estimator_samples += (valid_estimator_samples.sum() if self.reference_update
+                                           else valid_estimator_samples.sum().item())
+                if self.reference_symmetry:
+                    mean_critic_symmetry_loss += critic_symmetry_loss.detach()
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
         if num_updates < 1:
             raise ValueError("num_learning_epochs and num_mini_batches must be positive")
-        observations = self.storage.observations.flatten(0, 1)
+        # Preserve this project's normalization contract: only real observations
+        # update running statistics, even when the buffer includes a mirror stream.
+        observations = self.storage.observations[::self.storage.transitions_per_step].flatten(0, 1)
         try:
             self.actor.update_normalization(observations)
             self.critic.update_normalization(observations)
@@ -286,13 +448,56 @@ class HIMPPO:
                 guard.fail("normalization", observations)
             raise
         self.storage.clear()
-        return {
+        if self.reference_update:
+            (mean_value_loss, mean_surrogate_loss, mean_entropy, mean_estimation_loss, mean_swap_loss,
+             mean_symmetry_loss, mean_estimator_samples, mean_critic_symmetry_loss) = torch.stack((
+                 mean_value_loss, mean_surrogate_loss, mean_entropy, mean_estimation_loss, mean_swap_loss,
+                 mean_symmetry_loss, mean_estimator_samples, mean_critic_symmetry_loss,
+             )).detach().cpu().tolist()
+        losses = {
             "value": mean_value_loss / num_updates,
             "surrogate": mean_surrogate_loss / num_updates,
             "entropy": mean_entropy / num_updates,
             "estimation": mean_estimation_loss / num_updates,
             "swap": mean_swap_loss / num_updates,
         }
+        if self.symmetry is not None:
+            losses.update({
+                "symmetry": mean_symmetry_loss / num_updates,
+                "symmetry_weighted": (mean_symmetry_loss / num_updates * self.symmetry.mirror_loss_coeff
+                                      if self.symmetry.use_mirror_loss else 0.0),
+                "ppo_samples": mean_ppo_samples / num_updates,
+                "estimator_samples": mean_estimator_samples / num_updates,
+            })
+            if self.reference_symmetry:
+                losses.update({
+                    "critic_symmetry": mean_critic_symmetry_loss / num_updates,
+                    "critic_symmetry_weighted": (mean_critic_symmetry_loss / num_updates
+                                                 * self.critic_mirror_loss_coeff
+                                                 if self.symmetry.use_mirror_loss else 0.0),
+                })
+        return losses
+
+    def _reference_symmetry_losses(self, batch, values):
+        """HOMIE's action-sum loss and detached-target critic loss after HIM update."""
+        mirrored = self._mirror_observations(batch.observations)
+        with torch.no_grad():
+            means = self.actor.get_action_mean(batch.observations)
+            _, augmented_means = self.symmetry.data_augmentation_func(
+                env=self.symmetry.env, obs=None, actions=means,
+            )
+            if augmented_means.shape != (2 * means.shape[0], means.shape[1]):
+                raise ValueError("HOMIE action augmentation must contain the original and one mirror")
+            target = augmented_means[means.shape[0]:]
+        with torch.set_grad_enabled(self.symmetry.use_mirror_loss):
+            prediction = self.actor.get_action_mean(mirrored)
+            actor_loss = (prediction - target).square().sum(dim=-1).mean()
+            critic_loss = (self.critic(mirrored) - values.detach()).square().mean()
+        if self.numerics_guard is not None:
+            self.numerics_guard.check("symmetry_loss", {
+                "actor": actor_loss, "critic": critic_loss,
+            }, limit=1e8)
+        return actor_loss, critic_loss
 
     def train_mode(self) -> None:
         """Set all HIM and PPO modules to training mode."""
@@ -332,11 +537,17 @@ class HIMPPO:
             saved_count = len(saved_groups[0].get("params", [])) if saved_groups else 0
             if current_count == saved_count:
                 self.optimizer.load_state_dict(optimizer_state)
+                if self.fused_optimizer:
+                    for group in self.optimizer.param_groups:
+                        group["fused"] = self._fused_cuda
                 self.learning_rate = self.optimizer.param_groups[0]["lr"]
         if load_cfg.get("estimator"):
             self._load_estimator_state(loaded_dict, strict)
             if "estimator_optimizer_state_dict" in loaded_dict:
                 self.estimator.optimizer.load_state_dict(loaded_dict["estimator_optimizer_state_dict"])
+                if self.fused_optimizer:
+                    for group in self.estimator.optimizer.param_groups:
+                        group["fused"] = self._fused_cuda
         return bool(load_cfg.get("iteration", False))
 
     def get_policy(self) -> HIMActorModel:
@@ -372,6 +583,7 @@ class HIMPPO:
     def construct_algorithm(obs: TensorDict, env: VecEnv, cfg: dict, device: str) -> "HIMPPO":
         """Construct HIMPPO from the same configuration contract as modern PPO."""
         alg_class, alg_cfg = resolve_class(cfg["algorithm"])
+        alg_cfg = resolve_symmetry_config(alg_cfg, env)
         actor_class, actor_cfg = resolve_class(cfg["actor"])
         critic_class, critic_cfg = resolve_class(cfg["critic"])
         default_sets = ["actor", "critic"]
@@ -386,6 +598,9 @@ class HIMPPO:
         storage = HIMRolloutStorage(
             "rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device,
             next_observation_groups=alg_cfg["estimator_obs_groups"],
+            transitions_per_step=(2 if alg_cfg.get("symmetry_cfg") is not None
+                                  and alg_cfg["symmetry_cfg"].get("implementation") == "homie"
+                                  and alg_cfg["symmetry_cfg"].get("use_data_augmentation") else 1),
         )
         algorithm = alg_class(
             actor,
@@ -427,7 +642,16 @@ class HIMPPO:
     def _update_learning_rate(self, old_params, new_params) -> None:
         """Adapt PPO learning rate from the Gaussian KL divergence."""
         with torch.inference_mode():
-            kl = self.actor.get_kl_divergence(old_params, new_params)
+            if self.reference_update:
+                old_mean, old_std = old_params
+                mean, std = new_params
+                kl = torch.sum(
+                    torch.log(std / old_std + 1e-5)
+                    + (old_std.square() + (old_mean - mean).square()) / (2.0 * std.square()) - 0.5,
+                    dim=-1,
+                )
+            else:
+                kl = self.actor.get_kl_divergence(old_params, new_params)
             kl_mean = torch.mean(kl)
             if self.is_multi_gpu:
                 torch.distributed.all_reduce(kl_mean, op=torch.distributed.ReduceOp.SUM)

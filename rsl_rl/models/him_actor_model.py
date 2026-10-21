@@ -165,6 +165,14 @@ class HIMActorModel(nn.Module):
         actions = self.distribution.deterministic_output(mlp_output)
         return actions.clamp(-self.action_clip, self.action_clip) if self.action_clip is not None else actions
 
+    def get_action_mean(self, obs: TensorDict) -> torch.Tensor:
+        """Return the unclipped mean without sampling or changing distribution state.
+
+        Training symmetry compares raw means; inference/export retain their
+        existing clipping. get_latent() keeps the HIM estimator detached.
+        """
+        return self.distribution.deterministic_output(self.mlp(self.get_latent(obs)))
+
     def get_latent(self, obs: TensorDict, masks=None, hidden_state=None) -> torch.Tensor:
         """Build the policy input from current history and HIM estimates."""
         del masks, hidden_state

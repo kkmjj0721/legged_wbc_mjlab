@@ -87,7 +87,10 @@ class Symmetry:
         batch.advantages = batch.advantages.repeat(num_aug, 1)
         batch.returns = batch.returns.repeat(num_aug, 1)
 
-    def compute_loss(self, actor: MLPModel, batch: RolloutStorage.Batch, original_batch_size: int) -> torch.Tensor:
+    def compute_loss(
+        self, actor: MLPModel, batch: RolloutStorage.Batch, original_batch_size: int,
+        *, action_mean_fn: Callable | None = None,
+    ) -> torch.Tensor:
         """Compute the mirror loss between the actor's action means on original and mirrored observations.
 
         If :meth:`augment_batch` has not been called for this batch (i.e. :attr:`use_data_augmentation` is False), the
@@ -96,13 +99,17 @@ class Symmetry:
 
         The returned loss is detached when :attr:`use_mirror_loss` is False so that it can be reported for logging
         without contributing to gradients.
+
+        action_mean_fn optionally supplies an unclipped, non-sampling mean
+        (for HIM). Omitting it preserves the ordinary PPO actor path.
         """
         # Augment observations if the batch has not already been augmented
         if not self.use_data_augmentation:
             batch.observations, _ = self.data_augmentation_func(env=self.env, obs=batch.observations, actions=None)
 
         # Action means predicted by the actor on the augmented observation batch
-        mean_actions = actor(batch.observations.detach().clone())
+        mean_fn = actor if action_mean_fn is None else action_mean_fn
+        mean_actions = mean_fn(batch.observations.detach().clone())
 
         # Mirror the original-slice action means using the augmentation function. We use the action means here rather
         # than the sampled actions in ``batch.actions``, since the symmetry loss is defined on the policy mean.
