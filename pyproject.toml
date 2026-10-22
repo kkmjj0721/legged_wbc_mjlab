@@ -17,12 +17,6 @@ analysis = [
     "pyyaml>=6.0",
     "onnxruntime>=1.17",
 ]
-sim2sim = [
-    "mujoco>=3.1",
-    "onnxruntime>=1.17",
-    "pygame>=2.5",
-    "pyyaml>=6.0",
-]
 urdf-tools = [
     "mujoco>=3.1",
     "numpy>=2.0",

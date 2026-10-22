@@ -2,7 +2,7 @@
 
 基于 MjLab、MuJoCo 和 RSL-RL 的足式机器人强化学习项目，支持 RI-4438 与 Unitree Go2 的速度跟踪、复杂地形训练和策略验证。
 
-提供 PPO、HIM + PPO、HIM LP-ACRL 任务，支持动力学随机化、多 GPU 训练、检查点评估与 ONNX 导出。RI-4438 HIM 已提供 MuJoCo sim2sim 部署流程，当前不包含实机驱动。
+提供 PPO、HIM + PPO、HIM LP-ACRL 任务，支持动力学随机化、多 GPU 训练、检查点评估与 ONNX 导出。
 
 ## 安装
 
@@ -18,7 +18,7 @@ uv run python -c "import mjlab, torch, rsl_rl; print(torch.__version__)"
 
 安装脚本自动准备 `uv`、Python、`.venv` 和匹配驱动的 PyTorch 后端。下文命令均在仓库根目录执行，无需手动激活环境。镜像、代理和离线安装见 [安装配置](docs/setup.md)。
 
-可选依赖：`analysis` 用于模型分析，`sim2sim` 用于部署仿真，`urdf-tools` 用于 URDF 检查；通过 `bash setup.sh --extra <扩展名>` 安装，或在命令中添加 `uv run --extra <扩展名>`。
+可选依赖：`analysis` 用于模型分析，`urdf-tools` 用于 URDF 检查；通过 `bash setup.sh --extra <扩展名>` 安装，或在命令中添加 `uv run --extra <扩展名>`。
 
 ## 任务
 
@@ -127,7 +127,7 @@ uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.evaluate \
   --checkpoint '/path/to/model.pt' --output-dir '/path/to/new_evaluation'
 ```
 
-输出目录必须尚不存在。默认从检查点恢复任务配置，`--suite both` 运行任务表与平地部署序列；可选 `task` / `deployment` 单独执行。`--protocol current` 统一使用当前任务配置，便于比较历史模型；`--num-envs` 和 `--trials-per-task` 控制批量与重复次数。省略 `--task-mode` 沿用所选协议的任务族；显式选择 `fixed`、`random_process` 或 `mixed` 可分别评估固定指令、独立种子的变指令或两类任务。
+输出目录必须尚不存在。默认从检查点恢复任务配置，`--suite both` 在 MjLab 环境内运行任务表与平地指令序列；可选 `task` / `deployment` 单独执行。`--protocol current` 统一使用当前任务配置，便于比较历史模型；`--num-envs` 和 `--trials-per-task` 控制批量与重复次数。省略 `--task-mode` 沿用所选协议的任务族；显式选择 `fixed`、`random_process` 或 `mixed` 可分别评估固定指令、独立种子的变指令或两类任务。
 
 任务结果为 `evaluation.json`、`per_task.csv`，部署序列结果位于 `deployment/`。分别查看论文跟踪判据 `paper_success`、三轴跟踪 `tracking_success`、部署验收 `deployment_success` 、严格变指令通过 `process_success` 和完整出口通过 `terrain_traversal_success`。后者在通过后折返或摔倒仍保留，另报 `terrain_passed_without_failure`；旧跨阶指标另存 `legacy_terrain_traversal_success`。切换失败与窗口未完整观测分开计数，实际支撑地块及每次切换记录保存在试验结果中；定义见 [评估实现](src/tasks/locomotion/ri_4438_him_lpacrl/rl/evaluator.py)。
 
@@ -143,16 +143,6 @@ uv run python -m src.tasks.locomotion.ri_4438_him_lpacrl.rl.evaluate \
 
 视频要求 `--suite task --num-envs 1`，更多参数见该入口的 `--help`。
 
-## RI-4438 HIM sim2sim
-
-```bash
-uv run --extra sim2sim python deploy/main.py \
-  --task ri_4438_him \
-  --policy 'logs/rsl_rl/ri_4438_him/<run>/policy.onnx'
-```
-
-后端与状态机检查可将 `--policy <路径>` 替换为 `--no-policy --headless --auto-stand --steps 800`。默认 HIM 接口为 47 维单帧观测 × 6 帧历史，ONNX 输入 282 维、输出 12 维动作。控制方式、地形和接口约束见 [sim2sim 文档](deploy/task/ri_4438_him/README.md)。
-
 ## 目录与工具
 
 | 路径 | 内容 |
@@ -162,7 +152,6 @@ uv run --extra sim2sim python deploy/main.py \
 | `src/tasks/` | 任务注册、环境配置、MDP 与 runner |
 | `src/assets/` | 机器人模型和网格 |
 | `rsl_rl/` | 本地 RSL-RL 与 HIM 扩展 |
-| `deploy/` | sim2sim 部署框架 |
 | `tools/` | 安装、诊断与 URDF 工具 |
 | `logs/` | 训练输出 |
 

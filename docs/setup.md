@@ -20,12 +20,6 @@ bash setup.sh
 
 镜像会先并行测速真实 wheel 文件并按下载速度排序；实际安装时项目依赖每个镜像默认最多等待 300 秒。如果某个镜像连接成功但下载长时间没有完成，脚本会终止本次尝试并自动切换下一个镜像，不会一直卡在第一个地址。Python standalone 默认使用 4 路分段并行下载，单个分段无数据 20 秒就会判定通道异常并回退单流下载；文件保存到持久化缓存后再交给 uv 校验和安装。下载通道默认最多等待 600 秒。可以通过 `--sync-timeout` 和 `--python-install-timeout` 调整上限，设置为 `0` 表示不限制。
 
-部署仿真（sim2sim）可以直接执行：
-
-```bash
-bash setup.sh --extra sim2sim
-```
-
 安装脚本的详细选项：
 
 ```bash
@@ -110,12 +104,6 @@ bash setup.sh
 PyTorch 默认单独允许最多 30 分钟下载（CUDA wheel 较大），可用 `--torch-timeout` 调整；设为 `0` 表示不限制。
 
 PyTorch 不直接照搬锁文件里的固定 CUDA wheel。脚本会优先读取 `nvidia-smi` 报告的驱动 CUDA 版本；只有系统没有 `nvidia-smi` 时才尝试读取 `nvcc`，自动选择兼容的 PyTorch 后端，例如 CUDA 13.0 对应 `cu130`、CUDA 12.4 对应 `cu124`；没有可用 NVIDIA 驱动时安装 CPU 后端。这样同一份代码可以在不同 CUDA/驱动机器上复用。
-
-部署仿真（sim2sim）还需要额外依赖：
-
-```bash
-python3 tools/uv_auto_sync.py --extra sim2sim
-```
 
 如需手动覆盖自动判断：
 
