@@ -12,11 +12,11 @@ from src.tasks.locomotion.ri_4438_him.config.rl_cfg import (
 class HimSymmetryCfg:
     implementation: str = "ppo"
     data_augmentation_func: str = "src.tasks.locomotion.ri_4438_him_symmetry.rl.symmetry:augment_phase47"
-    use_data_augmentation: bool = False
-    use_mirror_loss: bool = False
+    use_data_augmentation: bool = True
+    use_mirror_loss: bool = True
     mirror_loss_coeff: float = 0.1
     actor_mirror_reduction: str = "mean"
-    critic_mirror_loss_coeff: float = 0.0
+    critic_mirror_loss_coeff: float = 1.0
 
 
 @dataclass
@@ -24,7 +24,7 @@ class HimSymmetryAlgorithmCfg(RslRlHimAlgorithmCfg):
     symmetry_cfg: HimSymmetryCfg | None = field(default_factory=HimSymmetryCfg)
     estimator_lr_mode: str = "follow"
     estimator_lr_cap: float | None = None
-    estimator_use_mirror: bool = False
+    estimator_use_mirror: bool = True
     fused_optimizer: bool = False
     reference_update: bool = False
     kl_mode: str = "standard"
@@ -56,7 +56,7 @@ def make_runner_cfg(layout: HimLayout, experiment_name: str) -> HimSymmetryRunne
     })
     cfg.experiment_name = experiment_name
     cfg.observation_layout = layout.name
-    # Equal real sampling budget; paired augmentation is an explicit experiment.
+    # Keep the real sampling budget; paired augmentation adds mirrored samples.
     cfg.num_steps_per_env = 100
     cfg.actor.num_one_step_obs = layout.frame_size
     cfg.actor.history_size = layout.history_size

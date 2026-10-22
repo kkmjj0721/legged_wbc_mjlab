@@ -75,16 +75,16 @@ LP-ACRL 回放使用对应任务 ID 和 `--viewer viser`。在 `Commands → Twi
 
 ### HIM 对称实验与训练方案切换
 
-`Ri-4438-HIM-Symmetry-Rough` / `-Flat` 默认使用真实 rollout PPO，与普通 HIM 一样让 estimator 跟随 PPO 学习率。PPO 镜像增强、actor 镜像约束、critic 镜像约束和 estimator 镜像监督均默认关闭；只记录镜像误差。多种子复验没有支持将整套配对方案设为默认。
+`Ri-4438-HIM-Symmetry-Rough` / `-Flat` 默认使用配对镜像增强 PPO，与普通 HIM 一样让 estimator 跟随 PPO 学习率。PPO 镜像增强、actor 镜像约束、critic 镜像约束和 estimator 镜像监督均默认开启；actor 约束系数为 `0.1`（按动作维度求平均），critic 约束系数为 `1.0`。真实 rollout 仍为每个环境 100 步，镜像增强后保存 200 条 transition。实验脚本的 G0 对照显式关闭全部对称功能。
 
 实验开关位于 `agent.algorithm`：
 
 | 字段 | 含义 |
 | --- | --- |
-| `symmetry_cfg.use_data_augmentation` | `implementation="ppo"` 时启用配对增强：镜像真实动作及其行为分布，配对 GAE 与终止掩码；调度只读取真实样本 KL。物理对称仍是近似。 |
-| `symmetry_cfg.use_mirror_loss` | 独立开启 actor 镜像约束；默认候选系数 `0.1`，`actor_mirror_reduction="mean"`，仅更新 actor。 |
-| `symmetry_cfg.critic_mirror_loss_coeff` | 大于零时独立开启 critic 约束，不依赖 actor 约束开关。 |
-| `estimator_use_mirror` | 独立开启 estimator 镜像监督；关闭时配对 PPO 仍只使用真实样本训练 estimator。 |
+| `symmetry_cfg.use_data_augmentation` | 默认 `True`。`implementation="ppo"` 时启用配对增强：镜像真实动作及其行为分布，配对 GAE 与终止掩码；调度只读取真实样本 KL。物理对称仍是近似。 |
+| `symmetry_cfg.use_mirror_loss` | 默认 `True`，独立开启 actor 镜像约束；默认系数 `0.1`，`actor_mirror_reduction="mean"`，仅更新 actor。 |
+| `symmetry_cfg.critic_mirror_loss_coeff` | 默认 `1.0`；大于零时独立开启 critic 约束，不依赖 actor 约束开关。 |
+| `estimator_use_mirror` | 默认 `True`，独立开启 estimator 镜像监督；关闭时配对 PPO 仍只使用真实样本训练 estimator。 |
 | `estimator_lr_mode` | `follow` 跟随 PPO；`fixed` 使用 `estimator_learning_rate`；`cap` 使用 PPO 学习率与 `estimator_lr_cap` 的较小值。 |
 | `reference_update` | 显式选择更新路径，不再由 `homie` 强制开启；正常路径使用 `kl_mode="standard"`。 |
 
