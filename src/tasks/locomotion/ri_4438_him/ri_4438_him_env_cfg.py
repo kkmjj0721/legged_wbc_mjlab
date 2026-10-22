@@ -565,7 +565,7 @@ def make_velocity_env_cfg() -> ManagerBasedRlEnvCfg:
         func = him_mdp.RewardBasedVelocityCurriculum,
         params = {
           "command_name": "twist",
-          "linear_threshold": 0.8,
+          "linear_threshold": 0.75,
           "linear_increment": 0.1,
           "lin_vel_x_limit": (-1.0, 1.0),
           "lin_vel_y_limit": (-1.0, 1.0),

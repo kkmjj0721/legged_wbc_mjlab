@@ -33,6 +33,7 @@ class HIMRolloutStorage(RolloutStorage):
             old_distribution_params: tuple[torch.Tensor, ...],
             dones: torch.Tensor,
             next_observations_valid: torch.Tensor | None = None,
+            is_mirror: torch.Tensor | None = None,
         ) -> None:
             super().__init__(
                 observations=observations,
@@ -50,6 +51,8 @@ class HIMRolloutStorage(RolloutStorage):
                 if next_observations_valid is not None
                 else ~dones.view(-1, 1).bool()
             )
+            self.is_mirror = (is_mirror if is_mirror is not None
+                              else torch.zeros(actions.shape[0], dtype=torch.bool, device=actions.device))
 
     class Transition(RolloutStorage.Transition):
         """Transition with the post-step TensorDict required by the estimator."""
@@ -74,18 +77,24 @@ class HIMRolloutStorage(RolloutStorage):
         *,
         next_observation_groups: tuple[str, ...] | list[str] | None = None,
         transitions_per_step: int = 1,
+        paired_mini_batches: bool = False,
     ) -> None:
         """Keep all current observations, but only requested next-observation groups.
 
         Omitting next_observation_groups preserves the full-batch storage API.
         HIMPPO passes its estimator groups, which need no next actor history.
-        transitions_per_step=2 allocates two interleaved streams for HOMIE.
+        transitions_per_step=2 allocates interleaved real/mirror streams.
+        paired_mini_batches keeps corresponding real/mirror samples together;
+        legacy HOMIE uses independently shuffled rows instead.
         """
         if training_type != "rl":
             raise ValueError("HIMRolloutStorage only supports reinforcement-learning rollouts")
         if transitions_per_step not in (1, 2):
             raise ValueError("HIM storage supports one original or two original/mirrored transitions per step")
         self.transitions_per_step = transitions_per_step
+        if paired_mini_batches and transitions_per_step != 2:
+            raise ValueError("Paired mini-batches require two rollout streams")
+        self.paired_mini_batches = paired_mini_batches
         self.num_steps_per_env = num_transitions_per_env
         num_transitions_per_env *= transitions_per_step
         self.next_observation_groups = tuple(
@@ -126,7 +135,8 @@ class HIMRolloutStorage(RolloutStorage):
         """Yield shuffled batches containing both current and next observations."""
         if self.training_type != "rl":
             raise ValueError("This function is only available for reinforcement learning training.")
-        batch_size = self.num_envs * self.num_transitions_per_env
+        batch_size = self.num_envs * (self.num_steps_per_env if self.paired_mini_batches
+                                     else self.num_transitions_per_env)
         mini_batch_size = batch_size // num_mini_batches
         if mini_batch_size < 1:
             raise ValueError("num_mini_batches cannot exceed the rollout batch size")
@@ -148,6 +158,9 @@ class HIMRolloutStorage(RolloutStorage):
                 start = i * mini_batch_size
                 stop = (i + 1) * mini_batch_size
                 batch_idx = indices[start:stop]
+                if self.paired_mini_batches:
+                    real_idx = (batch_idx // self.num_envs) * 2 * self.num_envs + batch_idx % self.num_envs
+                    batch_idx = torch.cat((real_idx, real_idx + self.num_envs))
                 batch = HIMRolloutStorage.Batch(
                     observations=observations[batch_idx],
                     next_observations=next_observations[batch_idx],
@@ -159,5 +172,6 @@ class HIMRolloutStorage(RolloutStorage):
                     old_distribution_params=tuple(p[batch_idx] for p in old_distribution_params),
                     dones=dones[batch_idx],
                     next_observations_valid=next_observations_valid[batch_idx],
+                    is_mirror=(batch_idx // self.num_envs) % self.transitions_per_step == 1,
                 )
                 yield batch

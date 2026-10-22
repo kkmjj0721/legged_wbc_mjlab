@@ -10,19 +10,33 @@ from src.tasks.locomotion.ri_4438_him.config.rl_cfg import (
 
 @dataclass
 class HimSymmetryCfg:
-    implementation: str = "homie"
+    implementation: str = "ppo"
     data_augmentation_func: str = "src.tasks.locomotion.ri_4438_him_symmetry.rl.symmetry:augment_phase47"
-    use_data_augmentation: bool = True
-    use_mirror_loss: bool = True
-    mirror_loss_coeff: float = 1.0
-    critic_mirror_loss_coeff: float = 1.0
+    use_data_augmentation: bool = False
+    use_mirror_loss: bool = False
+    mirror_loss_coeff: float = 0.1
+    actor_mirror_reduction: str = "mean"
+    critic_mirror_loss_coeff: float = 0.0
 
 
 @dataclass
 class HimSymmetryAlgorithmCfg(RslRlHimAlgorithmCfg):
     symmetry_cfg: HimSymmetryCfg | None = field(default_factory=HimSymmetryCfg)
-    fused_optimizer: bool = True
-    reference_update: bool = True
+    estimator_lr_mode: str = "follow"
+    estimator_lr_cap: float | None = None
+    estimator_use_mirror: bool = False
+    fused_optimizer: bool = False
+    reference_update: bool = False
+    kl_mode: str = "standard"
+
+    @classmethod
+    def legacy_homie(cls):
+        """Explicit historical reproduction; includes independently sampled mirrors."""
+        return cls(symmetry_cfg=HimSymmetryCfg(implementation="homie",
+            use_data_augmentation=True, use_mirror_loss=True, mirror_loss_coeff=1.,
+            actor_mirror_reduction="sum", critic_mirror_loss_coeff=1.),
+            estimator_use_mirror=True, reference_update=True, kl_mode="legacy_homie",
+            fused_optimizer=True)
 
 
 @dataclass
@@ -42,7 +56,7 @@ def make_runner_cfg(layout: HimLayout, experiment_name: str) -> HimSymmetryRunne
     })
     cfg.experiment_name = experiment_name
     cfg.observation_layout = layout.name
-    # Match ordinary HIM's real rollout length; symmetry stores two transitions per step.
+    # Equal real sampling budget; paired augmentation is an explicit experiment.
     cfg.num_steps_per_env = 100
     cfg.actor.num_one_step_obs = layout.frame_size
     cfg.actor.history_size = layout.history_size

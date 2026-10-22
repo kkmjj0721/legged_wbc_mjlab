@@ -44,10 +44,8 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
         self.layout = get_layout(train_cfg["observation_layout"])
         validate_env_cfg(env.unwrapped.cfg, self.layout)
         symmetry_cfg = train_cfg["algorithm"].get("symmetry_cfg")
-        reference_update = train_cfg["algorithm"].get("reference_update", False)
-        reference_mode = reference_update or (symmetry_cfg and symmetry_cfg.get("implementation") == "homie")
         self._symmetry_contract = {
-            "version": 2 if reference_mode else 1,
+            "version": 3,
             "layout": _plain(self.layout.descriptor()),
             "mapping_version": MAPPING_VERSION,
             "symmetry": _plain(symmetry_cfg),
@@ -55,14 +53,12 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
                                 "params": _plain(term.params)}
                         for name, term in env.unwrapped.cfg.rewards.items()},
         }
-        if reference_mode:
-            self._symmetry_contract["algorithm"] = {
-                "reference_update": bool(reference_update),
-                "fused_optimizer": bool(train_cfg["algorithm"].get("fused_optimizer", False)),
-                "rollout_steps": train_cfg["num_steps_per_env"],
-                "normalization": "real_rollout_only",
-            }
         super().__init__(env, train_cfg, log_dir, device)
+        self._symmetry_contract["algorithm"] = self.alg.training_contract()
+        if log_dir is not None and self.alg.gpu_global_rank == 0:
+            Path(log_dir).mkdir(parents=True, exist_ok=True)
+            (Path(log_dir) / "effective_him_training.json").write_text(
+                json.dumps(self._symmetry_contract, indent=2))
         actor = self.alg.get_policy()
         if (actor.num_one_step_obs != self.layout.frame_size
                 or actor.history_size != self.layout.history_size
@@ -92,8 +88,7 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
         numerical = infos.get("him_numerics")
         if numerical is not None and numerical != self._numerical_contract():
             raise ValueError("Warm-start HIM numerical contract differs")
-        # HIMPPO's estimator loader also restores its own optimizer when present.
-        # Remove both states, and bypass parent load() which restores curricula.
+        # Import weights only, and bypass parent load() which restores curricula.
         checkpoint.pop("optimizer_state_dict", None)
         checkpoint.pop("estimator_optimizer_state_dict", None)
         self.alg.load(checkpoint, {

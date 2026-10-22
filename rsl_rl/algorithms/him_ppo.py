@@ -5,16 +5,14 @@
 
 """HIM-enhanced PPO implementation for the modern rsl_rl API.
 
-The estimator lifecycle intentionally follows native HIMLoco: its own
-supervised/contrastive optimizer is stepped before the PPO step and receives
-the current adaptive PPO learning rate.  Estimator outputs are detached in
-the actor, so the PPO loss does not apply a second estimator gradient.
+The default PPO samples come exclusively from real interactions. Optional paired
+augmentation pushes forward the real behavior distribution; physical symmetry
+remains an approximation. Estimator outputs are detached from the actor loss.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from copy import copy
 from itertools import chain
 import math
 
@@ -46,6 +44,9 @@ class HIMPPO:
         entropy_coef: float = 0.01,
         learning_rate: float = 0.001,
         estimator_learning_rate: float | None = None,
+        estimator_lr_mode: str = "follow",
+        estimator_lr_cap: float | None = None,
+        estimator_use_mirror: bool = False,
         max_grad_norm: float = 1.0,
         estimator_max_grad_norm: float | None = None,
         optimizer: str = "adam",
@@ -64,6 +65,7 @@ class HIMPPO:
         symmetry_cfg: dict | None = None,
         fused_optimizer: bool = False,
         reference_update: bool = False,
+        kl_mode: str = "standard",
         **kwargs,
     ) -> None:
         """Initialize PPO and the HIM estimator training configuration."""
@@ -88,22 +90,47 @@ class HIMPPO:
         self._fused_cuda = fused_optimizer and torch.device(device).type == "cuda"
         self.symmetry = None
         self.reference_symmetry = False
+        self.paired_augmentation = False
         self.critic_mirror_loss_coeff = 0.0
+        self.actor_mirror_reduction = "mean"
         if symmetry_cfg is not None:
             options = dict(symmetry_cfg)
             implementation = options.pop("implementation", "ppo")
             if implementation not in ("ppo", "homie"):
                 raise ValueError(f"Unknown HIM symmetry implementation: {implementation!r}")
             self.reference_symmetry = implementation == "homie"
+            self.actor_mirror_reduction = options.pop("actor_mirror_reduction", "sum" if self.reference_symmetry else "mean")
+            if self.actor_mirror_reduction not in ("mean", "sum"):
+                raise ValueError("actor_mirror_reduction must be 'mean' or 'sum'")
             self.critic_mirror_loss_coeff = float(options.pop("critic_mirror_loss_coeff", 0.0))
             coefficient = float(options.get("mirror_loss_coeff", 0.0))
             if any(not math.isfinite(c) or c < 0 for c in (coefficient, self.critic_mirror_loss_coeff)):
                 raise ValueError("Symmetry loss coefficients must be finite and nonnegative")
             self.symmetry = Symmetry(**options)
-        self.reference_update = reference_update or self.reference_symmetry
-        expected_streams = 2 if self.reference_symmetry and self.symmetry.use_data_augmentation else 1
+            self.paired_augmentation = not self.reference_symmetry and self.symmetry.use_data_augmentation
+        self.reference_update = bool(reference_update)
+        if kl_mode not in ("standard", "legacy_homie"):
+            raise ValueError("kl_mode must be 'standard' or explicit reproduction mode 'legacy_homie'")
+        self.kl_mode = kl_mode
+        self.estimator_use_mirror = bool(estimator_use_mirror)
+        if self.estimator_use_mirror and self.symmetry is None:
+            raise ValueError("estimator_use_mirror requires a symmetry mapping")
+        expected_streams = 2 if self.symmetry is not None and self.symmetry.use_data_augmentation else 1
         if storage.transitions_per_step != expected_streams:
             raise ValueError("HIM storage stream count does not match its symmetry configuration")
+        storage.paired_mini_batches = self.paired_augmentation
+        if self.paired_augmentation:
+            # Gaussian std transforms below require a signed permutation, with
+            # unit Jacobian determinant and no action offsets/scaling.
+            width = storage.actions.shape[-1]
+            basis = torch.eye(width, device=device)
+            transformed = self._mirror_actions(basis)
+            absolute = transformed.abs()
+            if (not torch.all((absolute == 0) | (absolute == 1))
+                    or not torch.all(absolute.sum(0) == 1) or not torch.all(absolute.sum(1) == 1)
+                    or not torch.equal(self._mirror_actions(torch.zeros_like(basis)), torch.zeros_like(basis))
+                    or not torch.equal(self._mirror_actions(transformed), basis)):
+                raise ValueError("Paired PPO requires an involutive signed-permutation action mapping")
         # Keep the runner/logger contract even when RND is not configured.
         self.rnd = None
         self.intrinsic_rewards = None
@@ -126,12 +153,19 @@ class HIMPPO:
             self.estimator.optimizer = torch.optim.Adam(
                 self.estimator.parameters(), lr=self.estimator.learning_rate, fused=self._fused_cuda
             )
-        # This is only the estimator optimizer's initial LR.  Each mini-batch
-        # update below synchronizes it to the current PPO LR, as in HIMLoco.
+        if estimator_lr_mode not in ("follow", "fixed", "cap"):
+            raise ValueError("estimator_lr_mode must be 'follow', 'fixed', or 'cap'")
+        self.estimator_lr_mode = estimator_lr_mode
+        self.estimator_lr_cap = estimator_lr_cap
+        if estimator_lr_mode == "cap" and (estimator_lr_cap is None or not math.isfinite(estimator_lr_cap) or estimator_lr_cap <= 0):
+            raise ValueError("Capped estimator LR requires a finite positive estimator_lr_cap")
         if estimator_learning_rate is not None:
             self.estimator.learning_rate = float(estimator_learning_rate)
             for param_group in self.estimator.optimizer.param_groups:
                 param_group["lr"] = self.estimator.learning_rate
+        self.estimator_fixed_learning_rate = self.estimator.learning_rate
+        if not math.isfinite(self.estimator_fixed_learning_rate) or self.estimator_fixed_learning_rate <= 0:
+            raise ValueError("estimator_learning_rate must be finite and positive")
         if estimator_max_grad_norm is not None:
             self.estimator.max_grad_norm = float(estimator_max_grad_norm)
 
@@ -179,15 +213,29 @@ class HIMPPO:
         augmented, _ = self.symmetry.data_augmentation_func(env=self.symmetry.env, obs=obs, actions=None)
         count = obs.batch_size[0]
         if augmented.batch_size[0] != 2 * count:
-            raise ValueError("HOMIE mode requires exactly one left/right mirror per observation")
+            raise ValueError("HIM symmetry requires exactly one left/right mirror per observation")
         return augmented[count:]
 
     def _act_with_mirror(self, obs: TensorDict) -> torch.Tensor:
-        """Batch original/mirrored policy inference and save both behavior distributions.
-
-        Only the original action reaches physics. The mirrored action is sampled
-        from its own behavior distribution, matching the reference implementation.
-        """
+        """Pair the real action/distribution, or explicitly reproduce legacy HOMIE."""
+        if self.paired_augmentation:
+            # Only this action is sampled and executed. The second stream is its
+            # push-forward, never an independently sampled action with copied rewards.
+            real, mirror = self.transition, self.transition_sym
+            real.observations = obs
+            real.actions = self.actor(obs, stochastic_output=True).detach()
+            real.values = self.critic(obs).detach()
+            real.actions_log_prob = self.actor.get_output_log_prob(real.actions).detach()
+            real.distribution_params = tuple(p.detach() for p in self.actor.output_distribution_params)
+            if len(real.distribution_params) != 2:
+                raise ValueError("Paired HIM PPO requires a diagonal Gaussian policy")
+            mean, std = real.distribution_params
+            mirror.observations = self._mirror_observations(obs)
+            mirror.actions = self._mirror_actions(real.actions)
+            mirror.values = real.values.clone()
+            mirror.actions_log_prob = real.actions_log_prob.clone()
+            mirror.distribution_params = (self._mirror_actions(mean), self._mirror_actions(std).abs())
+            return real.actions
         mirrored = self._mirror_observations(obs)
         all_obs = torch.cat((obs, mirrored), dim=0)
         actions = self.actor(all_obs, stochastic_output=True).detach()
@@ -261,7 +309,24 @@ class HIMPPO:
             )
 
     def _compute_mirrored_returns(self, obs: TensorDict) -> None:
-        """Run GAE independently along the two interleaved rollout streams."""
+        """Pair real GAE targets; legacy HOMIE retains its independent mirror GAE."""
+        if self.paired_augmentation:
+            storage = self.storage
+            last_values = self.critic(obs).detach()
+            advantage = 0
+            for step in reversed(range(storage.num_steps_per_env)):
+                index = 2 * step
+                next_values = last_values if step == storage.num_steps_per_env - 1 else storage.values[index + 2]
+                alive = 1.0 - storage.dones[index].float()
+                delta = storage.rewards[index] + alive * self.gamma * next_values - storage.values[index]
+                advantage = delta + alive * self.gamma * self.lam * advantage
+                storage.returns[index] = advantage + storage.values[index]
+                storage.returns[index + 1] = storage.returns[index]
+            storage.advantages = storage.returns - storage.values
+            if not self.normalize_advantage_per_mini_batch:
+                real = storage.advantages[::2]
+                storage.advantages = (storage.advantages - real.mean()) / (real.std() + 1e-8)
+            return
         count = self.storage.num_steps_per_env
         streams = lambda t: t.reshape(count, 2, self.storage.num_envs, 1)
         values, rewards, dones, returns = map(streams, (
@@ -302,6 +367,7 @@ class HIMPPO:
         mean_ppo_samples = 0.0
         mean_estimator_samples = 0.0
         mean_critic_symmetry_loss = 0.0
+        diagnostics = torch.zeros(2, 4, device=self.device)
         if self.reference_update:
             mean_value_loss, mean_surrogate_loss, mean_entropy, mean_estimation_loss, mean_swap_loss, \
                 mean_symmetry_loss, mean_estimator_samples, mean_critic_symmetry_loss = (
@@ -312,53 +378,27 @@ class HIMPPO:
         for batch in generator:
             if self.normalize_advantage_per_mini_batch:
                 with torch.no_grad():
-                    batch.advantages = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
-
-            # The extension replaces fields in its batch. Keep the original HIM
-            # history/next-observation/valid-mask pairing in a separate container.
-            original_batch = batch
-            if self.symmetry is not None and not self.reference_symmetry:
-                original_batch_size = batch.observations.batch_size[0]
-                batch = copy(original_batch)
-                self.symmetry.augment_batch(batch, original_batch_size)
-                count = batch.observations.batch_size[0]
-                for tensor in (batch.actions, batch.old_actions_log_prob, batch.values,
-                               batch.advantages, batch.returns):
-                    if tensor.shape[0] != count:
-                        raise ValueError("Symmetry PPO batch fields have inconsistent batch sizes")
+                    statistics = batch.advantages[~batch.is_mirror] if self.paired_augmentation else batch.advantages
+                    batch.advantages = (batch.advantages - statistics.mean()) / (statistics.std() + 1e-8)
 
             self.actor(batch.observations, stochastic_output=True)
             actions_log_prob = self.actor.get_output_log_prob(batch.actions)
             values = self.critic(batch.observations)
             distribution_params = self.actor.output_distribution_params
             entropy = self.actor.output_entropy
-            if self.symmetry is not None and not self.reference_symmetry:
-                distribution_params = tuple(p[:original_batch_size] for p in distribution_params)
-                entropy = entropy[:original_batch_size]
-                if any(p.shape[0] != original_batch_size for p in batch.old_distribution_params):
-                    raise ValueError("Symmetry KL must compare the original samples only")
             if guard is not None:
                 guard.check("ppo_forward", {"values": values, "log_prob": actions_log_prob, "entropy": entropy})
                 guard.check("ppo_distribution", distribution_params)
 
             if self.desired_kl is not None and self.schedule == "adaptive":
-                self._update_learning_rate(batch.old_distribution_params, distribution_params)
+                if self.paired_augmentation:
+                    real = ~batch.is_mirror
+                    self._update_learning_rate(tuple(p[real] for p in batch.old_distribution_params),
+                                               tuple(p[real] for p in distribution_params))
+                else:
+                    self._update_learning_rate(batch.old_distribution_params, distribution_params)
 
-            if self.symmetry is not None and not self.reference_symmetry:
-                # Both sides use the same estimator version as the PPO forward.
-                # A diagnostic-only pass must neither sample nor update state.
-                with torch.set_grad_enabled(self.symmetry.use_mirror_loss):
-                    symmetry_loss = self.symmetry.compute_loss(
-                        self.actor, copy(batch), original_batch_size,
-                        action_mean_fn=self.actor.get_action_mean,
-                    )
-                if guard is not None:
-                    guard.check("symmetry_loss", symmetry_loss, limit=1e8)
-
-            history = self.actor.get_observation_tensor(original_batch.observations)
-            history = self.actor.obs_normalizer(history)
-            velocity_target, target_obs = self._get_estimator_targets(original_batch.next_observations)
-            valid_estimator_samples = original_batch.next_observations_valid.reshape(-1).bool()
+            history, velocity_target, target_obs, valid_estimator_samples = self._estimator_batch(batch)
             update_estimator = torch.tensor(
                 int(valid_estimator_samples.any()), dtype=torch.int32, device=self.device
             )
@@ -369,9 +409,7 @@ class HIMPPO:
                     history[valid_estimator_samples],
                     velocity_target=velocity_target[valid_estimator_samples],
                     target_obs=target_obs[valid_estimator_samples],
-                    # Native HIMLoco synchronizes the estimator optimizer
-                    # with the adaptive PPO learning rate at every update.
-                    learning_rate=self.learning_rate,
+                    learning_rate=self._estimator_learning_rate(),
                     gradient_reducer=self._reduce_estimator_gradients if self.is_multi_gpu else None,
                     numerics_guard=guard,
                     **({"return_tensors": True} if self.reference_update else {}),
@@ -381,6 +419,13 @@ class HIMPPO:
                 swap_loss = 0.0
 
             ratio = torch.exp(actions_log_prob - torch.squeeze(batch.old_actions_log_prob))
+            with torch.no_grad():
+                exact_kl = self.actor.get_kl_divergence(batch.old_distribution_params, distribution_params)
+                for index, mask in enumerate((~batch.is_mirror, batch.is_mirror)):
+                    diagnostics[index] += torch.stack((
+                        exact_kl[mask].sum(), ((ratio[mask]-1).abs() > self.clip_param).float().sum(),
+                        ratio[mask].sum(), mask.sum().float(),
+                    ))
             surrogate = -torch.squeeze(batch.advantages) * ratio
             surrogate_clipped = -torch.squeeze(batch.advantages) * torch.clamp(
                 ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
@@ -396,14 +441,14 @@ class HIMPPO:
                 value_loss = (batch.returns - values).pow(2).mean()
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy.mean()
-            if self.reference_symmetry:
+            if self.symmetry is not None:
                 # Estimator has stepped. Recompute BOTH actor sides from this
                 # version; the pre-step PPO mean would be a stale target.
                 symmetry_loss, critic_symmetry_loss = self._reference_symmetry_losses(batch, values)
             if self.symmetry is not None and self.symmetry.use_mirror_loss:
                 loss = loss + self.symmetry.mirror_loss_coeff * symmetry_loss
-                if self.reference_symmetry:
-                    loss = loss + self.critic_mirror_loss_coeff * critic_symmetry_loss
+            if self.symmetry is not None and self.critic_mirror_loss_coeff:
+                loss = loss + self.critic_mirror_loss_coeff * critic_symmetry_loss
             if guard is not None:
                 guard.check("ppo_loss", {"loss": loss, "ratio": ratio}, limit=1e8)
             self.optimizer.zero_grad()
@@ -431,8 +476,8 @@ class HIMPPO:
                 mean_ppo_samples += batch.observations.batch_size[0]
                 mean_estimator_samples += (valid_estimator_samples.sum() if self.reference_update
                                            else valid_estimator_samples.sum().item())
-                if self.reference_symmetry:
-                    mean_critic_symmetry_loss += critic_symmetry_loss.detach()
+                mean_critic_symmetry_loss += (critic_symmetry_loss.detach() if self.reference_update
+                                              else critic_symmetry_loss.item())
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
         if num_updates < 1:
@@ -460,7 +505,15 @@ class HIMPPO:
             "entropy": mean_entropy / num_updates,
             "estimation": mean_estimation_loss / num_updates,
             "swap": mean_swap_loss / num_updates,
+            "learning_rate/ppo": self.optimizer.param_groups[0]["lr"],
+            "learning_rate/estimator": self.estimator.optimizer.param_groups[0]["lr"],
         }
+        if self.is_multi_gpu:
+            torch.distributed.all_reduce(diagnostics)
+        for name, row in zip(("real", "mirror"), diagnostics.cpu().tolist()):
+            if row[3]:
+                for key, value in zip(("kl", "clip_fraction", "ratio"), row[:3]):
+                    losses[f"{key}/{name}"] = value / row[3]
         if self.symmetry is not None:
             losses.update({
                 "symmetry": mean_symmetry_loss / num_updates,
@@ -469,35 +522,59 @@ class HIMPPO:
                 "ppo_samples": mean_ppo_samples / num_updates,
                 "estimator_samples": mean_estimator_samples / num_updates,
             })
-            if self.reference_symmetry:
-                losses.update({
-                    "critic_symmetry": mean_critic_symmetry_loss / num_updates,
-                    "critic_symmetry_weighted": (mean_critic_symmetry_loss / num_updates
-                                                 * self.critic_mirror_loss_coeff
-                                                 if self.symmetry.use_mirror_loss else 0.0),
-                })
+            losses.update({
+                "critic_symmetry": mean_critic_symmetry_loss / num_updates,
+                "critic_symmetry_weighted": mean_critic_symmetry_loss / num_updates * self.critic_mirror_loss_coeff,
+            })
         return losses
 
     def _reference_symmetry_losses(self, batch, values):
-        """HOMIE's action-sum loss and detached-target critic loss after HIM update."""
-        mirrored = self._mirror_observations(batch.observations)
+        """Detached actor targets; critic and actor switches are independent."""
+        obs = batch.observations if self.reference_symmetry else batch.observations[~batch.is_mirror]
+        mirrored = self._mirror_observations(obs)
         with torch.no_grad():
-            means = self.actor.get_action_mean(batch.observations)
-            _, augmented_means = self.symmetry.data_augmentation_func(
-                env=self.symmetry.env, obs=None, actions=means,
-            )
-            if augmented_means.shape != (2 * means.shape[0], means.shape[1]):
-                raise ValueError("HOMIE action augmentation must contain the original and one mirror")
-            target = augmented_means[means.shape[0]:]
+            target = self._mirror_actions(self.actor.get_action_mean(obs))
         with torch.set_grad_enabled(self.symmetry.use_mirror_loss):
             prediction = self.actor.get_action_mean(mirrored)
-            actor_loss = (prediction - target).square().sum(dim=-1).mean()
-            critic_loss = (self.critic(mirrored) - values.detach()).square().mean()
+            error = (prediction - target).square()
+            actor_loss = error.sum(dim=-1).mean() if self.actor_mirror_reduction == "sum" else error.mean()
+        critic_loss = values.new_zeros(())
+        if self.critic_mirror_loss_coeff:
+            with torch.no_grad():
+                target_value = values.detach() if self.reference_symmetry else self.critic(obs)
+            critic_loss = (self.critic(mirrored) - target_value).square().mean()
         if self.numerics_guard is not None:
             self.numerics_guard.check("symmetry_loss", {
                 "actor": actor_loss, "critic": critic_loss,
             }, limit=1e8)
         return actor_loss, critic_loss
+
+    def _mirror_actions(self, actions):
+        _, augmented = self.symmetry.data_augmentation_func(env=self.symmetry.env, obs=None, actions=actions)
+        if augmented.shape != (2 * actions.shape[0], actions.shape[1]):
+            raise ValueError("HIM action augmentation requires exactly one original and one mirror")
+        return augmented[actions.shape[0]:]
+
+    def _estimator_learning_rate(self):
+        if self.estimator_lr_mode == "fixed":
+            return self.estimator_fixed_learning_rate
+        if self.estimator_lr_mode == "cap":
+            return min(self.learning_rate, self.estimator_lr_cap)
+        return self.learning_rate
+
+    def _estimator_batch(self, batch):
+        observations, targets = batch.observations, batch.next_observations
+        valid = batch.next_observations_valid.reshape(-1).bool()
+        if self.storage.transitions_per_step == 2 and not self.estimator_use_mirror:
+            real = ~batch.is_mirror
+            observations, targets, valid = observations[real], targets[real], valid[real]
+        elif self.storage.transitions_per_step == 1 and self.estimator_use_mirror:
+            observations = torch.cat((observations, self._mirror_observations(observations)), dim=0)
+            targets = torch.cat((targets, self._mirror_observations(targets)), dim=0)
+            valid = valid.repeat(2)
+        history = self.actor.obs_normalizer(self.actor.get_observation_tensor(observations))
+        velocity, target = self._get_estimator_targets(targets)
+        return history, velocity, target, valid
 
     def train_mode(self) -> None:
         """Set all HIM and PPO modules to training mode."""
@@ -517,25 +594,75 @@ class HIMPPO:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "estimator_state_dict": self.estimator.state_dict(),
             "estimator_optimizer_state_dict": self.estimator.optimizer.state_dict(),
+            "him_training_contract": self.training_contract(),
+            "him_learning_rates": {
+                "ppo": self.optimizer.param_groups[0]["lr"],
+                "estimator": self.estimator.optimizer.param_groups[0]["lr"],
+            },
+        }
+
+    def training_contract(self) -> dict:
+        """Effective training choices, independent of mutable optimizer rates."""
+        symmetry = self.symmetry
+        mapping = None if symmetry is None else symmetry.data_augmentation_func
+        return {
+            "version": 1,
+            "ppo_data": ("paired" if self.paired_augmentation else "legacy_independent"
+                         if self.storage.transitions_per_step == 2 else "real"),
+            "symmetry_implementation": "homie" if self.reference_symmetry else "ppo",
+            "mapping": None if mapping is None else f"{mapping.__module__}:{mapping.__qualname__}",
+            "actor_mirror_enabled": bool(symmetry and symmetry.use_mirror_loss),
+            "actor_mirror_coefficient": symmetry.mirror_loss_coeff if symmetry and symmetry.use_mirror_loss else 0.0,
+            "actor_mirror_reduction": self.actor_mirror_reduction,
+            "critic_mirror_coefficient": self.critic_mirror_loss_coeff,
+            "estimator_use_mirror": self.estimator_use_mirror,
+            "estimator_lr_mode": self.estimator_lr_mode,
+            "estimator_learning_rate": self.estimator_fixed_learning_rate,
+            "estimator_lr_cap": self.estimator_lr_cap,
+            "reference_update": self.reference_update,
+            "kl_mode": self.kl_mode,
+            "optimizer": type(self.optimizer).__name__,
+            "fused_optimizer": self.fused_optimizer,
+            "real_steps_per_rollout": self.storage.num_steps_per_env,
+            "num_learning_epochs": self.num_learning_epochs,
+            "num_mini_batches": self.num_mini_batches,
+            "normalize_advantage_per_mini_batch": self.normalize_advantage_per_mini_batch,
         }
 
     def load(self, loaded_dict: dict, load_cfg: dict | None, strict: bool) -> bool:
         """Load selected model and optimizer states from a checkpoint."""
         if load_cfg is None:
             load_cfg = {"actor": True, "critic": True, "optimizer": True, "estimator": True, "iteration": True}
+        # Symmetry modes need a strict sample-source/training contract. Ordinary
+        # HIM keeps support for historical checkpoints without this metadata.
+        check_training_contract = self.symmetry is not None
+        if check_training_contract and (load_cfg.get("optimizer") or load_cfg.get("iteration")):
+            if loaded_dict.get("him_training_contract") != self.training_contract():
+                raise ValueError(
+                    "HIM training contract missing or different; use weights-only warm-start "
+                    "with fresh optimizers when changing training modes or importing legacy checkpoints"
+                )
+        if check_training_contract and load_cfg.get("optimizer"):
+            owners = [("optimizer_state_dict", self.optimizer)]
+            if load_cfg.get("estimator"):
+                owners.append(("estimator_optimizer_state_dict", self.estimator.optimizer))
+            for key, optimizer in owners:
+                saved_groups = loaded_dict.get(key, {}).get("param_groups", [])
+                if ([len(g.get("params", [])) for g in saved_groups]
+                        != [len(g["params"]) for g in optimizer.param_groups]):
+                    raise ValueError(f"Missing or incompatible {key}; use weights-only warm-start")
         if load_cfg.get("actor"):
             self._load_actor_state(loaded_dict, strict, load_cfg.get("estimator", True))
         if load_cfg.get("critic"):
             self._load_critic_state(loaded_dict, strict)
         if load_cfg.get("optimizer") and "optimizer_state_dict" in loaded_dict:
             optimizer_state = loaded_dict["optimizer_state_dict"]
-            # Older MjLab HIM checkpoints excluded estimator parameters from
-            # this optimizer.  Keep their model weights loadable and start a
-            # fresh PPO optimizer when the saved slot count is incompatible.
-            current_count = len(self.optimizer.param_groups[0]["params"])
+            # Older ordinary HIM optimizers excluded estimator parameters.
+            # Preserve their existing fallback to a fresh PPO optimizer; the
+            # symmetry path has already rejected incompatible state above.
             saved_groups = optimizer_state.get("param_groups", [])
             saved_count = len(saved_groups[0].get("params", [])) if saved_groups else 0
-            if current_count == saved_count:
+            if len(self.optimizer.param_groups[0]["params"]) == saved_count:
                 self.optimizer.load_state_dict(optimizer_state)
                 if self.fused_optimizer:
                     for group in self.optimizer.param_groups:
@@ -543,8 +670,9 @@ class HIMPPO:
                 self.learning_rate = self.optimizer.param_groups[0]["lr"]
         if load_cfg.get("estimator"):
             self._load_estimator_state(loaded_dict, strict)
-            if "estimator_optimizer_state_dict" in loaded_dict:
+            if load_cfg.get("optimizer") and "estimator_optimizer_state_dict" in loaded_dict:
                 self.estimator.optimizer.load_state_dict(loaded_dict["estimator_optimizer_state_dict"])
+                self.estimator.learning_rate = self.estimator.optimizer.param_groups[0]["lr"]
                 if self.fused_optimizer:
                     for group in self.estimator.optimizer.param_groups:
                         group["fused"] = self._fused_cuda
@@ -599,7 +727,6 @@ class HIMPPO:
             "rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device,
             next_observation_groups=alg_cfg["estimator_obs_groups"],
             transitions_per_step=(2 if alg_cfg.get("symmetry_cfg") is not None
-                                  and alg_cfg["symmetry_cfg"].get("implementation") == "homie"
                                   and alg_cfg["symmetry_cfg"].get("use_data_augmentation") else 1),
         )
         algorithm = alg_class(
@@ -642,7 +769,7 @@ class HIMPPO:
     def _update_learning_rate(self, old_params, new_params) -> None:
         """Adapt PPO learning rate from the Gaussian KL divergence."""
         with torch.inference_mode():
-            if self.reference_update:
+            if self.kl_mode == "legacy_homie":
                 old_mean, old_std = old_params
                 mean, std = new_params
                 kl = torch.sum(
