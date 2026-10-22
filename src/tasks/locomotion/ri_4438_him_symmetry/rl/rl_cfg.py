@@ -42,8 +42,8 @@ def make_runner_cfg(layout: HimLayout, experiment_name: str) -> HimSymmetryRunne
     })
     cfg.experiment_name = experiment_name
     cfg.observation_layout = layout.name
-    # Match the reference rollout budget; symmetry stores two transitions per step.
-    cfg.num_steps_per_env = 50
+    # Match ordinary HIM's real rollout length; symmetry stores two transitions per step.
+    cfg.num_steps_per_env = 100
     cfg.actor.num_one_step_obs = layout.frame_size
     cfg.actor.history_size = layout.history_size
     cfg.actor.history_term_dims = layout.term_dims

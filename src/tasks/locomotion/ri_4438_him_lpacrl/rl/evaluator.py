@@ -100,7 +100,7 @@ class TaskEvaluator:
     def _get_env(self):
         if self.env is None:
             if self.env_factory is None:
-                from mjlab.envs import ManagerBasedRlEnv
+                from src.envs import ManagerBasedRlEnv
 
                 self.env_factory = ManagerBasedRlEnv
             self.env = self.env_factory(

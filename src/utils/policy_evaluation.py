@@ -258,7 +258,7 @@ def evaluate(run: Run, result: dict, output: Path, options: EvalOptions) -> dict
     import mujoco
     import torch
     from tensordict import TensorDict
-    from mjlab.envs import ManagerBasedRlEnv
+    from src.envs import ManagerBasedRlEnv
     from .evaluation_repeatability import compare_evaluations, load_previous, physics_fingerprint, runtime_description
 
     options.validate()

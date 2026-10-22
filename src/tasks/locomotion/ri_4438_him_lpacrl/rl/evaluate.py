@@ -180,7 +180,7 @@ def main():
     os.environ.setdefault("MUJOCO_GL", "egl")
 
     import torch
-    from mjlab.envs import ManagerBasedRlEnv
+    from src.envs import ManagerBasedRlEnv
     from mjlab.utils.torch import configure_torch_backends
     from tensordict import TensorDict
     from rsl_rl.models.him_actor_model import HIMActorModel
