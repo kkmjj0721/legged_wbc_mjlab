@@ -16,6 +16,27 @@ from mjlab.utils.lab_api.math import wrap_to_pi
 from .task_catalog import TeacherGroups, plain
 
 
+def fixed_family_allocation(num_envs, fractions):
+    """Largest-remainder quotas, fixed per local environment for the whole run.
+
+    Every rank uses the same local rule; the runner separately checks world size.
+    Reset frequency therefore cannot change a family's share of control steps.
+    """
+    names = tuple(sorted(fractions))
+    weights = np.asarray([fractions[name] for name in names], dtype=np.float64)
+    if (not names or not np.isfinite(weights).all() or (weights <= 0).any()
+            or not np.isclose(weights.sum(), 1)):
+        raise ValueError("Family fractions must be positive and sum to one")
+    exact = num_envs * weights
+    counts = np.floor(exact).astype(np.int64)
+    remainder = num_envs - int(counts.sum())
+    order = np.argsort(-(exact - counts), kind="stable")
+    counts[order[:remainder]] += 1
+    if (counts == 0).any():
+        raise ValueError("Compact training needs enough environments to represent every family (at least 4)")
+    return names, counts, np.repeat(np.arange(len(names)), counts)
+
+
 class LPState:
     """Signed LP over normalized, episode-weighted scores for teacher groups.
 
@@ -24,6 +45,7 @@ class LPState:
     """
 
     VERSION = 7
+    COMPACT_VERSION = 8
     SCORE_KIND = "linear_angular_tracking_failure_budget_v3"
     ARRAY_FIELDS = (
         "probabilities", "mean_scores", "lp", "counts", "pending_sums",
@@ -33,7 +55,8 @@ class LPState:
     )
     CLOCK_FIELDS = ("completed_policy_updates", "last_stage_update", "stage_index")
 
-    def __init__(self, num_tasks, cfg, fingerprints=None, initial_probabilities=None):
+    def __init__(self, num_tasks, cfg, fingerprints=None, initial_probabilities=None,
+                 group_families=None):
         if num_tasks < 1 or not math.isfinite(cfg.temperature) or cfg.temperature <= 0:
             raise ValueError("Positive group count and finite positive temperature required")
         if cfg.method not in {"lp", "uniform"} or not 0 <= cfg.uniform_mix < 1:
@@ -48,7 +71,18 @@ class LPState:
         # num_tasks is retained as an API alias; its dimension now counts groups.
         self.num_tasks = self.num_groups = num_tasks
         self.cfg, self.fingerprints = cfg, dict(fingerprints or {})
-        if cfg.method == "uniform":
+        self.group_families = tuple(group_families) if group_families is not None else None
+        self.version = self.COMPACT_VERSION if self.group_families is not None else self.VERSION
+        if self.group_families is not None:
+            if (len(self.group_families) != num_tasks
+                    or set(self.group_families) != set(cfg.family_fractions)):
+                raise ValueError("Compact teacher families must match the task groups")
+            self.family_masks = {
+                name: np.asarray([family == name for family in self.group_families])
+                for name in sorted(cfg.family_fractions)
+            }
+            initial_probabilities = self._probabilities(np.zeros(num_tasks))
+        elif cfg.method == "uniform":
             initial_probabilities = np.full(num_tasks, 1.0 / num_tasks)
         elif initial_probabilities is None:
             if cfg.seed_bin >= num_tasks:
@@ -113,6 +147,19 @@ class LPState:
         return True
 
     def _probabilities(self, delta):
+        if self.group_families is not None:
+            result = np.zeros(self.num_groups)
+            for name, mask in self.family_masks.items():
+                count = int(mask.sum())
+                if self.cfg.method == "uniform" or name in self.cfg.uniform_families:
+                    conditional = np.full(count, 1.0 / count)
+                else:
+                    scaled = delta[mask] / max(self.cfg.temperature, 1e-8)
+                    exp = np.exp(scaled - scaled.max())
+                    conditional = ((1 - self.cfg.uniform_mix) * exp / exp.sum()
+                                   + self.cfg.uniform_mix / count)
+                result[mask] = self.cfg.family_fractions[name] * conditional
+            return result
         if self.cfg.method == "uniform":
             return np.full(self.num_groups, 1.0 / self.num_groups)
         scaled = delta / max(self.cfg.temperature, 1e-8)
@@ -122,7 +169,7 @@ class LPState:
 
     def state_dict(self):
         return {
-            "version": self.VERSION, "score_kind": self.SCORE_KIND,
+            "version": self.version, "score_kind": self.SCORE_KIND,
             "num_groups": self.num_groups, "fingerprints": dict(self.fingerprints),
             "initial_probabilities": self.initial_probabilities.copy(),
             "curriculum_config": plain(self.cfg),
@@ -132,7 +179,7 @@ class LPState:
         }
 
     def load_state_dict(self, state):
-        if (state.get("version") != self.VERSION
+        if (state.get("version") != self.version
                 or state.get("score_kind") != self.SCORE_KIND
                 or state.get("num_groups") != self.num_groups
                 or state.get("fingerprints") != self.fingerprints
@@ -287,17 +334,25 @@ class CurriculumController(ManagerTermBase):
         self.cfg.training.seed = env.cfg.seed
         self.catalog = self.setup.catalog
         self.groups = TeacherGroups(self.catalog)
+        self.compact = getattr(self.catalog, "compact", False)
         self.terrain_map = self.setup.terrain_map
         self.terrain_map.bind(env.scene.terrain.terrain_origins)
         self.state = LPState(
             self.groups.num_groups, self.cfg.curriculum, cfg.params.get("fingerprints"),
             (np.full(self.groups.num_groups, 1 / self.groups.num_groups) if self.terrain_map.connected
              else self.groups.initial_probabilities(self.cfg.curriculum.seed_bin)),
+            group_families=self.groups.families if self.compact and self.mode == "train" else None,
         )
         if self.mode == "train" and self.cfg.task_space.resampling_interval_s is not None:
             raise ValueError("Training commands must stay fixed for each episode")
         self.rng = np.random.default_rng(self.cfg.training.seed)
         n, device = env.num_envs, env.device
+        self.family_names = tuple(sorted(self.cfg.curriculum.family_fractions)) if self.compact else ()
+        self.family_counts = None
+        self.env_families = None
+        if self.compact and self.mode == "train":
+            self.family_names, self.family_counts, self.env_families = fixed_family_allocation(
+                n, self.cfg.curriculum.family_fractions)
         self.episode_task_id = torch.full((n,), -1, device=device, dtype=torch.long)
         self.episode_group_id = torch.full_like(self.episode_task_id, -1)
         # 0 = regular teacher distribution; 1 = fixed forward stair coverage.
@@ -325,11 +380,15 @@ class CurriculumController(ManagerTermBase):
                 + 1
             )
         self.command_sequences = torch.zeros(n, self.command_count, 3, device=device)
-        if self.catalog.random_process:
+        if self.catalog.random_process or self.compact:
+            minimum_hold = self.cfg.task_space.process_hold_s[0]
+            if self.compact:
+                minimum_hold = min(minimum_hold, self.cfg.task_space.sequence_hold_s)
             self.command_count = math.ceil(max(self.cfg.training.horizon_s, self.cfg.evaluation.horizon_s)
-                                           / self.cfg.task_space.process_hold_s[0]) + 1
+                                           / minimum_hold) + 1
             self.command_sequences = torch.zeros(n, self.command_count, 3, device=device)
         self.process_tasks = torch.as_tensor(self.catalog.process_mask, device=device)
+        self.scheduled_tasks = (torch.ones_like(self.process_tasks) if self.compact else self.process_tasks)
         self.command_deadlines = torch.full((n, self.command_count), torch.iinfo(torch.long).max,
                                             dtype=torch.long, device=device)
         self.command_index = torch.zeros(n, dtype=torch.long, device=device)
@@ -373,6 +432,7 @@ class CurriculumController(ManagerTermBase):
         self.trials_by_slot = []
         self.episode_metrics = None
         self._saved_diagnostics = None
+        self._behavior_monitor = None
         if self.mode == "evaluation":
             trials = self.setup.trials
             self.trials_by_slot = [trials[i % len(trials)] for i in range(n)]
@@ -445,6 +505,8 @@ class CurriculumController(ManagerTermBase):
             return
         if self.play is not None:
             self.play.assign(ids)
+            if self._behavior_monitor is not None:
+                self._behavior_monitor.reset(ids)
             return
         if self.mode == "evaluation":
             rows = [self.trials_by_slot[i] for i in ids.cpu().tolist()]
@@ -468,15 +530,29 @@ class CurriculumController(ManagerTermBase):
                         targets + [targets[-1]] * (self.command_count - len(targets))
                     )
             commands = np.asarray(sequences)
-            group_ids = np.array([self.groups.task_direction_to_group[t, 0 if self.catalog.process_mask[t] else int(np.sign(c[0, 0]))]
+            group_ids = np.array([self.groups.task_direction_to_group[t, 0 if self.compact or self.catalog.process_mask[t] else int(np.sign(c[0, 0]))]
                                   for t, c in zip(tasks, commands)])
             sampling_modes = np.zeros(len(ids), dtype=np.int64)
             self.yaws[ids] = torch.as_tensor(
                 [r["yaw"] for r in rows], dtype=self.yaws.dtype, device=self.device
             )
         else:
-            group_ids, tasks, commands = self.groups.sample(
-                self.state.probabilities, len(ids), self.rng, self.command_count)
+            if self.compact:
+                slot_families = self.env_families[ids.cpu().numpy()]
+                group_ids = np.empty(len(ids), dtype=np.int64)
+                tasks = np.empty_like(group_ids)
+                commands = np.empty((len(ids), self.command_count, 3))
+                for family_id, name in enumerate(self.family_names):
+                    selected = slot_families == family_id
+                    if not selected.any():
+                        continue
+                    conditional = self.state.probabilities * self.state.family_masks[name]
+                    conditional /= conditional.sum()
+                    group_ids[selected], tasks[selected], commands[selected] = self.groups.sample(
+                        conditional, int(selected.sum()), self.rng, self.command_count)
+            else:
+                group_ids, tasks, commands = self.groups.sample(
+                    self.state.probabilities, len(ids), self.rng, self.command_count)
             sampling_modes = np.zeros(len(ids), dtype=np.int64)
             if self.mode == "train" and len(self.coverage_tasks):
                 covered = self.rng.random(len(ids)) < self.cfg.curriculum.forward_stairs_fraction
@@ -507,22 +583,26 @@ class CurriculumController(ManagerTermBase):
             commands, dtype=self.commands.dtype, device=self.device
         )
         process = self.catalog.process_mask[tasks] & (sampling_modes == 0)
+        scheduled = np.ones_like(process) if self.compact else process
         self.command_deadlines[ids] = torch.iinfo(torch.long).max
         self.command_index[ids] = 0
         self.command_event[ids] = False
         self.command_event_step[ids] = -1
         self.switch_counts[ids] = 0
         self._last_command_step[ids] = 0
-        if process.any():
+        if scheduled.any():
             if self.mode == "evaluation":
                 durations = np.array([r["command_hold_s"] + [self.cfg.task_space.process_hold_s[1]] *
                                       (self.command_count - len(r["command_hold_s"]))
-                                      for r, selected in zip(rows, process) if selected])
+                                      for r, selected in zip(rows, scheduled) if selected])
+            elif self.compact:
+                durations = self.catalog.sample_command_durations(
+                    tasks, self.command_count, self.rng, self.cfg.training.horizon_s)
             else:
                 durations = self.rng.uniform(*self.cfg.task_space.process_hold_s,
                                              size=(int(process.sum()), self.command_count))
             deadlines = np.ceil(durations / self._env.step_dt).astype(np.int64).cumsum(axis=1)
-            self.command_deadlines[ids[torch.as_tensor(process, device=self.device)]] = torch.as_tensor(deadlines, device=self.device)
+            self.command_deadlines[ids[torch.as_tensor(scheduled, device=self.device)]] = torch.as_tensor(deadlines, device=self.device)
         if self.catalog.heading_command:
             if self.mode == "evaluation":
                 targets = torch.as_tensor(heading_sequences, dtype=self.commands.dtype, device=self.device)
@@ -549,6 +629,8 @@ class CurriculumController(ManagerTermBase):
             terrain.env_origins[ids] = self.terrain_map.origins[row, col]
         if self.episode_metrics is not None:
             self.episode_metrics.reset(ids)
+        if self._behavior_monitor is not None:
+            self._behavior_monitor.reset(ids)
 
     def update_commands(self, env_ids=None, *, reset=False, dt=None):
         """Hold the task target; convert heading error to policy yaw velocity."""
@@ -569,7 +651,7 @@ class CurriculumController(ManagerTermBase):
                 advance &= ~self._env.reset_buf[ids]
         indices = (torch.zeros_like(ids) if self.command_interval_steps is None else
                    (steps // self.command_interval_steps).clamp_max(self.command_count - 1))
-        process = self.process_tasks[self.episode_task_id[ids].clamp_min(0)]
+        process = self.scheduled_tasks[self.episode_task_id[ids].clamp_min(0)]
         process_indices = (steps[:, None] >= self.command_deadlines[ids]).sum(-1).clamp_max(self.command_count - 1)
         indices = torch.where(process, process_indices, indices)
         indices = torch.where(advance, indices, self.command_index[ids])
@@ -659,11 +741,22 @@ class CurriculumController(ManagerTermBase):
             "map_manifest": deepcopy(self.terrain_map.manifest),
             "interaction_statistics": (self.episode_metrics.state_dict() if self.episode_metrics is not None
                                        else deepcopy(self._saved_diagnostics)),
+            **({"family_assignment": self.family_assignment()} if self.compact else {}),
+        }
+
+    def family_assignment(self):
+        return {
+            "protocol": "fixed_local_env_largest_remainder_v1",
+            "num_envs": self.num_envs,
+            "names": list(self.family_names),
+            "counts": self.family_counts.tolist() if self.family_counts is not None else None,
         }
 
     def load_state_dict(self, state):
-        if state.get("version") != LPState.VERSION:
+        if state.get("version") != self.state.version:
             raise ValueError("Incompatible teacher state; use explicit warm-start for older curricula")
+        if self.compact and state.get("family_assignment") != self.family_assignment():
+            raise ValueError("Compact family allocation/environment count differs; use warm-start")
         if state["task_keys"] != [r.key for r in self.catalog.records]:
             raise ValueError("Checkpoint task table differs")
         if state.get("map_manifest") != self.terrain_map.manifest:
@@ -714,6 +807,8 @@ class CurriculumController(ManagerTermBase):
         self.command_deadlines.fill_(torch.iinfo(torch.long).max)
         self.episode_metrics = None
         self._saved_diagnostics = deepcopy(state.get("interaction_statistics"))
+        if self._behavior_monitor is not None:
+            self._behavior_monitor.reset(torch.arange(self.num_envs, device=self.device))
 
 
 class NaturalEpisodeRecorder(RecorderTerm):

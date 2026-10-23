@@ -167,15 +167,29 @@ class EpisodeDiagnostics:
         self.env, self.controller = env, controller
         self.deployment = DeploymentMetrics(env.num_envs, env.device, env.step_dt, controller.cfg.evaluation)
         self.traversal = ConnectedTraversal(env, controller) if controller.terrain_map.connected else None
+        self.mode_names = controller.family_names if controller.compact else ("fixed", "random_process", "coverage")
+        mode_count = len(self.mode_names)
+        if controller.compact:
+            self.task_families = torch.tensor(
+                [self.mode_names.index(name) for name in controller.catalog.task_families], device=env.device)
         # fixed, random process, coverage; explicit totals survive PPO update boundaries.
-        self.totals = torch.zeros(3, len(self.NAMES), dtype=torch.long, device=env.device)
-        self.exposure = torch.zeros(3, len(controller.terrain_map.tiles)+3, device=env.device)
+        self.totals = torch.zeros(mode_count, len(self.NAMES), dtype=torch.long, device=env.device)
+        self.exposure = torch.zeros(mode_count, len(controller.terrain_map.tiles)+3, device=env.device)
         self.switch_exposure = torch.zeros_like(self.exposure, dtype=torch.long)
         self.failure_regions = torch.zeros_like(self.exposure, dtype=torch.long)
-        self.surface_steps = torch.zeros(3, 6, dtype=torch.long, device=env.device)
+        self.surface_steps = torch.zeros(mode_count, 6, dtype=torch.long, device=env.device)
         self.complete_switch_surfaces = torch.zeros_like(self.surface_steps)
         self._synced = {name: torch.zeros_like(getattr(self, name)) for name in
                         ("totals", "exposure", "switch_exposure", "failure_regions", "surface_steps", "complete_switch_surfaces")}
+        behavior = getattr(controller.cfg, "behavior_monitor", None)
+        self.monitor_enabled = behavior is not None and behavior.enabled
+        if self.monitor_enabled:
+            self.behavior_names = ("linear_active_steps", "yaw_active_steps", "grace_steps",
+                                   "linear_stall_steps", "yaw_stall_steps", "penalty_steps", "stall_terminations")
+            self.behavior_totals = torch.zeros(mode_count, len(self.behavior_names), dtype=torch.long, device=env.device)
+            self.behavior_costs = torch.zeros(mode_count, dtype=torch.float64, device=env.device)
+            for name in ("behavior_totals", "behavior_costs"):
+                self._synced[name] = torch.zeros_like(getattr(self, name))
         if controller._saved_diagnostics is not None:
             for name in self._synced:
                 value = torch.as_tensor(controller._saved_diagnostics[name], device=env.device,
@@ -198,6 +212,8 @@ class EpisodeDiagnostics:
 
     def modes(self):
         c = self.controller
+        if c.compact:
+            return self.task_families[c.episode_task_id.clamp_min(0)]
         return torch.where(c.episode_sampling_mode == 1, 2, c.process_tasks[c.episode_task_id].long())
 
     def reset(self, ids):
@@ -210,7 +226,18 @@ class EpisodeDiagnostics:
         active = c.episode_task_id >= 0
         failed = env.termination_manager.terminated
         modes = self.modes()
-        self.totals[:, 0] += torch.bincount(modes[active], minlength=3)
+        self.totals[:, 0] += torch.bincount(modes[active], minlength=len(self.mode_names))
+        if self.monitor_enabled:
+            from .behavior_monitor import get_behavior_monitor
+
+            monitor = get_behavior_monitor(env).ensure_step()
+            values = torch.stack((c.commands[:, :2].norm(dim=-1) >= monitor.linear_command_threshold,
+                                  c.commands[:, 2].abs() >= monitor.angular_command_threshold,
+                                  monitor.grace_active,
+                                  monitor.linear_stalled, monitor.yaw_stalled,
+                                  monitor.cost > 0, monitor.terminated), -1).long()
+            self.behavior_totals.index_add_(0, modes[active], values[active])
+            self.behavior_costs.index_add_(0, modes[active], monitor.cost[active].double())
         support = None
         if self.traversal is not None:
             self.traversal.observe(active, failed)
@@ -239,8 +266,9 @@ class EpisodeDiagnostics:
         d, c, env = self.deployment, self.controller, self.env
         d.finish(ids)
         failed = env.termination_manager.terminated[ids]
-        boundary = (env.termination_manager.get_term("map_boundary_truncation")[ids] & ~failed
-                    if "map_boundary_truncation" in env.termination_manager.active_terms else torch.zeros_like(failed))
+        boundary_name = "boundary_truncation" if c.compact else "map_boundary_truncation"
+        boundary = (env.termination_manager.get_term(boundary_name)[ids] & ~failed
+                    if boundary_name in env.termination_manager.active_terms else torch.zeros_like(failed))
         passed = self.traversal.passed[ids] if self.traversal is not None else torch.zeros_like(failed)
         full = (env.episode_length_buf[ids] >= env.max_episode_length) & ~failed & ~boundary
         tracking = (d.trial_error_sum[ids] / d.trial_steps[ids, None].clamp_min(1) < 1).all(-1)
@@ -249,7 +277,7 @@ class EpisodeDiagnostics:
         values = torch.stack((torch.zeros_like(ids), torch.ones_like(ids), failed, boundary,
                               d.resampling_count[ids] == 0, d.resampling_count[ids], d.transition_count[ids],
                               d.transition_passed[ids], d.transition_failed[ids], d.transition_unobserved[ids],
-                              passed, passed & full, strict & c.process_tasks[c.episode_task_id[ids]]), -1).long()
+                              passed, passed & full, strict & c.scheduled_tasks[c.episode_task_id[ids]]), -1).long()
         self.totals.index_add_(0, self.modes()[ids], values)
         if self.traversal is not None:
             events = d.event_data[ids]
@@ -259,13 +287,25 @@ class EpisodeDiagnostics:
 
     def summary(self):
         result = {}
-        for i, mode in enumerate(("fixed", "random_process", "coverage")):
-            result.update({f"{mode}/{name}": int(self.totals[i, j]) for j, name in enumerate(self.NAMES)})
+        for i, mode in enumerate(self.mode_names):
+            result.update({f"{mode}/{name}": int(self.totals[i, j]) for j, name in enumerate(self.NAMES)
+                           if not (self.controller.compact and self.traversal is None
+                                   and name in {"terrain_passed", "passed_without_failure"})})
             steps = max(int(self.totals[i, 0]), 1)
-            result[f"{mode}/outer_flat_fraction"] = float(self.exposure[i, len(self.controller.terrain_map.tiles)]) / (steps*self.env.step_dt)
-            for surface, name in enumerate(ConnectedTraversal.SURFACES):
-                result[f"{mode}/support_{name}_steps"] = int(self.surface_steps[i, surface])
-                result[f"{mode}/complete_{name}_switches_per_million_steps"] = int(self.complete_switch_surfaces[i, surface]) * 1e6 / steps
+            # The compact isolated map has no connected-tile contact survey.
+            # Do not report absent measurements as zero exposure or zero passes.
+            if not self.controller.compact or self.traversal is not None:
+                result[f"{mode}/outer_flat_fraction"] = float(self.exposure[i, len(self.controller.terrain_map.tiles)]) / (steps*self.env.step_dt)
+                for surface, name in enumerate(ConnectedTraversal.SURFACES):
+                    result[f"{mode}/support_{name}_steps"] = int(self.surface_steps[i, surface])
+                    result[f"{mode}/complete_{name}_switches_per_million_steps"] = int(self.complete_switch_surfaces[i, surface]) * 1e6 / steps
+            if self.monitor_enabled:
+                result.update({f"{mode}/behavior/{name}": int(self.behavior_totals[i, j])
+                               for j, name in enumerate(self.behavior_names)})
+                result[f"{mode}/behavior/cost_mean"] = float(self.behavior_costs[i]) / steps
+            if self.controller.compact:
+                result[f"{mode}/allocated_environments"] = int(self.controller.family_counts[i])
+                result[f"{mode}/step_fraction"] = int(self.totals[i, 0]) / max(int(self.totals[:, 0].sum()), 1)
         return result
 
 

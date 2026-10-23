@@ -12,7 +12,7 @@ from typing import Literal
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers import TerminationTermCfg
+from mjlab.managers import RewardTermCfg, TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.sensor import (
     ContactMatch,
@@ -285,6 +285,16 @@ def build_env_cfg(
         from ..mdp.episode_diagnostics import observe_episode
 
         cfg.events["lpacrl_diagnostics"] = EventTermCfg(func=observe_episode, mode="step")
+        behavior = getattr(setup.cfg, "behavior_monitor", None)
+        if behavior is not None and behavior.enabled:
+            from ..mdp.rewards import command_stall_cost
+            from ..mdp.terminations import command_stall_failure
+
+            cfg.rewards["command_stall"] = RewardTermCfg(
+                func=command_stall_cost, weight=behavior.penalty_weight)
+            if behavior.termination_enabled:
+                cfg.terminations["command_stall_failure"] = TerminationTermCfg(
+                    func=command_stall_failure, time_out=False)
     configure_estimator_observations(cfg, play=mode != "train")
     finalize_fingerprints(setup, cfg)
     params = cfg.curriculum["lpacrl"].params

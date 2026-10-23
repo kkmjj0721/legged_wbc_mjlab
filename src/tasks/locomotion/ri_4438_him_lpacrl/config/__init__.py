@@ -17,7 +17,8 @@ for task_id, factory in (
     ("Ri-4438-HIM-LPACRL-Flat", ri_4438_flat_env_cfg),
     ("Ri-4438-HIM-LPACRL-Rough", ri_4438_rough_env_cfg),
     *((f"Ri-4438-HIM-LPACRL-Rough-{name}", partial(experiment_env_cfg, name))
-      for name in ("A0", "A1", "A2", "A3")),
+      for name in ("A0", "A1", "A2", "A3", "Compact", "Compact-Coverage",
+                   "Compact-Uniform", "Random-Uniform")),
 ):
     register_mjlab_task(
         task_id=task_id,

@@ -133,13 +133,25 @@ class PlayController:
             task, group, sequence = int(tasks[0]), int(groups[0]), sequences[0]
         else:
             task = int(c.rng.integers(c.catalog.num_tasks))
-            sequence = c.catalog.sample_commands(np.full(c.command_count, task), c.rng)
-            group = c.groups.task_direction_to_group.get((task, 0 if c.catalog.process_mask[task] else int(np.sign(sequence[0, 0]))), -1)
+            if c.catalog.compact:
+                sequence = c.catalog.sample_command_sequences([task], c.command_count, c.rng)[0]
+                group = int(c.groups.task_to_group[task])
+            else:
+                sequence = c.catalog.sample_commands(np.full(c.command_count, task), c.rng)
+                group = c.groups.task_direction_to_group.get((task, 0 if c.catalog.process_mask[task] else int(np.sign(sequence[0, 0]))), -1)
+        if c.catalog.compact:
+            holds = c.catalog.sample_command_durations(
+                [task], c.command_count, c.rng,
+                max(c.cfg.training.horizon_s, c.cfg.evaluation.horizon_s),
+            )[0]
+        else:
+            holds = (c.rng.uniform(*c.cfg.task_space.process_hold_s, size=c.command_count)
+                     if c.catalog.process_mask[task] else None)
         return SampledScene(
             task, group, int(c.terrain_map.task_columns[task]),
             int(c.rng.integers(c.terrain_map.replicas)),
             float(c.rng.uniform(-math.pi, math.pi)), sequence.copy(),
-            c.rng.uniform(*c.cfg.task_space.process_hold_s, size=c.command_count) if c.catalog.process_mask[task] else None,
+            holds,
             float(c.rng.random()) if c.terrain_map.connected else 0.0,
         )
 
@@ -199,14 +211,24 @@ class PlayController:
         steps = torch.zeros_like(ids) if reset else c._env.episode_length_buf[ids]
         indices = (torch.zeros_like(ids) if c.command_interval_steps is None else
                    (steps // c.command_interval_steps).clamp_max(c.command_count - 1))
-        process = c.process_tasks[c.episode_task_id[ids]] & ~self._manual[ids]
+        process = ((torch.ones_like(ids, dtype=torch.bool) if c.catalog.compact else
+                    c.process_tasks[c.episode_task_id[ids]]) & ~self._manual[ids])
         rolled = process & (steps >= c.command_deadlines[ids, -1])
         for i in ids[rolled].cpu().tolist():
             offset = int(c.command_deadlines[i, -1])
-            raw = c.catalog.sample_commands(np.full(c.command_count, int(c.episode_task_id[i])), c.rng)
+            task = int(c.episode_task_id[i])
+            if c.catalog.compact:
+                raw = c.catalog.sample_command_sequences([task], c.command_count, c.rng)[0]
+                holds = c.catalog.sample_command_durations(
+                    [task], c.command_count, c.rng,
+                    max(c.cfg.training.horizon_s, c.cfg.evaluation.horizon_s),
+                )[0]
+            else:
+                raw = c.catalog.sample_commands(np.full(c.command_count, task), c.rng)
+                holds = c.rng.uniform(*c.cfg.task_space.process_hold_s, size=c.command_count)
             c.command_sequences[i] = torch.as_tensor(raw, dtype=c.commands.dtype, device=c.device)
-            c.heading_sequences[i] = c.command_sequences[i, :, 2]
-            holds = c.rng.uniform(*c.cfg.task_space.process_hold_s, size=c.command_count)
+            if c.catalog.heading_command:
+                c.heading_sequences[i] = c.command_sequences[i, :, 2]
             c.command_deadlines[i] = torch.as_tensor(offset + np.ceil(holds/c._env.step_dt).astype(np.int64).cumsum(), device=c.device)
         indices = torch.where(process, (steps[:, None] >= c.command_deadlines[ids]).sum(-1).clamp_max(c.command_count - 1), indices)
         changed = rolled | (indices != c.command_index[ids])

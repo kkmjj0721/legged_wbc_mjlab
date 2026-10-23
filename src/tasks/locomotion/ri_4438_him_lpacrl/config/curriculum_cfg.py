@@ -46,11 +46,17 @@ class LpacrlCfg:
     evaluation: SimpleNamespace
     scan_size_m: tuple[float, float]
     scan_resolution_m: float
+    behavior_monitor: SimpleNamespace | None = None
 
 
 def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | None = None) -> LpacrlCfg:
-    """Copy current defaults, or explicitly select a historical A0–A3 protocol."""
+    """Copy legacy defaults or select an explicit historical/Compact protocol."""
     env_cfg, ppo_cfg = Ri4438HimLpacrlCfg, Ri4438HimLpacrlCfgPPO
+    compact = experiment in {"Compact", "Compact-Coverage", "Compact-Uniform"}
+    if compact:
+        if heading_command is True:
+            raise ValueError("Compact commands use body-frame vx/vy/wz, not heading targets")
+        heading_command = False
     heading_command = env_cfg.commands.heading_command if heading_command is None else heading_command
     if type(heading_command) is not bool:
         raise ValueError("heading_command must be boolean")
@@ -123,11 +129,22 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | No
         evaluation=_copy_section(env_cfg.evaluation),
         scan_size_m=tuple(env_cfg.height_scan.size_m),
         scan_resolution_m=env_cfg.height_scan.resolution_m,
+        behavior_monitor=_copy_section(env_cfg.behavior_monitor),
     )
     if experiment is None:
         return result
+    if compact:
+        _configure_compact(result)
+        if experiment == "Compact-Coverage":
+            result.behavior_monitor.penalty_weight = 0.0
+        if experiment == "Compact-Uniform":
+            result.curriculum.method, result.curriculum.uniform_mix = "uniform", 0.0
+        return result
+    if experiment == "Random-Uniform":
+        result.curriculum.method, result.curriculum.uniform_mix = "uniform", 0.0
+        return result
     if experiment not in {"A0", "A1", "A2", "A3"}:
-        raise ValueError("experiment must be A0, A1, A2 or A3")
+        raise ValueError("Unknown LPACRL experiment; use A0–A3, Compact, Compact-Coverage, Compact-Uniform or Random-Uniform")
     # Preserve the named historical experiments and their resume fingerprints.
     result.task_space.fixed_tasks = True
     result.curriculum.forward_stairs_fraction = 0.25
@@ -138,6 +155,70 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | No
     if experiment == "A2":
         result.curriculum.method, result.curriculum.uniform_mix = "uniform", 0.0
     return result
+
+
+def _configure_compact(cfg: LpacrlCfg) -> None:
+    definition = Ri4438HimLpacrlCfg.compact
+    space = cfg.task_space
+    space.compact = True
+    space.fixed_tasks, space.random_process = True, False
+    space.resampling_interval_s = None
+    space.sequence_hold_s = definition.sequence_hold_s
+    space.process_hold_s = tuple(definition.process_hold_s)
+    space.command_axes = {
+        axis: SimpleNamespace(**deepcopy({**Ri4438HimLpacrlCfg.commands.axis_defaults,
+                                         "mode": "continuous", "range": bounds}))
+        for axis, bounds in zip(("vx", "vy", "wz"), definition.random_ranges)
+    }
+    space.terrains = {
+        name: SimpleNamespace(levels=deepcopy(levels))
+        for name, levels in definition.terrain_levels.items()
+    }
+    space.compact_tasks = []
+
+    def add(name, family, terrain, level, mode, **parameters):
+        space.compact_tasks.append(dict(name=name, family=family, terrain=terrain,
+                                        level=level, mode=mode, **parameters))
+
+    for terrain, level, commands in (
+        ("flat", "base", definition.steady_flat),
+        ("random_rough", "low", definition.steady_rough),
+    ):
+        for name, command in commands.items():
+            add(name, "steady", terrain, level, "fixed", command=command)
+    for terrain, spec in space.terrains.items():
+        if terrain.startswith("stairs_"):
+            for level in spec.levels:
+                for speed in definition.stairs_speeds:
+                    add(f"vx_{speed:g}", "stairs", terrain, level, "fixed", command=(speed, 0.0, 0.0))
+    for name, commands in definition.sequences.items():
+        add(name, "sequence", "flat", "base", "sequence", commands=commands)
+    for terrain, level in (("flat", "base"), ("random_rough", "low")):
+        add("body_ranges", "random", terrain, level, "random_body", ranges=definition.random_ranges)
+    cfg.geometry.map_protocol = "legacy_v6"
+    cfg.geometry.map_levels = deepcopy(definition.terrain_levels)
+    cfg.curriculum.forward_stairs_fraction = 0.0
+    cfg.curriculum.family_fractions = deepcopy(definition.family_fractions)
+    cfg.curriculum.uniform_families = tuple(definition.uniform_families)
+    cfg.evaluation.interaction_metrics_version = definition.interaction_metrics_version
+    # Match the independent deployment v2 low-speed gates; retain yaw gates.
+    threshold = definition.interaction_linear_threshold
+    cfg.evaluation.deployment_change_thresholds = (
+        threshold, threshold, cfg.evaluation.deployment_change_thresholds[2],
+    )
+    cfg.evaluation.deployment_stall_command = (
+        threshold, cfg.evaluation.deployment_stall_command[1],
+    )
+    cfg.evaluation.deployment_tracking_abs = (
+        definition.interaction_linear_tolerance, definition.interaction_linear_tolerance,
+        cfg.evaluation.deployment_tracking_abs[2],
+    )
+    cfg.behavior_monitor.enabled = True
+
+
+def make_compact_lpacrl_cfg() -> LpacrlCfg:
+    """Build the small, explicit body-command curriculum without changing legacy defaults."""
+    return make_lpacrl_cfg(experiment="Compact")
 
 
 @dataclass
@@ -231,6 +312,41 @@ def validate(cfg):
         raise ValueError("Enable fixed_tasks or random_process")
     if not fixed_tasks and coverage:
         raise ValueError("forward_stairs_fraction must be zero when fixed_tasks is disabled")
+    if getattr(cfg.task_space, "compact", False):
+        if heading_command or cfg.task_space.random_process or interval is not None:
+            raise ValueError("Compact requires body commands and per-task command hold timers")
+        if cfg.geometry.map_protocol != "legacy_v6" or coverage:
+            raise ValueError("Compact uses its small terrain map and family allocation")
+        fractions = cfg.curriculum.family_fractions
+        if (set(fractions) != {"steady", "stairs", "sequence", "random"}
+                or any(not math.isfinite(v) or v <= 0 for v in fractions.values())
+                or not math.isclose(sum(fractions.values()), 1.0, abs_tol=1e-12)):
+            raise ValueError("Compact family fractions must be positive and sum to one")
+        if not set(cfg.curriculum.uniform_families) <= set(fractions):
+            raise ValueError("Unknown uniform Compact family")
+        holds = cfg.task_space.process_hold_s
+        if (len(holds) != 2 or not all(math.isfinite(v) for v in holds)
+                or not 2.0 <= holds[0] < holds[1]):
+            raise ValueError("Compact process holds require 2 <= low < high")
+        if (not math.isfinite(cfg.task_space.sequence_hold_s)
+                or cfg.task_space.sequence_hold_s <= 0):
+            raise ValueError("Compact sequence_hold_s must be positive and finite")
+    monitor = getattr(cfg, "behavior_monitor", None)
+    if monitor is not None and monitor.enabled:
+        if (not math.isfinite(monitor.penalty_weight) or monitor.penalty_weight > 0
+                or type(monitor.termination_enabled) is not bool):
+            raise ValueError("Behavior monitor requires a nonpositive penalty and boolean termination flag")
+        for name in ("linear_command_threshold", "angular_command_threshold",
+                     "linear_progress_floor", "angular_progress_floor", "progress_ratio",
+                     "smoothing_s", "penalty_sustain_s", "termination_sustain_s",
+                     "heading_change_threshold"):
+            if not math.isfinite(getattr(monitor, name)) or getattr(monitor, name) <= 0:
+                raise ValueError(f"behavior_monitor.{name} must be positive and finite")
+        if not math.isfinite(monitor.grace_s) or monitor.grace_s < 0:
+            raise ValueError("behavior_monitor.grace_s must be finite and nonnegative")
+        if (len(monitor.command_change_thresholds) != 3
+                or any(not math.isfinite(v) or v <= 0 for v in monitor.command_change_thresholds)):
+            raise ValueError("Behavior monitor needs three positive command change thresholds")
     if cfg.task_space.random_process:
         if not heading_command or interval is not None:
             raise ValueError("Random processes require heading mode and their own hold timers")
@@ -377,6 +493,21 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
         "map": terrains.manifest,
         "score": "whole_episode_tracking_2to1_failure_budget_admin_mean_v7",
     })
+    if catalog.compact:
+        command_identity.append({
+            "compact_protocol": "body_commands_family_allocation_v1",
+            "sequence_hold_s": cfg.task_space.sequence_hold_s,
+            "behavior_monitor": cfg.behavior_monitor,
+            "interaction_metrics": {
+                "version": cfg.evaluation.interaction_metrics_version,
+                **{name: value for name, value in vars(cfg.evaluation).items()
+                   if name.startswith("deployment_")},
+            },
+        })
+    elif cfg.behavior_monitor is not None and cfg.behavior_monitor.enabled:
+        # Explicit opt-in must invalidate resume when behavior changes, while
+        # retaining the identity of all unmodified legacy presets.
+        command_identity.append({"behavior_monitor": cfg.behavior_monitor})
     if not terrains.plane:
         offsets = cfg.robot.reset.base_offset.get("pose_range", {})
         for axis, size in zip(("x", "y"), cfg.geometry.patch_size_m):
@@ -432,9 +563,9 @@ def finalize_fingerprints(setup: CurriculumSetup, env_cfg) -> None:
             env_cfg.decimation,
         ]
     )
-    setup.fingerprints["training_protocol"] = fingerprint(
-        [
-            cfg.training.horizon_s,
-            cfg.training.rollout_steps,
-        ]
-    )
+    training_protocol = [cfg.training.horizon_s, cfg.training.rollout_steps]
+    if setup.catalog.compact:
+        # Exact family slots depend on the effective local environment count.
+        training_protocol.append({"num_envs": cfg.training.num_envs,
+                                  "family_allocation": "largest_remainder_v1"})
+    setup.fingerprints["training_protocol"] = fingerprint(training_protocol)

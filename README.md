@@ -68,7 +68,7 @@ uv run --no-sync tensorboard --logdir logs/rsl_rl
 | Unitree Go2 | PPO | `Unitree-Go2-Rough` | `Unitree-Go2-Flat` |
 | Unitree Go2 | HIM + PPO | `Unitree-Go2-HIM-Rough` | `Unitree-Go2-HIM-Flat` |
 
-LP-ACRL 另保留 `Ri-4438-HIM-LPACRL-Rough-A0` 至 `-A3` 历史对照任务，配置差异见 [使用指南](docs/usage.md#lp-acrl-任务与课程)。
+LP-ACRL 新增 `Ri-4438-HIM-LPACRL-Rough-Compact`：39 组车体系速度任务，固定技能覆盖，显式变速/启停/换向及停滞惩罚。原 Rough 832 组和 `-A0` 至 `-A3` 历史对照仍可选；新预设训练和消融命令见 [使用指南](docs/usage.md#lp-acrl-任务与课程)。
 
 ## 常用操作
 

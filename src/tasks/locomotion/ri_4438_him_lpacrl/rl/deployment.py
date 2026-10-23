@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 ZERO = (0.0, 0.0, 0.0)
+DEPLOYMENT_SEQUENCE_VERSION = 2
 PROFILES = {
     "forward_reverse": [ZERO, (.5, 0, 0), (-.5, 0, 0), (.5, 0, 0), (-.5, 0, 0), ZERO],
     "backward_forward": [ZERO, (-.5, 0, 0), (.5, 0, 0), (-.5, 0, 0), (.5, 0, 0), ZERO],
@@ -23,7 +24,25 @@ PROFILES = {
     "stop_restart": [ZERO, (.5, 0, 0), ZERO, (-.5, 0, 0), ZERO, (.5, 0, 0)],
     "diagonal_reverse": [ZERO, (.5, .3, .5), (-.5, -.3, -.5), (.5, -.3, .5), (-.5, .3, -.5), ZERO],
     "lateral_acceleration": [ZERO, (0, .2, 0), (0, .5, 0), (0, .9, 0), (0, -.5, 0), ZERO],
+    "low_speed_01": [ZERO, (.1, 0, 0), ZERO, (.1, 0, 0), (-.1, 0, 0), ZERO],
+    "low_speed_02": [ZERO, (.2, 0, 0), ZERO, (.2, 0, 0), (-.2, 0, 0), ZERO],
+    "low_speed_03": [ZERO, (.3, 0, 0), ZERO, (.3, 0, 0), (-.3, 0, 0), ZERO],
 }
+
+
+def clear_compact_task_mode(source_cfg):
+    """Copy a configuration for explicit evaluation commands, outside Compact.
+
+    Fixed evaluation profiles have their own task table; training environment
+    family quotas must not constrain that independent table.
+    """
+    cfg = deepcopy(source_cfg)
+    if hasattr(cfg.task_space, "compact"):
+        cfg.task_space.compact = False
+    for name in ("family_fractions", "uniform_families"):
+        if hasattr(cfg.curriculum, name):
+            delattr(cfg.curriculum, name)
+    return cfg
 
 
 def make_deployment_setup(source_cfg):
@@ -35,7 +54,7 @@ def make_deployment_setup(source_cfg):
     """
     from ..config.curriculum_cfg import build_curriculum
 
-    cfg = deepcopy(source_cfg)
+    cfg = clear_compact_task_mode(source_cfg)
     cfg.task_space.random_process = False
     cfg.task_space.fixed_tasks = True
     repeats = cfg.evaluation.trials_per_task
@@ -50,6 +69,20 @@ def make_deployment_setup(source_cfg):
     cfg.task_space.include, cfg.task_space.exclude = [], []
     cfg.geometry.replicas = 1
     cfg.curriculum.seed_bin = 0
+    cfg.curriculum.forward_stairs_fraction = 0.0
+    # Version 2 adds low-speed trials. Their 0.1 m/s starts must be observable
+    # as switches and movement commands, rather than filtered by a 0.2 gate.
+    cfg.evaluation.deployment_sequence_version = DEPLOYMENT_SEQUENCE_VERSION
+    change = cfg.evaluation.deployment_change_thresholds
+    cfg.evaluation.deployment_change_thresholds = (
+        min(change[0], .05), min(change[1], .05), change[2],
+    )
+    moving, turning = cfg.evaluation.deployment_stall_command
+    cfg.evaluation.deployment_stall_command = (min(moving, .05), turning)
+    tolerance = cfg.evaluation.deployment_tracking_abs
+    cfg.evaluation.deployment_tracking_abs = (
+        min(tolerance[0], .05), min(tolerance[1], .05), tolerance[2],
+    )
     cfg.task_space.resampling_interval_s = cfg.evaluation.deployment_segment_s
     cfg.evaluation.horizon_s = len(next(iter(PROFILES.values()))) * cfg.evaluation.deployment_segment_s
     cfg.evaluation.trials_per_task = repeats * len(PROFILES)

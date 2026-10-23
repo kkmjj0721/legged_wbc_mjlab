@@ -470,6 +470,8 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 "coverage_counts": self.controller.coverage_counts,
                 "interaction_statistics": interactions.state_dict() if interactions is not None else {},
                 "map_manifest": self.controller.terrain_map.manifest,
+                **({"family_assignment": self.controller.family_assignment()}
+                   if self.controller.compact else {}),
             }
             with (Path(self.logger.log_dir) / "curriculum.jsonl").open("a") as handle:
                 handle.write(json.dumps(plain(data), allow_nan=False) + "\n")

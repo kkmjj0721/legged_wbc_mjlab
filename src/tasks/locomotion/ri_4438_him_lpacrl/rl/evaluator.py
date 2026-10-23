@@ -103,9 +103,13 @@ class TaskEvaluator:
                 from src.envs import ManagerBasedRlEnv
 
                 self.env_factory = ManagerBasedRlEnv
-            self.env = self.env_factory(
-                cfg=build_env_cfg(self.setup.cfg, "evaluation"), device=self.device
-            )
+            env_cfg = build_env_cfg(self.setup.cfg, "evaluation")
+            if any(name == "command_stall_failure"
+                   or getattr(term.func, "__name__", "") == "command_stall_failure"
+                   or getattr(term.func, "__module__", "").endswith(".behavior_monitor")
+                   for name, term in env_cfg.terminations.items()):
+                raise ValueError("Independent evaluation must disable behavior-monitor stall termination")
+            self.env = self.env_factory(cfg=env_cfg, device=self.device)
         return self.env
 
     def evaluate(self, actor):
@@ -268,7 +272,15 @@ class TaskEvaluator:
             "project-relative-error convention for changing/near-zero commands; "
             "paper success retained; separate all-axis, stall and switch deployment gates"
         )
+        if hasattr(evaluation_cfg, "deployment_sequence_version"):
+            result["protocol"] += (
+                f"; deployment sequence suite v{evaluation_cfg.deployment_sequence_version} "
+                "includes low-speed starts, stops and reversals"
+            )
         result["metric_settings"] = {
+            "stall_termination_enabled": False,
+            "command_frame": ("body_velocity_xy_with_world_heading" if self.setup.catalog.heading_command
+                              else "body_velocity_xy_and_yaw_rate"),
             "traversal_version": 7 if controller.terrain_map.connected else 1,
             "stair_progress": ">=2 outward treads; >=2 supported feet and root vertical progress for >=0.1 s; survives trial",
             "terrain_traversal": ("four feet beyond actual exit plus margin; >=2 real ground contacts for confirmation duration; latched even after failure"

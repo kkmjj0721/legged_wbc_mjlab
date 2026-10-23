@@ -575,3 +575,10 @@ def soft_landing(
             active = (total_command > command_threshold).float()
             cost = cost * active
     return cost
+
+
+def command_stall_cost(env: ManagerBasedRlEnv) -> torch.Tensor:
+    """Bounded sustained low-progress cost after reset/command-change grace."""
+    from .behavior_monitor import get_behavior_monitor
+
+    return get_behavior_monitor(env).ensure_step().cost

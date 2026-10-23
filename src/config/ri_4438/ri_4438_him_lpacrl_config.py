@@ -228,6 +228,88 @@ class Ri4438HimLpacrlCfg:
         size_m = (1.6, 1.0)
         resolution_m = 0.1  # 对应 187 条射线，与 HIM critic 的观测维度一致。
 
+    class compact:
+        """Explicit body-velocity tasks; selected only by the Compact presets."""
+
+        family_fractions = {"steady": 0.35, "stairs": 0.25, "sequence": 0.30, "random": 0.10}
+        uniform_families = ("random",)
+        sequence_hold_s = 4.0
+        process_hold_s = (2.0, 10.0)
+        interaction_metrics_version = 2
+        interaction_linear_threshold = 0.05  # Observe 0.1 m/s starts and stalls.
+        interaction_linear_tolerance = 0.05  # Stationary is not a successful low-speed switch.
+        # Eight terrain conditions, with four broad treads and a 2.5 m platform.
+        # Stair exit is 2.45 m from the centre, before the 2.9 m root boundary.
+        # Keep the 1.1 m boundary margin so the complete height scan stays inside.
+        terrain_levels = {
+            "flat": {"base": {}},
+            "random_rough": {"low": {"height_max_m": 0.02}},
+            **{
+                f"stairs_outward_{direction}": {
+                    f"h{round(height * 100):02d}": {
+                        "step_height_m": height,
+                        "step_width": 0.30,
+                        "platform_width": 2.5,
+                        "border_width": 1.55 - 1e-9,
+                    }
+                    for height in (0.05, 0.08, 0.10)
+                }
+                for direction in ("up", "down")
+            },
+        }
+        # Each sign is a separate steady task and teacher group.
+        steady_flat = {
+            "stand": (0.0, 0.0, 0.0),
+            **{f"vx_{speed:+g}": (speed, 0.0, 0.0)
+               for speed in (0.1, -0.1, 0.2, -0.2, 0.5, -0.5)},
+            "vy_+0.2": (0.0, 0.2, 0.0),
+            "vy_-0.2": (0.0, -0.2, 0.0),
+            "wz_+0.5": (0.0, 0.0, 0.5),
+            "wz_-0.5": (0.0, 0.0, -0.5),
+        }
+        steady_rough = {
+            f"vx_{speed:+g}": (speed, 0.0, 0.0)
+            for speed in (0.2, -0.2, 0.5, -0.5)
+        }
+        stairs_speeds = (0.3, 0.5)
+        # Five 4 s segments cover the complete default 20 s episode.
+        sequences = {
+            "vx_speed_changes": tuple((v, 0.0, 0.0) for v in (0.1, 0.3, 0.5, 0.2, 0.1)),
+            **{
+                f"vx_start_stop_{speed:g}": tuple((v, 0.0, 0.0) for v in (0.0, speed, 0.0, -speed, 0.0))
+                for speed in (0.1, 0.2)
+            },
+            **{
+                f"vx_reverse_{speed:g}": tuple((v, 0.0, 0.0) for v in (speed, -speed, speed, -speed, 0.0))
+                for speed in (0.2, 0.5)
+            },
+            **{
+                f"vy_start_stop_{speed:g}": tuple((0.0, v, 0.0) for v in (0.0, speed, 0.0, -speed, 0.0))
+                for speed in (0.1, 0.2)
+            },
+            "vy_reverse_0.2": tuple((0.0, v, 0.0) for v in (0.2, -0.2, 0.2, -0.2, 0.0)),
+            "wz_start_stop_0.5": tuple((0.0, 0.0, v) for v in (0.0, 0.5, 0.0, -0.5, 0.0)),
+            "wz_reverse_0.5": tuple((0.0, 0.0, v) for v in (0.5, -0.5, 0.5, -0.5, 0.0)),
+        }
+        random_ranges = ((-0.5, 0.5), (-0.3, 0.3), (-0.5, 0.5))
+
+    class behavior_monitor:
+        # Legacy presets preserve their exact reward and termination contracts.
+        enabled = False
+        penalty_weight = -0.5
+        termination_enabled = False
+        linear_command_threshold = 0.08
+        angular_command_threshold = 0.1
+        linear_progress_floor = 0.02
+        angular_progress_floor = 0.02
+        progress_ratio = 0.2
+        smoothing_s = 0.3
+        grace_s = 0.8
+        penalty_sustain_s = 0.4
+        termination_sustain_s = 3.0
+        command_change_thresholds = (0.08, 0.08, 0.1)
+        heading_change_threshold = 0.2
+
     class curriculum:
         method = "lp"  # 有符号进步；uniform 为相同覆盖条件下的均匀对照。
         # 线速度/角速度跟踪核按两项正奖励权重归一化。

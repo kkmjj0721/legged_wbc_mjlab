@@ -162,6 +162,7 @@ class TaskRecord:
 
 class TaskCatalog:
     def __init__(self, cfg):
+        self.compact = getattr(cfg, "compact", False)
         self.heading_command = getattr(cfg, "heading_command", False)
         self.axis_names = ("vx", "vy", "heading" if self.heading_command else "wz")
         if set(cfg.command_axes) != set(self.axis_names):
@@ -187,7 +188,7 @@ class TaskCatalog:
         candidates = []
         fixed_axes = (
             itertools.product(*self.axis_bins.values())
-            if getattr(cfg, "fixed_tasks", True) else ()
+            if getattr(cfg, "fixed_tasks", True) and not self.compact else ()
         )
         for axes in fixed_axes:
             for terrain, family in cfg.terrains.items():
@@ -210,8 +211,16 @@ class TaskCatalog:
                                 AxisBin("world_heading", *cfg.process_heading_range))
                         candidates.append(TaskRecord(key, terrain, level, axes, "random_process"))
 
+        compact_families, self._sequences = {}, {}
+        if self.compact:
+            candidates, compact_families, self._sequences = self._compile_compact(cfg)
+            self.sequence_hold_s = cfg.sequence_hold_s
+            self.process_hold_s = tuple(cfg.process_hold_s)
+
         def matches(task, rule):
             meta = task.metadata()
+            if self.compact:
+                meta["family"] = compact_families[task.key]
             if not rule or any(k not in meta for k in rule):
                 raise ValueError(f"Invalid filter: {rule}")
             return all(
@@ -232,6 +241,14 @@ class TaskCatalog:
             raise ValueError("Empty catalog or duplicate semantic keys")
         self.sample_bin_centers = getattr(cfg, "sample_bin_centers", False)
         signature = {"records": self.records, "axes": cfg.command_axes}
+        self.task_families = tuple(compact_families.get(t.key, "legacy") for t in self.records)
+        if self.compact:
+            signature["compact"] = {
+                "families": self.task_families,
+                "sequences": {t.key: self._sequences[t.key] for t in self.records if t.mode == "sequence"},
+                "sequence_hold_s": self.sequence_hold_s,
+                "process_hold_s": self.process_hold_s,
+            }
         # Centre sampling changes the distribution and therefore the identity.
         if self.sample_bin_centers:
             signature["sample_bin_centers"] = True
@@ -250,7 +267,47 @@ class TaskCatalog:
         self._positive = np.array(
             [[a.positive_probability for a in t.axes] for t in self.records]
         )
-        self.process_mask = np.array([t.mode == "random_process" for t in self.records])
+        self.process_mask = np.array([t.mode in {"random_process", "random_body"} for t in self.records])
+        self.sequence_mask = np.array([t.mode == "sequence" for t in self.records])
+
+    @staticmethod
+    def _compile_compact(cfg):
+        """Compile the explicitly listed tasks; never form an axis product."""
+        if cfg.heading_command or cfg.random_process:
+            raise ValueError("Compact tasks require body-frame commands")
+        if not 0 < len(cfg.compact_tasks) <= 64:
+            raise ValueError("Compact requires 1–64 explicit tasks")
+        candidates, families, sequences = [], {}, {}
+        for spec in cfg.compact_tasks:
+            family, name = spec["family"], spec["name"]
+            terrain, level, mode = spec["terrain"], spec["level"], spec["mode"]
+            if family not in {"steady", "stairs", "sequence", "random"}:
+                raise ValueError(f"Unknown Compact task family: {family}")
+            if not isinstance(name, str) or not name or any(c in name for c in "/=:"):
+                raise ValueError("Invalid Compact behavior name")
+            # Evaluation can select a subset of the declared terrain conditions.
+            if terrain not in cfg.terrains or level not in cfg.terrains[terrain].levels:
+                continue
+            expected = {"steady": "fixed", "stairs": "fixed", "sequence": "sequence", "random": "random_body"}
+            if mode != expected[family]:
+                raise ValueError(f"Compact {family} tasks require mode={expected[family]}")
+            key = f"family={family}/behavior={name}/terrain={terrain}/level={level}"
+            if mode == "random_body":
+                bounds = np.asarray(spec["ranges"], dtype=float)
+                if bounds.shape != (3, 2) or not np.isfinite(bounds).all() or np.any(bounds[:, 0] >= bounds[:, 1]):
+                    raise ValueError("Compact random ranges need three finite intervals")
+                low, high = bounds.T
+            else:
+                commands = np.asarray(spec["commands"] if mode == "sequence" else [spec["command"]], dtype=float)
+                if commands.ndim != 2 or commands.shape[1] != 3 or not len(commands) or not np.isfinite(commands).all():
+                    raise ValueError("Compact commands must be a nonempty finite N x 3 sequence")
+                low, high = commands.min(axis=0), commands.max(axis=0)
+                if mode == "sequence":
+                    sequences[key] = commands
+            axes = tuple(AxisBin(axis, float(lo), float(hi)) for axis, lo, hi in zip(("vx", "vy", "wz"), low, high))
+            candidates.append(TaskRecord(key, terrain, level, axes, mode))
+            families[key] = family
+        return candidates, families, sequences
 
     @property
     def num_tasks(self):
@@ -274,7 +331,42 @@ class TaskCatalog:
             mask = ~self.process_mask[ids, None] & self._binned_axes[None, :]
             values = np.where(mask, (self._lo[ids] + self._hi[ids]) / 2, values)
         signs = np.where(rng.random((len(ids), 3)) < self._positive[ids], 1.0, -1.0)
-        return np.where(self._mag[ids], values * signs, values)
+        values = np.where(self._mag[ids], values * signs, values)
+        for row in np.flatnonzero(self.sequence_mask[ids]):
+            values[row] = self._sequences[self.records[ids[row]].key][0]
+        return values
+
+    def sample_command_sequences(self, ids, command_count, rng):
+        """Share training/evaluation semantics, preserving legacy random draws."""
+        ids = np.asarray(ids, dtype=np.int64)
+        if type(command_count) is not int or command_count <= 0:
+            raise ValueError("command_count must be a positive integer")
+        if not self.compact:
+            return self.sample_commands(np.repeat(ids, command_count), rng).reshape(len(ids), command_count, 3)
+        commands = np.empty((len(ids), command_count, 3), dtype=float)
+        for row, tid in enumerate(ids):
+            task = self.records[tid]
+            if task.mode == "fixed":
+                commands[row] = self.sample_commands([tid], rng)[0]
+            elif task.mode == "sequence":
+                script = self._sequences[task.key]
+                commands[row] = script[np.minimum(np.arange(command_count), len(script) - 1)]
+            else:
+                commands[row] = self.sample_commands([tid] * command_count, rng)
+        return commands
+
+    def sample_command_durations(self, ids, command_count, rng, horizon_s):
+        """Compact hold timers: whole episode, scripted segments or random holds."""
+        if not self.compact:
+            raise ValueError("Per-task duration sampling is only used by Compact")
+        ids = np.asarray(ids, dtype=np.int64)
+        if type(command_count) is not int or command_count <= 0 or not math.isfinite(horizon_s) or horizon_s <= 0:
+            raise ValueError("Positive command_count and horizon_s required")
+        durations = np.full((len(ids), command_count), horizon_s, dtype=float)
+        durations[self.sequence_mask[ids]] = self.sequence_hold_s
+        random = self.process_mask[ids]
+        durations[random] = rng.uniform(*self.process_hold_s, size=(int(random.sum()), command_count))
+        return durations
 
     def initial_teacher_probabilities(self, seed_bin):
         """Lift FIBO's 2:1 vx seed-bin prior across all retained other axes."""
@@ -334,6 +426,13 @@ class TeacherGroups:
         self.task_direction_to_group = {}
         for tid, task in enumerate(catalog.records):
             axis = task.axes[0]
+            if catalog.compact:
+                key = fingerprint(["compact", task.key])
+                grouped[key] = {"key": key, "mode": task.mode, "vx_bin": plain(axis),
+                                "terrain": task.terrain, "level": task.level,
+                                "family": catalog.task_families[tid], "direction": 0,
+                                "task_ids": [tid]}
+                continue
             if task.mode == "random_process":
                 key = fingerprint([task.mode, task.terrain, task.level, task.axes[:2]])
                 grouped[key] = {"key": key, "mode": task.mode, "vx_bin": plain(axis),
@@ -357,6 +456,7 @@ class TeacherGroups:
                 grouped[key]["task_ids"].append(tid)
         self.records = tuple(grouped.values())
         self.num_groups = len(self.records)
+        self.families = tuple(r.get("family", "legacy") for r in self.records)
         self.directions = np.array([r["direction"] for r in self.records], dtype=np.int64)
         self.members = tuple(np.array(r["task_ids"], dtype=np.int64) for r in self.records)
         self.member_counts = np.array([len(m) for m in self.members])
@@ -366,9 +466,13 @@ class TeacherGroups:
         for gid, row in enumerate(self.records):
             for tid in row["task_ids"]:
                 self.task_direction_to_group[tid, row["direction"]] = gid
+        if catalog.compact:
+            self.task_to_group = np.array([
+                self.task_direction_to_group[tid, 0] for tid in range(catalog.num_tasks)
+            ], dtype=np.int64)
 
     def initial_probabilities(self, seed_bin):
-        if self.catalog.random_process:
+        if self.catalog.random_process or self.catalog.compact:
             return np.full(self.num_groups, 1 / self.num_groups)
         task_prior = self.catalog.initial_teacher_probabilities(seed_bin)
         p = np.zeros(self.num_groups)
@@ -382,7 +486,9 @@ class TeacherGroups:
     def sample(self, probabilities, count, rng, command_count=1):
         gids = rng.choice(self.num_groups, count, p=probabilities)
         tids = self.member_table[gids, rng.integers(self.member_counts[gids])]
-        commands = self.catalog.sample_commands(np.repeat(tids, command_count), rng).reshape(count, command_count, 3)
+        commands = self.catalog.sample_command_sequences(tids, command_count, rng)
+        if self.catalog.compact:
+            return gids, tids, commands
         magnitude = self.catalog._mag[tids, 0]
         commands[magnitude, :, 0] = np.abs(commands[magnitude, :, 0]) * self.directions[gids[magnitude], None]
         for i in np.flatnonzero(~magnitude):
@@ -410,9 +516,15 @@ def make_trial_table(catalog, cfg):
                 stable_seed(cfg.evaluation.seed, task.key + f"/trial={trial_id}")
             )
             process = task.mode == "random_process"
-            n = math.ceil(cfg.evaluation.horizon_s / cfg.task_space.process_hold_s[0]) + 1 if process else count
-            parameters = catalog.sample_commands([tid] * n, rng)
-            durations = rng.uniform(*cfg.task_space.process_hold_s, size=n) if process else None
+            if catalog.compact:
+                minimum_hold = min(cfg.task_space.process_hold_s[0], cfg.task_space.sequence_hold_s)
+                n = math.ceil(cfg.evaluation.horizon_s / minimum_hold) + 1
+                parameters = catalog.sample_command_sequences([tid], n, rng)[0]
+                durations = catalog.sample_command_durations([tid], n, rng, cfg.evaluation.horizon_s)[0]
+            else:
+                n = math.ceil(cfg.evaluation.horizon_s / cfg.task_space.process_hold_s[0]) + 1 if process else count
+                parameters = catalog.sample_command_sequences([tid], n, rng)[0]
+                durations = rng.uniform(*cfg.task_space.process_hold_s, size=n) if process else None
             replica = int(rng.integers(cfg.geometry.replicas))
             yaw = float(rng.uniform(-math.pi, math.pi))
             commands = parameters.copy()
@@ -441,7 +553,8 @@ def make_trial_table(catalog, cfg):
                     "yaw": yaw,
                     "task_mode": task.mode,
                     "spawn_choice": float(rng.random()),
-                    **({"command_hold_s": durations.tolist()} if process else {}),
+                    **({"command_hold_s": durations.tolist()} if durations is not None else {}),
+                    **({"task_family": catalog.task_families[tid]} if catalog.compact else {}),
                     **heading,
                 }
             )

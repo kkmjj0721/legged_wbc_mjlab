@@ -36,13 +36,18 @@ def from_snapshot(snapshot):
     configuration remains usable for standalone evaluation of policy weights.
     """
     cfg = make_lpacrl_cfg()
-    if set(snapshot) != set(vars(cfg)):
+    missing = set(vars(cfg)) - set(snapshot)
+    if missing - {"behavior_monitor"} or set(snapshot) - set(vars(cfg)):
         raise ValueError(
             "Unsupported checkpoint configuration; use --protocol current for a new common evaluation"
         )
     for name in ("training", "geometry", "evaluation", "curriculum"):
         values = {**vars(getattr(cfg, name)), **deepcopy(snapshot[name])}
         setattr(cfg, name, NS(**values))
+    # The pre-Compact snapshots have no behavior monitor. Do not silently give
+    # their standalone evaluations the new training penalty or termination.
+    monitor = snapshot.get("behavior_monitor")
+    cfg.behavior_monitor = NS(**deepcopy(monitor)) if monitor is not None else None
     cfg.geometry.map_protocol = snapshot["geometry"].get("map_protocol", "legacy_v6")
     # Historical task/robot parameters remain usable with the current evaluator.
     # The evaluation fingerprint records this upgrade; teacher state is not loaded.
@@ -70,7 +75,9 @@ def from_snapshot(snapshot):
 
 def fixed_command(cfg, name):
     """Translations retain heading hold; turn suites explicitly request constant wz."""
-    cfg = deepcopy(cfg)
+    from .deployment import clear_compact_task_mode
+
+    cfg = clear_compact_task_mode(cfg)
     cfg.task_space.random_process = False
     cfg.task_space.fixed_tasks = True
     defaults = make_lpacrl_cfg().task_space.command_axes["vx"]
@@ -102,6 +109,8 @@ def select_task_mode(cfg, mode):
     cfg = deepcopy(cfg)
     if mode not in (None, "mixed", "fixed", "random_process"):
         raise ValueError(f"Unknown task mode: {mode}")
+    if mode is not None and getattr(cfg.task_space, "compact", False):
+        raise ValueError("Compact task families cannot be replaced by --task-mode; use --command for a fixed evaluation")
     if mode == "random_process" and not cfg.task_space.heading_command:
         raise ValueError("random_process requires heading mode")
     if mode is not None:

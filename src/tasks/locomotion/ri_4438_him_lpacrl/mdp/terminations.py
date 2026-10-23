@@ -50,3 +50,10 @@ def map_boundary_truncation(env):
     xy = env.scene["robot"].data.root_link_pos_w[:, :2]
     limit = xy.new_tensor(controller.terrain_map.support_half_extent) - controller.cfg.geometry.boundary_margin_m
     return (xy.abs() >= limit).any(dim=-1)
+
+
+def command_stall_failure(env):
+    """Optional physical failure; never a timeout or an evaluation early stop."""
+    from .behavior_monitor import get_behavior_monitor
+
+    return get_behavior_monitor(env).ensure_step().terminated
