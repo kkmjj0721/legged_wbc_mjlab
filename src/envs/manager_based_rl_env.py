@@ -19,6 +19,8 @@ from mjlab.actuator.builtin_group import _TARGET_TENSOR_MAP
 from mjlab.envs import ManagerBasedRlEnv as MjlabManagerBasedRlEnv
 from mjlab.utils.buffers import DelayBuffer
 
+from .reproducibility import configure_simulation, validate_simulation
+
 
 def _backfill_reset_targets(
     delay: DelayBuffer, targets: torch.Tensor, env_ids: torch.Tensor
@@ -70,6 +72,9 @@ class ManagerBasedRlEnv(MjlabManagerBasedRlEnv):
     """mjlab environment whose reset writes cannot tick other actuator queues."""
 
     def __init__(self, *args, **kwargs):
+        cfg = kwargs.get("cfg", args[0] if args else None)
+        device = kwargs.get("device", args[1] if len(args) > 1 else "cuda:0")
+        configure_simulation(cfg.sim, device)
         self._pending_control_reset: torch.Tensor | None = None
         super().__init__(*args, **kwargs)
         try:
@@ -82,6 +87,17 @@ class ManagerBasedRlEnv(MjlabManagerBasedRlEnv):
         # immediately after _reset_idx(). No global mjlab monkey patch and no
         # copy of its stepping loop is needed.
         self.scene.write_data_to_sim = self._write_controls
+        validate_simulation(self.sim)
+
+    def step(self, *args, **kwargs):
+        result = super().step(*args, **kwargs)
+        validate_simulation(self.sim)
+        return result
+
+    def reset(self, *args, **kwargs):
+        result = super().reset(*args, **kwargs)
+        validate_simulation(self.sim)
+        return result
 
     def _reset_idx(self, env_ids: torch.Tensor | None = None) -> None:
         super()._reset_idx(env_ids)

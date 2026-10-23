@@ -11,7 +11,7 @@ import tempfile
 import onnx
 import torch
 
-from src.tasks.locomotion.ri_4438_him.rl.runner import HIMOnPolicyRunner
+from .him_runner import HIMOnPolicyRunner
 from .layouts import get_layout, validate_env_cfg
 from .symmetry import MAPPING_VERSION, augment_phase47, get_adapter
 
@@ -41,6 +41,10 @@ def _plain(value):
 
 class HimSymmetryRunner(HIMOnPolicyRunner):
     def __init__(self, env, train_cfg, log_dir=None, device="cpu"):
+        from src.envs.reproducibility import execution_contract
+
+        self._simulation_execution = execution_contract(env.unwrapped.cfg.sim)
+        self._source_simulation_execution = None
         self.layout = get_layout(train_cfg["observation_layout"])
         validate_env_cfg(env.unwrapped.cfg, self.layout)
         symmetry_cfg = train_cfg["algorithm"].get("symmetry_cfg")
@@ -58,7 +62,8 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
         if log_dir is not None and self.alg.gpu_global_rank == 0:
             Path(log_dir).mkdir(parents=True, exist_ok=True)
             (Path(log_dir) / "effective_him_training.json").write_text(
-                json.dumps(self._symmetry_contract, indent=2))
+                json.dumps({**self._symmetry_contract,
+                            "simulation_execution": self._simulation_execution}, indent=2))
         actor = self.alg.get_policy()
         if (actor.num_one_step_obs != self.layout.frame_size
                 or actor.history_size != self.layout.history_size
@@ -72,7 +77,9 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
             get_adapter(env, self.layout)
 
     def save(self, path, infos=None):
-        super().save(path, {**(infos or {}), "him_symmetry": self._symmetry_contract})
+        super().save(path, {**(infos or {}),
+                            "him_symmetry": self._symmetry_contract,
+                            "simulation_execution": self._simulation_execution})
 
     def warm_start(self, path):
         """Initialize a fresh experiment from weights, without old optimizer/curriculum state."""
@@ -96,6 +103,7 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
             "optimizer": False, "iteration": False,
         }, strict=True)
         self._validate_numerics()
+        self._source_simulation_execution = infos.get("simulation_execution", {"mode": "default"})
         self.env.unwrapped.common_step_counter = 0
         with torch.inference_mode():
             self.env.reset()
@@ -105,6 +113,16 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
         checkpoint = torch.load(path, weights_only=False, map_location="cpu")
         infos = checkpoint.get("infos") or {}
         saved = infos.get("him_symmetry")
+        if saved is not None:
+            # These reward implementations were copied unchanged into this task.
+            # Accept that move without weakening checks on weights or parameters.
+            old_rewards = "src.tasks.locomotion.ri_4438_him.mdp.rewards:"
+            local_rewards = "src.tasks.locomotion.ri_4438_him_symmetry.mdp.rewards:"
+            saved = {**saved, "rewards": {
+                name: {**term, "func": local_rewards + term["func"][len(old_rewards):]
+                       if term["func"].startswith(old_rewards) else term["func"]}
+                for name, term in saved.get("rewards", {}).items()
+            }}
         if saved is not None and saved.get("symmetry") is not None:
             symmetry = saved["symmetry"]
             # Moving the implementation does not change the training contract.
@@ -115,6 +133,12 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
                     **symmetry, "data_augmentation_func": _plain(augment_phase47),
                 }}
         full_resume = load_cfg is None or any(load_cfg.get(k, False) for k in ("optimizer", "iteration"))
+        saved_execution = infos.get("simulation_execution", {"mode": "default"})
+        if full_resume and saved_execution != self._simulation_execution:
+            raise ValueError(
+                "Simulation execution mode/backend differs from checkpoint; "
+                "resume with the saved mode and backend, or use --warm-start"
+            )
         if full_resume and saved != self._symmetry_contract:
             raise ValueError("HIM symmetry experiment differs (algorithm, layout, mapping, rewards or switches); cannot resume")
         if saved is not None and saved["layout"] != self._symmetry_contract["layout"]:
@@ -122,7 +146,9 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
         numerical = infos.get("him_numerics")
         if numerical is not None and numerical != self._numerical_contract():
             raise ValueError("HIM checkpoint numerical contract differs from the current configuration")
-        return super().load(path, load_cfg, strict, map_location)
+        result = super().load(path, load_cfg, strict, map_location)
+        self._source_simulation_execution = saved_execution
+        return result
 
     def export_policy_to_onnx(self, path, filename="policy.onnx", verbose=False):
         super().export_policy_to_onnx(path, filename, verbose)
@@ -130,6 +156,7 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
         model = onnx.load(destination)
         metadata = {entry.key: entry.value for entry in model.metadata_props}
         metadata.update({
+            "simulation_execution": json.dumps(self._simulation_execution, sort_keys=True),
             "him_observation_layout": self.layout.name,
             "him_observation_terms": json.dumps(self.layout.deployment_terms),
             "him_action_joint_names": json.dumps(list(self.env.unwrapped.action_manager.get_term("joint_pos").target_names)),
@@ -147,6 +174,10 @@ class HimSymmetryRunner(HIMOnPolicyRunner):
                 self.env.unwrapped.cfg.rewards["foot_gait"].params["command_threshold"]
                 if self.layout.with_phase else None),
         })
+        if self._source_simulation_execution is not None:
+            metadata["source_checkpoint_simulation_execution"] = json.dumps(
+                self._source_simulation_execution, sort_keys=True
+            )
         onnx.helper.set_model_props(model, metadata)
         onnx.checker.check_model(model)
         descriptor, temporary = tempfile.mkstemp(prefix=".symmetry_", suffix=".onnx", dir=path)

@@ -32,6 +32,8 @@ class PlayConfig:
   video_width: int | None = None
   camera: int | str | None = None
   viewer: Literal["auto", "native", "viser"] = "auto"
+  deterministic: bool = False
+  """Use the opt-in canonical GPU mode (RI-4438 HIM Symmetry only)."""
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
 
@@ -46,6 +48,11 @@ def run_play(task_id: str, cfg: PlayConfig):
 
   env_cfg = load_env_cfg(task_id, play=True)
   agent_cfg = load_rl_cfg(task_id)
+  if cfg.deterministic:
+    from src.envs.config import SimulationCfg
+    if not isinstance(env_cfg.sim, SimulationCfg):
+      raise ValueError("--deterministic currently supports RI-4438 HIM Symmetry tasks only")
+    env_cfg.sim.deterministic = True
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
   TRAINED_MODE = not DUMMY_MODE

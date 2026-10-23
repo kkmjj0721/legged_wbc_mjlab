@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field, fields
 
 from src.config.ri_4438.him_layouts import HimLayout, PHASE47
-from src.tasks.locomotion.ri_4438_him.config.rl_cfg import (
+from .him_cfg import (
     RslRlHimAlgorithmCfg, RslRlHimRunnerCfg, ri_4438_him_runner_cfg,
 )
 
@@ -21,6 +21,7 @@ class HimSymmetryCfg:
 
 @dataclass
 class HimSymmetryAlgorithmCfg(RslRlHimAlgorithmCfg):
+    class_name: str = "src.tasks.locomotion.ri_4438_him_symmetry.rl.him_ppo:HIMPPO"
     symmetry_cfg: HimSymmetryCfg | None = field(default_factory=HimSymmetryCfg)
     estimator_lr_mode: str = "follow"
     estimator_lr_cap: float | None = None

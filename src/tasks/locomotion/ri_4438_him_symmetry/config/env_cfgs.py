@@ -1,21 +1,294 @@
-"""Independent environment factories based on the complete ordinary HIM factory."""
+"""Task-owned RI-4438 HIM Symmetry environment configurations."""
 
 from copy import deepcopy
-from src.tasks.locomotion.ri_4438_him.config.env_cfgs import (
-    ri_4438_rough_env_cfg as base_rough, ri_4438_flat_env_cfg as base_flat,
+from typing import Literal
+
+from src.assets.robots import (
+  get_ri_4438_robot_cfg,
 )
-from src.tasks.locomotion.ri_4438_him_symmetry.rl.layouts import PHASE47, validate_env_cfg
+from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
+from mjlab.envs.mdp.actions import JointPositionActionCfg
+from mjlab.managers import TerminationTermCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import (
+  ContactMatch,
+  ContactSensorCfg,
+  RayCastSensorCfg,
+)
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+
+from src.tasks.locomotion.ri_4438_him_symmetry.ri_4438_him_symmetry_env_cfg import (
+  make_velocity_env_cfg,
+)
+from src.tasks.locomotion.ri_4438_him_symmetry.mdp.terminal_observations import (
+  configure_estimator_observations,
+)
+from src.tasks.locomotion.ri_4438_him_symmetry.mdp.numerics import configure_numerical_observations
+
+import src.tasks.locomotion.ri_4438_him_symmetry.mdp as mdp
+
+TerrainType = Literal["rough", "obstacles"]
+
+
+def _rough_env_cfg(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create the RI-4438 HIM rough-terrain environment."""
+  cfg = make_velocity_env_cfg()
+
+  # Keep the collision and constraint buffers bounded for rough-terrain training.
+  # njmax is per world; nconmax sizes the shared contact/CCD buffers.
+  cfg.sim.mujoco.ccd_iterations = 50
+  cfg.sim.contact_sensor_maxmatch = 64
+  cfg.sim.nconmax = 48
+  cfg.sim.njmax = 300
+  cfg.sim.broadphase = "nxn"
+  cfg.sim.mujoco.solver = "cg"
+  # The robot factory contains shared actuator configs. Own them before play
+  # overrides so disabling play latency cannot affect a later training config.
+  cfg.scene.entities = {"robot": deepcopy(get_ri_4438_robot_cfg())}
+  # The recorder captures fresh estimator targets before the automatic reset.
+  cfg.auto_reset = True
+
+  # Set raycast sensor frame to RI-4438 base_link.
+  for sensor in cfg.scene.sensors or ():
+    if sensor.name == "terrain_scan":
+      assert isinstance(sensor, RayCastSensorCfg)
+      sensor.frame.name = "base_link"
+      sensor.include_geom_groups = (0,)
+
+  foot_names = ("FL", "FR", "RL", "RR")
+  site_names = ("FL", "FR", "RL", "RR")
+
+  geom_names = tuple(f"{name}_foot_collision" for name in foot_names)
+
+  feet_ground_cfg = ContactSensorCfg(
+    name = "feet_ground_contact",
+    primary = ContactMatch(mode = "geom", pattern = geom_names, entity = "robot"),
+    secondary = ContactMatch(mode = "body", pattern = "terrain"),
+    fields = ("found", "force"),
+    reduce = "netforce",
+    num_slots = 1,
+    track_air_time=True,
+  )
+
+  nonfoot_ground_cfg = ContactSensorCfg(
+    name = "nonfoot_ground_touch",
+    primary = ContactMatch(
+      mode = "geom",
+      entity = "robot",
+      # Only base contact is considered an illegal ground contact.
+      # Thigh/calf/hip contacts remain observable through the robot model
+      # but no longer terminate the episode via this sensor.
+      pattern = r"^base_collision$",
+      exclude = (),
+    ),
+    secondary = ContactMatch(mode = "body", pattern = "terrain"),
+    fields = ("found", "force"),
+    reduce = "none",
+    num_slots = 1,
+    history_length = 4,
+  )
+
+  leg_ground_cfg = ContactSensorCfg(
+    name="leg_ground_contact",
+    primary=ContactMatch(
+      mode="geom",
+      entity="robot",
+      pattern=r"^(FR|FL|RR|RL)_(hip|thigh|calf).*_collision$",
+    ),
+    secondary=ContactMatch(
+      mode="body",
+      pattern="terrain",
+    ),
+    fields=("found", "force"),
+    reduce="none",
+    num_slots=1,
+    history_length=1,
+  )
+
+  self_collision_cfg = ContactSensorCfg(
+    name="self_collision_contact",
+    primary=ContactMatch(
+      mode="geom",
+      pattern=r".*_collision$",
+      entity="robot",
+    ),
+    secondary=ContactMatch(
+      mode="subtree",
+      pattern="base_link",
+      entity="robot",
+    ),
+    fields=("found", "force"),
+    reduce="maxforce",
+    num_slots=1,
+    history_length=cfg.decimation,
+    secondary_policy="error",
+  )
+
+  cfg.scene.sensors = (cfg.scene.sensors or ()) + (
+    feet_ground_cfg,
+    nonfoot_ground_cfg,
+    leg_ground_cfg,
+    self_collision_cfg,
+  )
+
+  if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
+    cfg.scene.terrain.terrain_generator.curriculum = True
+
+  joint_pos_action = cfg.actions["joint_pos"]
+  assert isinstance(joint_pos_action, JointPositionActionCfg)
+
+  cfg.viewer.body_name = "base_link"
+  cfg.viewer.distance = 1.5
+  cfg.viewer.elevation = -10.0
+
+  cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
+  cfg.events["foot_contact_softness"].params["asset_cfg"].geom_names = geom_names
+  cfg.events["base_com"].params["asset_cfg"].body_names = ("base_link",)
+
+  cfg.rewards["pose"].params["std_standing"] = {
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.05,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.1,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.15,
+  }
+  cfg.rewards["pose"].params["std_walking"] = {
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.25,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.35,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.35,  # Discourage sustained crouching.
+  }
+  cfg.rewards["pose"].params["std_running"] = {
+    r".*(FR|FL|RR|RL)_hip_joint.*": 0.30,
+    r".*(FR|FL|RR|RL)_thigh_joint.*": 0.35,
+    r".*(FR|FL|RR|RL)_calf_joint.*": 0.4,
+  }
+
+  cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
+  cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
+
+  gait_offset = [0.0, 0.5, 0.5, 0.0]
+
+  cfg.rewards["foot_gait"].params["offset"] = list(gait_offset)
+
+  foot_gait = cfg.rewards["foot_gait"]
+
+  air_time_params = cfg.rewards["feet_air_time"].params
+  for name in ("sensor_name", "command_name", "command_threshold"):
+    air_time_params[name] = foot_gait.params[name]
+
+  for group_name in ("actor", "critic"):
+    phase_params = cfg.observations[group_name].terms["phase"].params
+    phase_params["period"] = foot_gait.params["period"]
+    phase_params["command_name"] = foot_gait.params["command_name"]
+    phase_params["command_threshold"] = foot_gait.params[
+      "command_threshold"
+    ]
+
+  cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
+
+  cfg.terminations["illegal_contact"] = TerminationTermCfg(
+    func=mdp.illegal_contact,
+    params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
+  )
+
+  # Apply play mode overrides.
+  if play:
+    # Effectively infinite episode length.
+    cfg.episode_length_s = int(1e9)
+    cfg.auto_reset = True
+    cfg.commands["twist"].ranges.lin_vel_x = (-1.0, 1.0)
+    cfg.commands["twist"].ranges.lin_vel_y = (-1.0, 1.0)
+
+    cfg.observations["actor"].enable_corruption = False
+    for term in cfg.observations["actor"].terms.values():
+      term.delay_min_lag = term.delay_max_lag = 0
+      term.delay_hold_prob = 0.0
+      term.delay_update_period = 0
+    assert cfg.scene.entities["robot"].articulation is not None
+    for actuator in cfg.scene.entities["robot"].articulation.actuators:
+      actuator.delay_min_lag = actuator.delay_max_lag = 0
+      actuator.delay_hold_prob = 0.0
+      actuator.delay_update_period = 0
+    # Play uses nominal dynamics; training retains the configured randomization.
+    for name in (
+      "push_robot", "foot_friction", "encoder_bias", "base_com", "pd_gains",
+      "effort_limits", "pseudo_inertia", "synchronize_sensor_delays",
+      "joint_friction", "joint_armature", "joint_damping", "imu_errors",
+      "external_force", "foot_contact_softness",
+    ):
+      cfg.events.pop(name, None)
+    cfg.curriculum = {}
+    cfg.events["randomize_terrain"] = EventTermCfg(
+      func = envs_mdp.randomize_terrain,
+      mode = "reset",
+      params = {},
+    )
+
+    if cfg.scene.terrain is not None:
+      if cfg.scene.terrain.terrain_generator is not None:
+        cfg.scene.terrain.terrain_generator.curriculum = False
+        cfg.scene.terrain.terrain_generator.num_cols = 5
+        cfg.scene.terrain.terrain_generator.num_rows = 5
+        cfg.scene.terrain.terrain_generator.border_width = 10.0
+
+  configure_numerical_observations(cfg)
+  configure_estimator_observations(cfg, play=play)
+  return cfg
+
+
+def _flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create the RI-4438 HIM flat-terrain environment."""
+  cfg = _rough_env_cfg(play=play)
+
+  cfg.sim.njmax = 300
+  cfg.sim.mujoco.ccd_iterations = 50
+  cfg.sim.contact_sensor_maxmatch = 64
+  cfg.sim.nconmax = None
+
+  assert cfg.scene.terrain is not None
+  cfg.scene.terrain.terrain_type = "plane"
+  cfg.scene.terrain.terrain_generator = None
+
+  # Keep the exact same critic observation schema as rough terrain.
+  #
+  # The critic is part of a HIM checkpoint (including its first-layer weight
+  # and observation normalizer).  Removing ``terrain_scan`` and rebuilding the
+  # flat critic with foot-only terms changes the input from 244 to 74 values,
+  # which makes a rough <-> flat resume fail with a state-dict size mismatch.
+  # A raycast against the plane is valid and produces a constant/near-constant
+  # height scan, so retaining this term keeps both variants shape-compatible.
+  # ``terrain_levels`` is still removed below because a plane has no terrain
+  # curriculum.
+
+  # Disable terrain curriculum (not present in play mode since rough clears all).
+  cfg.curriculum.pop("terrain_levels", None)
+
+  if play:
+    twist_cmd = cfg.commands["twist"]
+    assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+    twist_cmd.ranges.lin_vel_x = (-0.5, 1.0)
+    twist_cmd.ranges.lin_vel_y = (-0.5, 0.5)
+    twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
+
+  return cfg
 
 
 def _build(factory, play):
-    cfg = deepcopy(factory(play=play))
-    validate_env_cfg(cfg, PHASE47)
-    return cfg
+  # Preserve the original symmetry task's configuration ownership and checks.
+  from ..rl.layouts import PHASE47, validate_env_cfg
+
+  cfg = deepcopy(factory(play=play))
+  validate_env_cfg(cfg, PHASE47)
+  return cfg
 
 
-def ri_4438_rough_env_cfg(play=False):
-    return _build(base_rough, play)
+def ri_4438_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create the task's validated rough-terrain training or play environment."""
+  return _build(_rough_env_cfg, play)
 
 
-def ri_4438_flat_env_cfg(play=False):
-    return _build(base_flat, play)
+def ri_4438_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create the task's validated flat-terrain training or play environment."""
+  return _build(_flat_env_cfg, play)
