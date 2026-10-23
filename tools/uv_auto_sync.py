@@ -815,7 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="测速 PyPI 镜像并使用最快的镜像执行 uv sync。",
         epilog=(
-            "示例: python3 tools/uv_auto_sync.py --extra sim2sim\n"
+            "示例: python3 tools/uv_auto_sync.py --extra analysis\n"
             "      python3 tools/uv_auto_sync.py --index https://pypi.org/simple"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -856,7 +856,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--extra",
         action="append",
         default=[],
-        help="传给 uv sync 的可选依赖组，例如 --extra sim2sim（可重复传入）。",
+        help="传给 uv sync 的可选依赖组，例如 --extra analysis（可重复传入）。",
     )
     parser.add_argument(
         "--uv",

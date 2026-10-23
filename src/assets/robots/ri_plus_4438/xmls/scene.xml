@@ -1,5 +1,5 @@
 <mujoco model="ri_plus_4438 scene">
-  <include file="ri_plus_4438_bfm.xml"/>
+  <include file="ri_plus_4438.xml"/>
 
   <statistic center="0 0 0.2" extent="1.0"/>
 
