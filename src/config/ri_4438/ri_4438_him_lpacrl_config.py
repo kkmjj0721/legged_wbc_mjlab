@@ -293,6 +293,39 @@ class Ri4438HimLpacrlCfg:
         }
         random_ranges = ((-0.5, 0.5), (-0.3, 0.3), (-0.5, 0.5))
 
+    class compact_rough:
+        """Extend Compact skills to 1.0 on the unchanged full Rough map.
+
+        Existing low-speed skills and family quotas come from ``compact``.
+        Both slope l0 conditions are physically flat; use one for flat skills
+        without adding a terrain column to the frozen connected map.
+        """
+
+        flat_terrain = ("slope_outward_up", "l0")
+        random_ranges = ((-1.0, 1.0), (-1.0, 1.0), (-1.0, 1.0))
+        steady_flat_extra = {
+            f"{axis}_{speed:+g}": tuple(speed if i == index else 0.0 for i in range(3))
+            for index, axis in enumerate(("vx", "vy", "wz"))
+            for speed in (1.0, -1.0)
+        }
+        steady_rough_extra = {
+            f"vx_{speed:+g}": (speed, 0.0, 0.0) for speed in (1.0, -1.0)
+        }
+        stairs_speeds = (0.3, 0.5, 1.0)
+        sequences_extra = {
+            "vx_speed_changes_1": tuple((v, 0.0, 0.0) for v in (0.1, 0.5, 1.0, 0.5, 0.1)),
+            **{
+                f"{axis}_{behavior}_1": tuple(
+                    tuple(v if i == index else 0.0 for i in range(3)) for v in values
+                )
+                for index, axis in enumerate(("vx", "vy", "wz"))
+                for behavior, values in (
+                    ("start_stop", (0.0, 1.0, 0.0, -1.0, 0.0)),
+                    ("reverse", (1.0, -1.0, 1.0, -1.0, 0.0)),
+                )
+            },
+        }
+
     class behavior_monitor:
         # Legacy presets preserve their exact reward and termination contracts.
         enabled = False

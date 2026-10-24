@@ -275,8 +275,8 @@ class TaskCatalog:
         """Compile the explicitly listed tasks; never form an axis product."""
         if cfg.heading_command or cfg.random_process:
             raise ValueError("Compact tasks require body-frame commands")
-        if not 0 < len(cfg.compact_tasks) <= 64:
-            raise ValueError("Compact requires 1–64 explicit tasks")
+        if len(cfg.compact_tasks) == 0:
+            raise ValueError("Compact requires a nonempty explicit task table")
         candidates, families, sequences = [], {}, {}
         for spec in cfg.compact_tasks:
             family, name = spec["family"], spec["name"]

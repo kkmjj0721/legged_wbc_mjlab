@@ -266,7 +266,7 @@ class EpisodeDiagnostics:
         d, c, env = self.deployment, self.controller, self.env
         d.finish(ids)
         failed = env.termination_manager.terminated[ids]
-        boundary_name = "boundary_truncation" if c.compact else "map_boundary_truncation"
+        boundary_name = "map_boundary_truncation" if c.terrain_map.connected else "boundary_truncation"
         boundary = (env.termination_manager.get_term(boundary_name)[ids] & ~failed
                     if boundary_name in env.termination_manager.active_terms else torch.zeros_like(failed))
         passed = self.traversal.passed[ids] if self.traversal is not None else torch.zeros_like(failed)

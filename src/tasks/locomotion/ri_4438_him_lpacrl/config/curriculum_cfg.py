@@ -52,7 +52,7 @@ class LpacrlCfg:
 def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | None = None) -> LpacrlCfg:
     """Copy legacy defaults or select an explicit historical/Compact protocol."""
     env_cfg, ppo_cfg = Ri4438HimLpacrlCfg, Ri4438HimLpacrlCfgPPO
-    compact = experiment in {"Compact", "Compact-Coverage", "Compact-Uniform"}
+    compact = experiment in {"Compact", "Compact-Coverage", "Compact-Uniform", "Compact-Rough"}
     if compact:
         if heading_command is True:
             raise ValueError("Compact commands use body-frame vx/vy/wz, not heading targets")
@@ -134,7 +134,7 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | No
     if experiment is None:
         return result
     if compact:
-        _configure_compact(result)
+        _configure_compact(result, rough=experiment == "Compact-Rough")
         if experiment == "Compact-Coverage":
             result.behavior_monitor.penalty_weight = 0.0
         if experiment == "Compact-Uniform":
@@ -144,7 +144,7 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | No
         result.curriculum.method, result.curriculum.uniform_mix = "uniform", 0.0
         return result
     if experiment not in {"A0", "A1", "A2", "A3"}:
-        raise ValueError("Unknown LPACRL experiment; use A0–A3, Compact, Compact-Coverage, Compact-Uniform or Random-Uniform")
+        raise ValueError("Unknown LPACRL experiment; use A0–A3, Compact, Compact-Coverage, Compact-Uniform, Compact-Rough or Random-Uniform")
     # Preserve the named historical experiments and their resume fingerprints.
     result.task_space.fixed_tasks = True
     result.curriculum.forward_stairs_fraction = 0.25
@@ -157,8 +157,10 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | No
     return result
 
 
-def _configure_compact(cfg: LpacrlCfg) -> None:
+def _configure_compact(cfg: LpacrlCfg, *, rough: bool = False) -> None:
     definition = Ri4438HimLpacrlCfg.compact
+    extension = Ri4438HimLpacrlCfg.compact_rough if rough else None
+    random_ranges = extension.random_ranges if rough else definition.random_ranges
     space = cfg.task_space
     space.compact = True
     space.fixed_tasks, space.random_process = True, False
@@ -168,11 +170,12 @@ def _configure_compact(cfg: LpacrlCfg) -> None:
     space.command_axes = {
         axis: SimpleNamespace(**deepcopy({**Ri4438HimLpacrlCfg.commands.axis_defaults,
                                          "mode": "continuous", "range": bounds}))
-        for axis, bounds in zip(("vx", "vy", "wz"), definition.random_ranges)
+        for axis, bounds in zip(("vx", "vy", "wz"), random_ranges)
     }
+    terrain_levels = cfg.geometry.map_levels if rough else definition.terrain_levels
     space.terrains = {
         name: SimpleNamespace(levels=deepcopy(levels))
-        for name, levels in definition.terrain_levels.items()
+        for name, levels in terrain_levels.items()
     }
     space.compact_tasks = []
 
@@ -180,23 +183,38 @@ def _configure_compact(cfg: LpacrlCfg) -> None:
         space.compact_tasks.append(dict(name=name, family=family, terrain=terrain,
                                         level=level, mode=mode, **parameters))
 
-    for terrain, level, commands in (
-        ("flat", "base", definition.steady_flat),
-        ("random_rough", "low", definition.steady_rough),
-    ):
-        for name, command in commands.items():
-            add(name, "steady", terrain, level, "fixed", command=command)
+    flat_terrain = extension.flat_terrain if rough else ("flat", "base")
+    flat_commands = dict(definition.steady_flat)
+    rough_commands = dict(definition.steady_rough)
+    sequences = dict(definition.sequences)
+    if rough:
+        flat_commands.update(extension.steady_flat_extra)
+        rough_commands.update(extension.steady_rough_extra)
+        sequences.update(extension.sequences_extra)
+    for name, command in flat_commands.items():
+        add(name, "steady", *flat_terrain, "fixed", command=command)
+    for level in space.terrains["random_rough"].levels:
+        for name, command in rough_commands.items():
+            add(name, "steady", "random_rough", level, "fixed", command=command)
+    stairs_speeds = extension.stairs_speeds if rough else definition.stairs_speeds
     for terrain, spec in space.terrains.items():
         if terrain.startswith("stairs_"):
             for level in spec.levels:
-                for speed in definition.stairs_speeds:
+                for speed in stairs_speeds:
                     add(f"vx_{speed:g}", "stairs", terrain, level, "fixed", command=(speed, 0.0, 0.0))
-    for name, commands in definition.sequences.items():
-        add(name, "sequence", "flat", "base", "sequence", commands=commands)
-    for terrain, level in (("flat", "base"), ("random_rough", "low")):
-        add("body_ranges", "random", terrain, level, "random_body", ranges=definition.random_ranges)
-    cfg.geometry.map_protocol = "legacy_v6"
-    cfg.geometry.map_levels = deepcopy(definition.terrain_levels)
+    for name, commands in sequences.items():
+        add(name, "sequence", *flat_terrain, "sequence", commands=commands)
+    random_terrains = (
+        [(terrain, level) for terrain, spec in space.terrains.items() for level in spec.levels]
+        if rough else [("flat", "base"), ("random_rough", "low")]
+    )
+    for terrain, level in random_terrains:
+        add("body_ranges", "random", terrain, level, "random_body", ranges=random_ranges)
+    if rough:
+        cfg.geometry.map_protocol = "connected_v7"
+    else:
+        cfg.geometry.map_protocol = "legacy_v6"
+        cfg.geometry.map_levels = deepcopy(definition.terrain_levels)
     cfg.curriculum.forward_stairs_fraction = 0.0
     cfg.curriculum.family_fractions = deepcopy(definition.family_fractions)
     cfg.curriculum.uniform_families = tuple(definition.uniform_families)
@@ -315,8 +333,8 @@ def validate(cfg):
     if getattr(cfg.task_space, "compact", False):
         if heading_command or cfg.task_space.random_process or interval is not None:
             raise ValueError("Compact requires body commands and per-task command hold timers")
-        if cfg.geometry.map_protocol != "legacy_v6" or coverage:
-            raise ValueError("Compact uses its small terrain map and family allocation")
+        if coverage:
+            raise ValueError("Compact uses fixed family allocation without a separate coverage branch")
         fractions = cfg.curriculum.family_fractions
         if (set(fractions) != {"steady", "stairs", "sequence", "random"}
                 or any(not math.isfinite(v) or v <= 0 for v in fractions.values())

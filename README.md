@@ -12,7 +12,7 @@
 - **平地与复杂地形**：提供 Flat / Rough 任务，支持动力学随机化与地形课程。
 - **训练管理**：单 GPU / 多 GPU 训练、检查点续训、TensorBoard 日志；Symmetry 与 LP-ACRL 支持 warm-start 权重初始化。
 - **策略验证**：本地或浏览器回放、视频录制、RI-4438 模型分析与离线评估、ONNX 策略导出。
-- **机器人迁移工作台**：本地 Web 导入 XML 和资源，配置关节、控制与训练参数，交互检查站姿并生成四类独立任务。使用方式见 [迁移工作台](docs/robot_migration_web.md)。
+- **机器人迁移工作台**：本地 Web 导入 MJCF XML 或 URDF 和资源；URDF 自动转换为项目风格 XML，可查看转换报告与源码，配置参数、检查站姿并生成四类独立任务。使用方式见 [迁移工作台](docs/robot_migration_web.md)。
 
 ## 快速开始
 
@@ -70,6 +70,8 @@ uv run --no-sync tensorboard --logdir logs/rsl_rl
 | Unitree Go2 | HIM + PPO | `Unitree-Go2-HIM-Rough` | `Unitree-Go2-HIM-Flat` |
 
 LP-ACRL 新增 `Ri-4438-HIM-LPACRL-Rough-Compact`：39 组车体系速度任务，固定技能覆盖，显式变速/启停/换向及停滞惩罚。原 Rough 832 组和 `-A0` 至 `-A3` 历史对照仍可选；新预设训练和消融命令见 [使用指南](docs/usage.md#lp-acrl-任务与课程)。
+
+`Ri-4438-HIM-LPACRL-Rough-Compact-Rough` 保留上述技能覆盖与低速任务，扩展三轴指令至 ±1.0，使用原 Rough 完整地形和连通地图，共 230 组；原 Compact 保留为对照。
 
 ## 常用操作
 
