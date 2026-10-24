@@ -48,7 +48,8 @@
   const jointPaths = new Set(["control.stiffness","control.damping","control.effort_limit","control.armature","control.friction","control.passive_damping","control.action_scale","control.action_clip","init_state.default_joint"]);
   const state = {
     step:0, scope:"common", importMode:"path", templates:[], inspection:null, spec:{version:1,model:{},robot:{slug:"",prefix:""},bindings:{base_body:"",joints:[],feet:[],base_geoms:[],leg_geoms:[]},parameters:{},tasks:{him:{terrains:["Rough"],parameters:{}}},confirmed:false},
-    importDefaults:null, plan:null, planRevision:-1, revision:0, busy:false, previewOpen:false, poseTimer:null, poseInFlight:false, posePending:false, generated:false, generatedRevision:-1, generatedTaskIds:[], job:null, jobTimer:null, currentFile:null, draftId:null, invalidFields:new Set(), templatesError:false,
+    importDefaults:null, modelXml:null, plan:null, planRevision:-1, revision:0, busy:false, previewOpen:false, poseTimer:null, poseInFlight:false, posePending:false, generated:false, generatedRevision:-1, generatedTaskIds:[], job:null, jobTimer:null, currentFile:null, draftId:null, invalidFields:new Set(), templatesError:false,
+    pd:{epoch:0,revision:-1,scope:null,report:null,running:false,method:"model",reason:"",inputSnapshot:null},
   };
 
   function merge(base, overlay) {
@@ -80,18 +81,32 @@
   function baseDefaults(scope=state.scope) { return (scope === "common" ? firstTemplate() : template(scope))?.defaults || {}; }
   function effective(scope=state.scope) { return merge(merge(baseDefaults(scope),state.spec.parameters),scope === "common" ? {} : state.spec.tasks[scope]?.parameters || {}); }
   function targetParameters() { return state.scope === "common" ? state.spec.parameters : state.spec.tasks[state.scope].parameters; }
-  function sourceBadge(path) {
-    const own=get(targetParameters(),path);
-    if (own !== undefined) {
-      const imported=state.scope === "common" ? get(state.importDefaults?.parameters,path) : undefined;
-      const modelSourced=state.scope === "common" && imported !== undefined && JSON.stringify(own)===JSON.stringify(imported) && (path.startsWith("init_state") || path.startsWith("control"));
-      const initialGuess=modelSourced&&path.startsWith("init_state")&&state.inspection?.initial_source!=="keyframe";
-      return `<em class="source-badge ${initialGuess?"template":modelSourced?"model":"manual"}">${initialGuess?"模板起点":modelSourced?"模型读取":"人工修改"}</em>`;
+  function sourceBadge(path,joint=null) {
+    const valueAt=(parameters)=>{
+      const value=get(parameters,path);
+      return joint&&value&&typeof value==="object"&&!Array.isArray(value) ? value[joint.name]??value[joint.role] : value;
+    };
+    const own=valueAt(targetParameters());
+    const inherited=state.scope!=="common"&&own===undefined;
+    const value=inherited?valueAt(state.spec.parameters):own;
+    if(value===undefined)return '<em class="source-badge template">模板默认</em>';
+    const pdApplied=state.spec.pd_analysis?.scopes?.[inherited?"common":state.scope]?.applied;
+    const pdValue=get(pdApplied?.proposal,path);
+    if(joint&&pdValue?.[joint.name]!==undefined&&value===pdValue[joint.name])return '<em class="source-badge model">PD 计算建议</em>';
+    if(state.scope==="common"||inherited){
+      const imported=valueAt(state.importDefaults?.parameters);
+      if(imported!==undefined&&JSON.stringify(value)===JSON.stringify(imported)){
+        const source=state.inspection?.parameter_sources?.[displayPath(path)];
+        const modelSourced=source==="model"||path==="control.action_clip"||(path.startsWith("init_state")&&state.inspection?.initial_source==="keyframe");
+        if(modelSourced)return '<em class="source-badge model">模型读取</em>';
+        if(path.startsWith("init_state"))return '<em class="source-badge template">模板起点</em>';
+        return '<em class="source-badge template">模板默认</em>';
+      }
     }
-    if (state.scope !== "common" && get(state.spec.parameters,path)!==undefined) return '<em class="source-badge manual">公共覆盖</em>';
-    return '<em class="source-badge template">模板默认</em>';
+    return `<em class="source-badge manual">${inherited?"公共覆盖":"人工修改"}</em>`;
   }
   function changed({pose=false}={}) {
+    invalidatePd("配置或分析输入已修改，请重新计算候选。");
     state.revision+=1;state.spec.confirmed=false;$("#confirm-review").checked=false;
     state.plan=null;state.currentFile=null;
     $("#file-review").hidden=true;$("#diff-section").hidden=true;
@@ -169,7 +184,8 @@
   }
   function updateSummary() {
     $("#summary-robot").textContent=state.spec.robot.prefix || "新机器人";
-    $("#summary-model").textContent=state.spec.model.xml?.split("/").at(-1) || "等待导入模型";
+    const sourceFile=state.spec.model.source_file||state.spec.model.xml;
+    $("#summary-model").textContent=sourceFile ? `${sourceFile.split("/").at(-1)}${state.spec.model.source_format==="urdf"?" → XML":""}` : "等待导入模型";
     $("#summary-joints").innerHTML=`${state.inspection?.joints?.length ?? "—"} <small>/ 12</small>`;
     const ids=state.plan?.task_ids || taskIds();
     $("#summary-count").textContent=Object.keys(state.spec.tasks).length ? ids.length : 0;
@@ -201,6 +217,8 @@
     $("#stop-job").hidden=!running;$("#stop-job").disabled=state.busy;
     $("#previous-step").disabled=state.step===0||state.busy;$("#next-step").hidden=state.step===5;$("#next-step").disabled=state.busy;
     $("#start-preview").disabled=state.busy||!state.inspection;
+    $$("[data-show-model-xml]").forEach((button)=>{button.disabled=state.busy;});
+    updatePdActions();
   }
   function showStep(index) {
     state.step=Math.max(0,Math.min(5,index));clearError();
@@ -209,7 +227,7 @@
     $("#step-progress").textContent=`第 ${state.step+1} 步 / 共 6 步`;
     const labels=["选择训练任务 →","确认机器人映射 →","配置与姿态预览 →","审阅生成文件 →","生成与验证 →"];
     $("#next-step").textContent=labels[state.step] || "";
-    if(state.step===3) {renderConfigTabs();renderParameters();renderJointControls();}
+    if(state.step===3) {renderConfigTabs();renderParameters();renderJointControls();renderPd();}
     updateActions();
     if(state.step===4 && state.inspection && !state.plan && localIssues(3).length===0) buildPlan();
     $("#main-content").scrollIntoView({behavior:"smooth",block:"start"});
@@ -221,9 +239,36 @@
   }
   function renderImport() {
     if(!state.inspection) {$("#import-result").hidden=true;return;}
-    const inspection=state.inspection;
+    const inspection=state.inspection;const model=state.spec.model;
+    const converted=model.source_format==="urdf";
     $("#import-result").hidden=false;
-    $("#import-result").innerHTML=`<div class="card"><div class="card-top"><div><h3>模型已解析</h3><p>继续确认动作映射与新任务的机器人标识。</p></div><span class="tag">${inspection.joints?.length===12?"12 关节已识别":"需要检查关节数"}</span></div><div class="import-stats">${[[inspection.joints?.length,"驱动关节"],[inspection.bodies?.length,"机体 body"],[inspection.geoms?.length,"几何 geom"],[inspection.sites?.length,"定位 site"]].map(([value,label])=>`<div class="import-stat"><strong>${value??0}</strong><span>${label}</span></div>`).join("")}</div><div class="import-path">${esc(state.spec.model.root)} / ${esc(state.spec.model.xml)}</div>${inspection.files?.length?`<details class="subsection"><summary>模型与资源依赖 <span>${inspection.files.length} files</span></summary><ul class="dependency-list">${inspection.files.map((file)=>`<li>${esc(typeof file==="string"?file:file.path||file.name||JSON.stringify(file))}</li>`).join("")}</ul></details>`:""}</div>${renderIssues(inspection.issues||[])}`;
+    $("#import-result").innerHTML=`<div class="card"><div class="card-top"><div><h3>${converted?"URDF 已转换并解析":"模型已解析"}</h3><p>继续确认动作映射与新任务的机器人标识。</p></div><span class="tag">${converted?"URDF → MJCF XML":"MJCF XML"} · ${inspection.joints?.length===12?"12 关节已识别":"需要检查关节数"}</span></div><div class="import-stats">${[[inspection.joints?.length,"驱动关节"],[inspection.bodies?.length,"机体 body"],[inspection.geoms?.length,"几何 geom"],[inspection.sites?.length,"定位 site"]].map(([value,label])=>`<div class="import-stat"><strong>${value??0}</strong><span>${label}</span></div>`).join("")}</div><div class="import-path">${esc(model.root)} / ${esc(model.xml)}</div>${inspection.files?.length?`<details class="subsection"><summary>模型与资源依赖 <span>${inspection.files.length} files</span></summary><ul class="dependency-list">${inspection.files.map((file)=>`<li>${esc(typeof file==="string"?file:file.path||file.name||JSON.stringify(file))}</li>`).join("")}</ul></details>`:""}</div>${converted?renderConversion():""}${renderIssues(inspection.issues||[])}`;
+  }
+  function reportItems(value) {
+    if(value===undefined||value===null)return "";
+    const items=Array.isArray(value)?value:[value];
+    return items.map((item)=>`<li>${esc(typeof item==="string"?item:issueText(item))}</li>`).join("");
+  }
+  function renderConversion() {
+    const model=state.spec.model;const report=model.conversion||state.inspection?.conversion||{};
+    const source=model.source_file||report.source_file||"见转换报告";
+    const siteSourceLabels={named_imu_link:"按具名 IMU link 放置",base_origin_candidate:"基座原点候选，待确认",named_foot_link_candidate:"按具名足端 link 放置，待确认"};
+    const generated=report.generated||report.generated_items||report.additions||report.generated_sites?.map((site)=>`site ${site.name} → ${site.body}，局部位置 [${site.position?.join(", ")||""}] m（${siteSourceLabels[site.source]||site.source||"待确认"}）`);
+    const preserved=report.preserved||report.sources||report.source_properties;
+    const summary=report.summary;
+    const warnings=report.warnings||[];
+    return `<div class="card conversion-card"><div class="card-top"><div><h3>URDF 转换报告</h3><p>XML 按 Go2 / RI-4438 的结构分组，可在生成任务前检查完整代码。</p></div><span class="tag">原文件保留</span></div><dl class="conversion-paths"><div><dt>输入 URDF</dt><dd>${esc(source)}</dd></div><div><dt>生成 MJCF</dt><dd>${esc(report.xml||model.xml)}</dd></div></dl>${summary?`<ul class="conversion-list">${reportItems(summary)}</ul>`:""}${preserved?`<h4>模型来源与保留内容</h4><ul class="conversion-list">${reportItems(preserved)}</ul>`:""}${generated?`<h4>转换时补充的内容</h4><ul class="conversion-list">${reportItems(generated)}</ul>`:""}${renderIssues(warnings)}<p class="field-note">URDF 的惯量、关节限位等仅按转换报告注明的来源使用；PD、执行器延迟和初始站姿仍需人工确认。转换结果不代表这些实机参数已标定。</p><details class="subsection"><summary>完整转换记录 <span>CONVERSION REPORT</span></summary><pre class="json-pre">${esc(JSON.stringify(report,null,2))}</pre></details><div class="inline-actions"><span class="muted tiny">转换 XML 与原 URDF 均会随模型保留</span><button type="button" class="button secondary small" data-show-model-xml>查看转换后的 XML 源码</button></div><div id="model-xml-review" class="model-xml-review" ${state.modelXml?"":"hidden"}><div class="code-heading"><span id="model-xml-path">${esc(state.modelXml?.path||model.xml)}</span><button type="button" class="button quiet small" data-copy-model-xml>复制 XML</button></div><pre id="model-xml-content" tabindex="0">${esc(state.modelXml?.xml||"")}</pre></div></div>`;
+  }
+  async function showModelXml() {
+    await busy("正在读取转换后的 MJCF XML…",async()=>{
+      if(!state.modelXml) {
+        const result=await api("/api/model-xml",{method:"POST",body:{model:state.spec.model}});
+        if(typeof result.xml!=="string")throw Error("未返回可查看的 XML 源码");
+        state.modelXml={xml:result.xml,path:result.path||state.spec.model.xml};
+      }
+      $("#model-xml-content").textContent=state.modelXml.xml;$("#model-xml-path").textContent=state.modelXml.path;
+      $("#model-xml-review").hidden=false;$("#model-xml-review").scrollIntoView({behavior:"smooth",block:"nearest"});
+    });
   }
   function defaultTask(key) { return {terrains:["Rough"],parameters:{}}; }
   function presetMarkup(item) {
@@ -304,13 +349,127 @@
       if(!joint.name)return `<tr><td colspan="5" class="muted">${joint.leg} ${joint.role} 尚未绑定模型关节</td></tr>`;
       const range=jointRange(joint);const initial=jointInitial(parameters,joint);
       const clips=get(parameters,"control.action_clip");const clip=Array.isArray(clips?.[joint.name])?clips[joint.name]:[-10,10];
-      return `<tr><td><div class="joint-label">${esc(joint.name)} <span class="source-badge model">模型读取</span></div><small class="muted tiny">初始角度 · ${state.inspection?.initial_source==="keyframe"?"模型 keyframe 起点":"模板推测起点，请检查"}</small><div class="pose-control"><input type="range" min="${range[0]}" max="${range[1]}" step="0.001" value="${initial}" data-pose-slider="${index}" aria-label="${esc(joint.name)} 初始角度滑块"><input type="number" step="0.001" value="${initial}" min="${range[0]}" max="${range[1]}" data-joint-control="initial" data-joint="${index}" aria-label="${esc(joint.name)} 初始角度"></div><details class="control-advanced"><summary>执行器与动作缩放</summary><div class="mini-control-fields">${[["armature","惯量 kg·m²",0.008234],["friction","摩擦 N·m",0.01],["passive_damping","被动阻尼",0],["action_scale","缩放 rad",0.5]].map(([key,label,fallback])=>`<label>${label} ${get(parameters,`control.${key}`)==null?"· 模型读取，编辑后覆盖":"· 配置值"}<input type="number" step="any" min="0" value="${jointValue(parameters,key,joint,fallback)??""}" placeholder="继承 XML" data-joint-control="${key}" data-joint="${index}" aria-label="${esc(joint.name)} ${label}"></label>`).join("")}</div></details></td>${[["stiffness",32.5065],["damping",2.0694],["effort_limit",10]].map(([key,fallback])=>`<td><input type="number" step="any" min="0" value="${jointValue(parameters,key,joint,fallback)??""}" placeholder="继承 XML" data-joint-control="${key}" data-joint="${index}" aria-label="${esc(joint.name)} ${key}"></td>`).join("")}<td><div class="clip-inputs"><input type="number" step="any" value="${clip[0]}" data-joint-control="clip_min" data-joint="${index}" aria-label="${esc(joint.name)} 动作下限"><input type="number" step="any" value="${clip[1]}" data-joint-control="clip_max" data-joint="${index}" aria-label="${esc(joint.name)} 动作上限"></div><small class="muted tiny">模型限位起点</small></td></tr>`;
+      return `<tr><td><div class="joint-label">${esc(joint.name)} <span class="source-badge model">模型读取</span></div><small class="muted tiny">初始角度 · ${state.inspection?.initial_source==="keyframe"?"模型 keyframe 起点":"模板推测起点，请检查"}</small><div class="pose-control"><input type="range" min="${range[0]}" max="${range[1]}" step="0.001" value="${initial}" data-pose-slider="${index}" aria-label="${esc(joint.name)} 初始角度滑块"><input type="number" step="0.001" value="${initial}" min="${range[0]}" max="${range[1]}" data-joint-control="initial" data-joint="${index}" aria-label="${esc(joint.name)} 初始角度"></div><details class="control-advanced"><summary>执行器与动作缩放</summary><div class="mini-control-fields">${[["armature","惯量 kg·m²",0.008234],["friction","摩擦 N·m",0.01],["passive_damping","被动阻尼",0],["action_scale","缩放 rad",0.5]].map(([key,label,fallback])=>`<label>${label} ${get(parameters,`control.${key}`)==null?"· 模型读取，编辑后覆盖":"· 配置值"}<input type="number" step="any" min="0" value="${jointValue(parameters,key,joint,fallback)??""}" placeholder="继承 XML" data-joint-control="${key}" data-joint="${index}" aria-label="${esc(joint.name)} ${label}"></label>`).join("")}</div></details></td>${[["stiffness",32.5065],["damping",2.0694],["effort_limit",10]].map(([key,fallback])=>`<td><input type="number" step="any" min="0" value="${jointValue(parameters,key,joint,fallback)??""}" placeholder="继承 XML" data-joint-control="${key}" data-joint="${index}" aria-label="${esc(joint.name)} ${key}"><small class="joint-source" data-control-source>${sourceBadge(`control.${key}`,joint)}</small></td>`).join("")}<td><div class="clip-inputs"><input type="number" step="any" value="${clip[0]}" data-joint-control="clip_min" data-joint="${index}" aria-label="${esc(joint.name)} 动作下限"><input type="number" step="any" value="${clip[1]}" data-joint-control="clip_max" data-joint="${index}" aria-label="${esc(joint.name)} 动作上限"></div><small class="muted tiny">模型限位起点</small></td></tr>`;
     }).join("");
   }
   function renderConfigTabs() {
     if(state.scope!=="common"&&!state.spec.tasks[state.scope])state.scope="common";
     $("#config-tabs").innerHTML=[{key:"common",label:"公共配置"},...Object.keys(state.spec.tasks).map((key)=>({key,label:taskMeta[key]?.label||key}))].map((item)=>`<button role="tab" aria-selected="${item.key===state.scope}" data-config-scope="${item.key}" class="${item.key===state.scope?"active":""}">${esc(item.label)}</button>`).join("");
     $("#config-scope-note").textContent=state.scope==="common"?"公共修改将应用于全部所选任务。未修改的字段使用各任务原有默认值。3D 预览随当前配置页切换。":`${taskMeta[state.scope]?.label || state.scope} 的专属覆盖；未修改的字段继承公共配置与本模板默认值。`;
+  }
+  const pdDefaults={frequency_hz:5,damping_ratio:1,pose_delta_rad:0.15,action_amplitude:1,gain_grouping:"auto",joints:{}};
+  const pdMethods={model:"完整模型锁定惯量",armature:"电机惯量基线"};
+  function pdScopeEntry(create=false) {
+    if(create){state.spec.pd_analysis ||= {version:1,scopes:{}};state.spec.pd_analysis.scopes ||= {};state.spec.pd_analysis.scopes[state.scope] ||= {};}
+    return state.spec.pd_analysis?.scopes?.[state.scope];
+  }
+  function pdOptions() {return merge(pdDefaults,pdScopeEntry()?.options||{});}
+  function pdFresh() {return !!state.pd.report && state.pd.report===pdScopeEntry()?.report && state.pd.scope===state.scope && state.pd.revision===state.revision;}
+  function invalidatePd(reason) {
+    state.pd.epoch+=1;state.pd.revision=-1;state.pd.reason=reason;
+    for(const entry of Object.values(state.spec.pd_analysis?.scopes||{})){if(entry.report)entry.report_status="needs_recompute";}
+    renderPdResults();
+  }
+  function pdNumber(value,digits=4) {
+    if(typeof value!=="number"||!Number.isFinite(value))return "未提供";
+    if(value!==0&&Math.abs(value)<0.001)return value.toExponential(3);
+    return Number(value.toFixed(digits)).toString();
+  }
+  function pdRatio(value) {return typeof value==="number"&&Number.isFinite(value)?`${pdNumber(value*100,1)}%`:"未提供";}
+  function pdRange(value) {return Array.isArray(value)?value.map((v)=>pdNumber(v,2)).join("–"):"未提供";}
+  function pdScopeLabel() {return state.scope==="common"?"公共配置":taskMeta[state.scope]?.label||state.scope;}
+  function renderPd() {
+    const options=pdOptions();
+    $("#pd-scope").textContent=`作用范围：${pdScopeLabel()}。${state.scope==="common"?"候选以首个所选模板的公共有效参数计算；应用后各任务仍保留自己的专属覆盖。":"计算与应用均使用当前任务的有效配置。"}`;
+    const fields=[
+      ["frequency_hz","设计自然频率","Hz",0.1,false,"决定期望响应速度"],
+      ["damping_ratio","设计阻尼比 ζ","",0.05,false,"1 为临界阻尼的理想二阶近似"],
+      ["pose_delta_rad","采样姿态扰动","rad",0,false,"从初始姿态按关节类型取 ± 扰动"],
+      ["action_amplitude","预算动作幅值 ±a","",0,false,"检查给定动作幅值下的比例项力矩"],
+      ["hardware_pd_hz","实机内部 PD 频率","Hz",1,true,"不是策略推理或命令发送频率"],
+      ["hardware_delay_ms","实机控制链延迟","ms",0,true,"未知时留空，不从仿真时序推断"],
+    ];
+    const maxima={frequency_hz:100,damping_ratio:10,pose_delta_rad:Math.PI,action_amplitude:1000,hardware_pd_hz:100000,hardware_delay_ms:1000};
+    $("#pd-options").innerHTML=fields.map(([key,label,unit,min,optional,note])=>`<label class="field"><span>${label}${unit?`<em>${unit}</em>`:""}</span><input type="number" step="any" min="${min}" max="${maxima[key]}" value="${esc(options[key]??"")}" data-pd-option="${key}" aria-label="${label}" ${optional?'placeholder="未提供"':"required"}><small>${note}</small></label>`).join("")+`<label class="field full"><span>增益分组</span><select data-pd-grouping aria-label="PD 增益分组">${[["auto","自动（对称任务左右共用）"],["individual","逐关节"],["mirror_pairs","左右成对共用"]].map(([key,label])=>`<option value="${key}" ${options.gain_grouping===key?"selected":""}>${label}</option>`).join("")}</select><small>对称任务要求左右增益相同。成对设计使用配对的最大惯量与阻尼需求，并保留各关节真实惯量范围。</small></label>`;
+    $("#pd-hardware").innerHTML=state.spec.bindings.joints.filter((joint)=>joint.name).map((joint)=>`<tr><td><span class="joint-label">${esc(joint.name)}<small>${joint.leg} · ${joint.role}</small></span></td>${[["rotor_inertia","转子惯量"],["gear_ratio","减速比"],["continuous_torque","连续力矩"],["velocity_limit","速度上限"]].map(([key,label])=>`<td><input type="number" step="any" min="${key==="rotor_inertia"?0:0.000000000001}" max="${{rotor_inertia:100,gear_ratio:10000,continuous_torque:1000000,velocity_limit:100000}[key]}" placeholder="未提供" value="${esc(options.joints?.[joint.name]?.[key]??"")}" data-pd-joint="${esc(joint.name)}" data-pd-hardware="${key}" aria-label="${esc(joint.name)} ${label}"></td>`).join("")}</tr>`).join("")||'<tr><td colspan="5" class="muted">导入模型并确认关节映射后填写。</td></tr>';
+    state.invalidFields.forEach((key)=>{if(key.startsWith(`pd:${state.scope}:`))state.invalidFields.delete(key);});
+    renderPdResults();updatePdActions();
+  }
+  function pdCandidateCell(candidate) {
+    if(!candidate||candidate.available===false)return '<span class="muted">不可用</span>';
+    return `<strong>${pdNumber(candidate.kp)} / ${pdNumber(candidate.kd)}</strong><small>比例力矩 ${pdNumber(candidate.peak_proportional_torque,3)} N·m<br>限矩占比 <span class="${candidate.effort_ratio>1?"pd-over-budget":""}">${pdRatio(candidate.effort_ratio)}</span></small>`;
+  }
+  function renderPdResults() {
+    const entry=pdScopeEntry();const report=entry?.report;const node=$("#pd-results");
+    if(!node)return;
+    node.hidden=!report;
+    const fresh=pdFresh();
+    $("#pd-status").textContent=state.pd.running?"正在从模型计算惯量与力矩预算…":report?(fresh?"候选已计算。请比较结果，再选择方法并审阅应用值。":state.pd.reason||"草稿中的历史报告仅供查阅，请重新计算后应用。"):"导入模型并确认映射后，即可计算候选。";
+    if(!report){node.replaceChildren();return;}
+    const method=state.pd.method;const proposal=report.proposals?.[method];const control=proposal?.control;const timing=report.timing||{};
+    const joints=report.joints||[];const parameters=effective();
+    const current=(joint,key)=>jointValue(parameters,key,joint,null);
+    const warnings=report.warnings||[];
+    node.innerHTML=`${fresh?"":'<div class="notice warning pd-stale">历史计算结果 · 当前配置、作用范围或会话已变化，重新计算前不能应用。</div>'}<div class="pd-summary-grid"><div><span>采样姿态</span><strong>${report.samples?.length??"—"} 组</strong><small>锁定基座与其他关节 · 无接触</small></div><div><span>仿真 / 策略频率</span><strong>${pdNumber(timing.physics_hz,1)} / ${pdNumber(timing.policy_hz,1)} Hz</strong><small>实机 PD：${timing.hardware_pd_hz==null?"未提供":`${pdNumber(timing.hardware_pd_hz,1)} Hz`}</small></div><div><span>设计自然频率 / 阻尼比</span><strong>${pdNumber(report.settings?.frequency_hz,2)} Hz / ${pdNumber(report.settings?.damping_ratio,2)}</strong><small>实机延迟：${timing.hardware_delay_ms==null?"未提供":`${pdNumber(timing.hardware_delay_ms,2)} ms`}</small></div></div><div class="pd-section-heading"><div><h4>两种方法，与当前增益比较</h4><p>KP / KD 单位为 N·m/rad / N·m·s/rad。力矩为初始姿态、零速度下的比例项预算。</p></div><button id="pd-download" class="button secondary small">下载报告 JSON ↓</button></div><div class="table-scroll pd-result-scroll"><table class="data-table pd-comparison-table"><thead><tr><th>关节</th><th>完整模型惯量 kg·m²<br>最小 / 初始 / 最大</th><th>当前 KP / KD</th><th>完整模型 KP / KD</th><th>电机惯量 KP / KD</th></tr></thead><tbody>${joints.map((joint)=>`<tr><td><span class="joint-label">${esc(joint.name)}<small>${esc(joint.leg)} · ${esc(joint.role)}</small></span><small>armature ${pdNumber(joint.armature)}<br>${esc(joint.armature_source||"来源见报告")}</small></td><td>${[joint.inertia?.min,joint.inertia?.nominal,joint.inertia?.max].map((value)=>pdNumber(value)).join(" / ")}<small>有效缩放 ${pdNumber(joint.action_scale)} rad<br>已含 hip 系数</small></td><td>${pdCandidateCell(joint.current)}</td><td>${pdCandidateCell(joint.candidates?.model)}</td><td>${pdCandidateCell(joint.candidates?.armature)}</td></tr>`).join("")}</tbody></table></div><div class="pd-warning-block">${warnings.length?`<details class="subsection" open><summary>分析提示 <span>${warnings.length} 项</span></summary><ul>${warnings.map((warning)=>`<li>${warning.joint?`<strong>${esc(warning.joint)}</strong> · `:""}${warning.method?`${esc(pdMethods[warning.method]||warning.method)} · `:""}${esc(issueText(warning))}</li>`).join("")}</ul></details>`:""}</div><div class="pd-apply-panel"><div class="pd-section-heading"><div><h4>选择候选，审阅应用前后</h4><p>写入 ${esc(pdScopeLabel())} 的 KP、KD 和本次计算所用 armature。${fresh?"":"下表保留历史候选，应用已禁用。"}</p></div><label class="pd-method-select">候选方法<select id="pd-method" aria-label="PD 候选方法">${Object.entries(pdMethods).map(([key,label])=>`<option value="${key}" ${key===method?"selected":""} ${report.proposals?.[key]?"":"disabled"}>${label}${report.proposals?.[key]?"":"（不可用）"}</option>`).join("")}</select></label></div><div class="table-scroll pd-result-scroll"><table class="data-table pd-review-table"><thead><tr><th>关节</th><th>KP<br>现值 → 候选</th><th>KD<br>现值 → 候选</th><th>armature kg·m²<br>现值 → 计算值</th><th>限矩 / 连续力矩占比</th><th>估计自然频率 / 阻尼比范围</th></tr></thead><tbody>${joints.map((joint)=>{const candidate=joint.candidates?.[method];return `<tr><td>${esc(joint.name)}</td><td>${pdNumber(current(joint,"stiffness"))} → <strong>${pdNumber(control?.stiffness?.[joint.name])}</strong></td><td>${pdNumber(current(joint,"damping"))} → <strong>${pdNumber(control?.damping?.[joint.name])}</strong></td><td>${pdNumber(current(joint,"armature"))} → <strong>${pdNumber(control?.armature?.[joint.name])}</strong></td><td><span class="${candidate?.effort_ratio>1?"pd-over-budget":""}">${pdRatio(candidate?.effort_ratio)}</span> / ${pdRatio(candidate?.continuous_ratio)}</td><td>${pdRange(candidate?.frequency_hz_range)} Hz<small>ζ ${pdRange(candidate?.damping_ratio_range)}</small></td></tr>`;}).join("")}</tbody></table></div><p class="field-note">限矩占比只比较静止时的比例项，不含重力、阻尼力矩或速度相关限矩；超过 100% 表示该探针会请求饱和。应用后请用现有姿态预览和有限仿真继续验证。</p><div class="inline-actions"><span class="muted tiny">${entry.applied?`最近应用：${esc(pdMethods[entry.applied.method]||entry.applied.method)} · ${esc(entry.applied.applied_at||"")}`:"动作缩放、动作裁剪、限矩与初始站姿按当前配置继续使用。"}</span><button id="pd-apply" class="button primary" ${fresh&&proposal?"":"disabled"}>应用到${esc(pdScopeLabel())}</button></div></div><details class="subsection"><summary>本次输入、方法说明与参考来源 <span>REPORT DETAILS</span></summary>${(report.method_notes||[]).map((note)=>`<p class="field-note">${esc(issueText(note))}</p>`).join("")}<ul class="pd-references">${(report.references||[]).filter((ref)=>/^https?:\/\//i.test(ref.url||"")).map((ref)=>`<li><a href="${esc(ref.url)}" target="_blank" rel="noopener noreferrer">${esc(ref.title||ref.url)}</a></li>`).join("")}</ul><pre class="json-pre">${esc(JSON.stringify({settings:report.settings,timing:report.timing,samples:report.samples},null,2))}</pre></details>`;
+    updatePdActions();
+  }
+  function updatePdActions() {
+    const button=$("#pd-analyze");if(!button)return;
+    button.disabled=state.busy||state.pd.running||!state.inspection||state.invalidFields.size>0;
+    button.textContent=state.pd.running?"计算中…":"计算 PD 候选 ↗";
+    const apply=$("#pd-apply");if(apply)apply.disabled=state.busy||state.pd.running||state.invalidFields.size>0||!pdFresh()||!pdScopeEntry()?.report?.proposals?.[state.pd.method];
+  }
+  function editPdInput(input) {
+    const option=input.dataset.pdOption;const name=input.dataset.pdJoint;const key=option||input.dataset.pdHardware;if(!key)return;
+    const invalidKey=`pd:${state.scope}:${name||"global"}:${key}`;
+    input.setCustomValidity("");
+    const options=pdOptions();const optional=!!name||["hardware_pd_hz","hardware_delay_ms"].includes(key);
+    const empty=input.value.trim()==="";
+    if((empty&&!optional)||(!empty&&(!Number.isFinite(Number(input.value))||!input.checkValidity()))){
+      input.setCustomValidity("请填写符合范围的有限数值");input.classList.add("pd-invalid");state.invalidFields.add(invalidKey);invalidatePd("分析输入尚未填写完整，请修正后重新计算。");updateActions();return;
+    }
+    state.invalidFields.delete(invalidKey);input.classList.remove("pd-invalid");
+    const target=name?(options.joints[name] ||= {}):options;
+    if(empty)delete target[key];else target[key]=Number(input.value);
+    pdScopeEntry(true).options=options;changed();
+  }
+  async function analyzePd() {
+    const issues=localIssues(3);if(issues.length){displayError(new Error(issues.join("\n")));return;}
+    const options=pdOptions();
+    for(const [name,hardware] of Object.entries(options.joints)){
+      if((hardware.rotor_inertia!=null)!==(hardware.gear_ratio!=null)){displayError(new Error(`${name} 的转子惯量与减速比必须成对填写，或同时留空`));return;}
+    }
+    pdScopeEntry(true).options=clone(options);changed();invalidatePd("重新计算中，之前的候选暂不可应用。");
+    const revision=state.revision,epoch=state.pd.epoch,scope=state.scope;const inputSnapshot={model:clone(state.spec.model),bindings:clone(state.spec.bindings),parameters:effective(),options:clone(options)};
+    state.pd.running=true;clearError();renderPdResults();updateActions();
+    try{
+      const report=await api("/api/pd/analyze",{method:"POST",body:{spec:state.spec,scope,options}});
+      if(revision!==state.revision||epoch!==state.pd.epoch||scope!==state.scope){toast("计算期间配置或作用范围已变化，返回结果已丢弃；请重新计算。");return;}
+      if(!Array.isArray(report.joints)||!report.proposals?.model)throw Error("PD 分析未返回完整候选与应用参数");
+      const entry=pdScopeEntry(true);entry.report=report;entry.report_created_at=new Date().toISOString();entry.report_status="computed_in_session";
+      state.pd.report=report;state.pd.revision=revision;state.pd.scope=scope;state.pd.reason="";state.pd.inputSnapshot=inputSnapshot;
+      if(!report.proposals[state.pd.method])state.pd.method="model";
+      // Analysis metadata changes the generated manifest, so an older file review is invalid.
+      state.plan=null;state.spec.confirmed=false;$("#confirm-review").checked=false;$("#file-review").hidden=true;$("#diff-section").hidden=true;$("#plan-issues").replaceChildren();$("#plan-summary").textContent="分析报告已更新，请重新生成文件预览";
+      toast("PD 候选已就绪，请查看惯量、力矩预算与应用前后值","success");
+    }catch(error){displayError(error);}
+    finally{state.pd.running=false;renderPdResults();updateSummary();updateActions();}
+  }
+  function applyPd() {
+    if(!pdFresh()||state.pd.running||state.invalidFields.size){toast("请根据当前有效输入重新计算候选后应用","error");return;}
+    const entry=pdScopeEntry();const method=state.pd.method;const proposal=entry.report.proposals?.[method];if(!proposal?.control)return;
+    const before=Object.fromEntries(state.spec.bindings.joints.map((joint)=>[joint.name,{kp:jointValue(effective(),"stiffness",joint),kd:jointValue(effective(),"damping",joint),armature:jointValue(effective(),"armature",joint)}]));
+    const target=targetParameters();target.control ||= {};
+    for(const key of ["stiffness","damping","armature"])target.control[key]=clone(proposal.control[key]);
+    entry.applied={method,applied_at:new Date().toISOString(),scope:state.scope,options:clone(entry.options),input_snapshot:clone(state.pd.inputSnapshot),before,proposal:clone(proposal),report:clone(entry.report),hardware_calibrated:false};
+    changed();renderJointControls();renderParameters();state.pd.reason="候选已应用到当前配置；报告保留应用依据，继续分析前请重新计算。";renderPdResults();
+    toast(`已将 ${pdMethods[method]} 的 KP、KD 与 armature 应用到${pdScopeLabel()}`,"success");
+  }
+  function downloadPd() {
+    const entry=pdScopeEntry();if(!entry?.report)return;
+    const payload={version:1,scope:state.scope,robot:clone(state.spec.robot),model:clone(state.spec.model),options:clone(entry.options||{}),report_status:pdFresh()?"computed_in_session":"needs_recompute",report_created_at:entry.report_created_at,report:entry.report,applied:entry.applied||null,hardware_calibrated:false};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json;charset=utf-8"}));
+    const link=document.createElement("a");link.href=url;link.download=`${state.spec.robot.slug||"robot"}_pd_${state.scope}.json`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function fieldMetadata(path) {
     const fields=(state.scope==="common"?firstTemplate():template(state.scope))?.fields;
@@ -543,7 +702,7 @@
       const imported=await api("/api/import",{method:"POST",body:{root:spec.model.root,xml:spec.model.xml}});
       const importedId=imported.model?.id||imported.spec?.model?.id;
       state.spec=clone(spec);state.spec.model={...state.spec.model,...imported.model,id:importedId||state.spec.model.id};
-      state.inspection=imported.inspection;state.importDefaults=clone(imported.spec||state.spec);state.draftId=id;
+      state.inspection=imported.inspection;state.importDefaults=clone(imported.spec||state.spec);state.draftId=id;state.modelXml=null;
       state.spec.version ||= 1;state.spec.parameters ||= {};state.spec.tasks ||= {};state.spec.confirmed=false;
       resetGeneration();state.previewOpen=false;state.invalidFields.clear();resetPreview();changed();renderAll();showStep(2);toast("已恢复草稿，请重新审阅生成结果","success");
     });
@@ -562,7 +721,7 @@
     await busy("正在解析机器人模型与资源…",async()=>{
       let body;
       if(state.importMode==="zip") {
-        const file=$("#model-zip").files[0];if(!file)throw Error("请选择包含 XML 和资源的 ZIP 文件");
+        const file=$("#model-zip").files[0];if(!file)throw Error("请选择包含 XML / URDF 和资源的 ZIP 文件");
         body=new FormData();body.append("file",file);if($("#zip-xml").value.trim())body.append("xml",$("#zip-xml").value.trim());
       }else{
         const root=$("#model-root").value.trim();if(!root)throw Error("请填写模型目录");
@@ -573,37 +732,41 @@
       state.spec=result.spec;state.spec.model={...state.spec.model,...result.model};state.spec.parameters ||= {};state.spec.tasks ||= {him:defaultTask("him")};
       if(!Object.keys(state.spec.tasks).length)state.spec.tasks={him:defaultTask("him")};
       state.spec.robot ||= {slug:"",prefix:""};state.spec.bindings ||= {joints:[],feet:[]};
-      state.inspection=result.inspection;state.importDefaults=clone(state.spec);state.draftId=null;state.previewOpen=false;state.invalidFields.clear();resetGeneration();resetPreview();changed();renderAll();
+      state.inspection=result.inspection;state.importDefaults=clone(state.spec);state.draftId=null;state.modelXml=null;state.previewOpen=false;state.invalidFields.clear();resetGeneration();resetPreview();changed();renderAll();
       $("#import-result").scrollIntoView({behavior:"smooth",block:"nearest"});
-      toast("模型已解析，请继续选择训练任务","success");
+      toast(state.spec.model.source_format==="urdf"?"URDF 已转为 XML，请先检查转换报告":"模型已解析，请继续选择训练任务","success");
     });
   }
   async function copyText(text) {
     try {await navigator.clipboard.writeText(text);toast("已复制到剪贴板","success");}
     catch(_error){const area=document.createElement("textarea");area.value=text;area.style.position="fixed";area.style.opacity="0";document.body.append(area);area.select();const ok=document.execCommand("copy");area.remove();toast(ok?"已复制到剪贴板":"浏览器暂不允许复制，请手动选择文本",ok?"success":"");}
   }
-  function renderAll() {renderImport();renderTasks();renderBindings();renderConfigTabs();renderParameters();renderJointControls();updateSummary();updateActions();}
+  function renderAll() {renderImport();renderTasks();renderBindings();renderConfigTabs();renderParameters();renderJointControls();renderPd();updateSummary();updateActions();}
 
   // Event delegation keeps dynamically generated forms tied to MigrationSpec.
   $("#step-nav").addEventListener("click",(event)=>{const button=event.target.closest("[data-step]");if(button&&!state.busy)showStep(Number(button.dataset.step));});
   $("#previous-step").addEventListener("click",()=>showStep(state.step-1));
   $("#next-step").addEventListener("click",()=>{const issues=localIssues(Math.min(state.step,3));if(issues.length){displayError(new Error(issues.join("\n")));return;}if(state.step===4&&(!state.plan||!state.spec.confirmed)){displayError(new Error("请审阅文件并勾选确认后继续"));return;}showStep(state.step+1);});
   $("#import-form").addEventListener("submit",importModel);
+  $("#import-result").addEventListener("click",(event)=>{
+    if(event.target.closest("[data-show-model-xml]"))showModelXml();
+    if(event.target.closest("[data-copy-model-xml]")&&state.modelXml)copyText(state.modelXml.xml);
+  });
   function switchImport(mode) {state.importMode=mode;$("#path-fields").hidden=mode!=="path";$("#zip-fields").hidden=mode!=="zip";$("#model-root").required=mode==="path";["path","zip"].forEach((key)=>{$(`#${key}-tab`).classList.toggle("active",key===mode);$(`#${key}-tab`).setAttribute("aria-selected",key===mode);});}
   $("#path-tab").addEventListener("click",()=>switchImport("path"));$("#zip-tab").addEventListener("click",()=>switchImport("zip"));
-  $("#model-zip").addEventListener("change",()=>{$("#zip-name").textContent=$("#model-zip").files[0]?.name||"保留 XML 与 assets 的相对目录结构";});
+  $("#model-zip").addEventListener("change",()=>{$("#zip-name").textContent=$("#model-zip").files[0]?.name||"保留 XML / URDF 与 assets 的相对目录结构";});
   ["dragenter","dragover"].forEach((type)=>$("#upload-zone").addEventListener(type,(event)=>{event.preventDefault();$("#upload-zone").classList.add("dragover");}));
   ["dragleave","drop"].forEach((type)=>$("#upload-zone").addEventListener(type,(event)=>{event.preventDefault();$("#upload-zone").classList.remove("dragover");if(type==="drop"&&event.dataTransfer.files.length){const file=event.dataTransfer.files[0];if(!file.name.toLowerCase().endsWith(".zip")){toast("请选择 .zip 模型资源包","error");return;}$("#model-zip").files=event.dataTransfer.files;$("#zip-name").textContent=file.name;}}));
   $("#task-cards").addEventListener("change",(event)=>{
     const input=event.target;
-    if(input.dataset.toggleTask){const key=input.dataset.toggleTask;if(input.checked)state.spec.tasks[key]=defaultTask(key);else delete state.spec.tasks[key];changed();renderTasks();renderConfigTabs();renderParameters();renderJointControls();}
+    if(input.dataset.toggleTask){const key=input.dataset.toggleTask;if(input.checked)state.spec.tasks[key]=defaultTask(key);else delete state.spec.tasks[key];changed();renderTasks();renderConfigTabs();renderParameters();renderJointControls();renderPd();}
     if(input.dataset.terrain){const task=state.spec.tasks[input.dataset.task];if(!task)return;task.terrains=["Flat","Rough"].filter((terrain)=>terrain===input.dataset.terrain?input.checked:task.terrains.includes(terrain));changed();}
   });
   ["prefix","slug"].forEach((key)=>$(`#robot-${key}`).addEventListener("input",(event)=>{state.spec.robot[key]=event.target.value.trim();changed();}));
   $("#base-body").addEventListener("change",(event)=>{state.spec.bindings.base_body=event.target.value;changed();});
   $("#joint-mapping").addEventListener("change",(event)=>{
     const input=event.target;
-    if(input.dataset.jointMap!==undefined){const joint=state.spec.bindings.joints[Number(input.dataset.jointMap)];joint.name=input.value;changed();renderBindings();renderJointControls();}
+    if(input.dataset.jointMap!==undefined){const joint=state.spec.bindings.joints[Number(input.dataset.jointMap)];joint.name=input.value;changed();renderBindings();renderJointControls();renderPd();}
     if(input.dataset.jointSign!==undefined){state.spec.bindings.joints[Number(input.dataset.jointSign)].sign=Number(input.value);changed();}
   });
   $("#feet-mapping").addEventListener("change",(event)=>{
@@ -620,7 +783,13 @@
     }
   });
   ["base","leg"].forEach((kind)=>$(`#${kind}-geoms`).addEventListener("change",(event)=>{state.spec.bindings[`${kind}_geoms`]=Array.from(event.target.selectedOptions).map((option)=>option.value);changed();}));
-  $("#config-tabs").addEventListener("click",(event)=>{const button=event.target.closest("[data-config-scope]");if(button){state.scope=button.dataset.configScope;renderConfigTabs();renderParameters();renderJointControls();if(state.previewOpen)schedulePose();}});
+  $("#config-tabs").addEventListener("click",(event)=>{const button=event.target.closest("[data-config-scope]");if(button&&button.dataset.configScope!==state.scope){state.scope=button.dataset.configScope;invalidatePd("配置作用范围已切换，请重新计算后应用。");renderConfigTabs();renderParameters();renderJointControls();renderPd();if(state.previewOpen)schedulePose();}});
+  $("#pd-design").addEventListener("input",(event)=>{if(event.target.dataset.pdOption||event.target.dataset.pdHardware)editPdInput(event.target);});
+  $("#pd-design").addEventListener("click",(event)=>{if(event.target.closest("#pd-download"))downloadPd();if(event.target.closest("#pd-apply"))applyPd();});
+  $("#pd-design").addEventListener("change",(event)=>{if(event.target.id==="pd-method"){state.pd.method=event.target.value;renderPdResults();}if(event.target.matches("[data-pd-grouping]")){const options=pdOptions();options.gain_grouping=event.target.value;pdScopeEntry(true).options=options;changed();}});
+  $("#pd-analyze").addEventListener("click",analyzePd);
+  // An unfinished or invalid edit also invalidates results, before its change event.
+  $("#main-content").addEventListener("input",(event)=>{if(event.target.matches("[data-param], [data-joint-control], [data-pose-slider], [data-foot-position], #robot-prefix, #robot-slug")){invalidatePd("配置正在编辑，请完成输入后重新计算候选。");updatePdActions();}});
   $("#parameter-groups").addEventListener("change",(event)=>{
     const input=event.target;if(!input.dataset.param)return;
     try{input.setCustomValidity("");const value=parseParameter(input);updateFieldError(input,null);set(targetParameters(),input.dataset.param,value);changed({pose:input.dataset.param.startsWith("init_state")});const badge=input.closest(".field").querySelector(".source-badge");if(badge){badge.textContent="人工修改";badge.className="source-badge manual";}if(input.dataset.param.startsWith("control"))renderJointControls();}
@@ -634,6 +803,8 @@
       const peer=fromSlider?$(`[data-joint-control="initial"][data-joint="${index}"]`):$(`[data-pose-slider="${index}"]`);if(peer)peer.value=input.value;
     }
     changed({pose:key==="initial"});
+    const badge=input.closest("td")?.querySelector("[data-control-source]");
+    if(badge)badge.innerHTML=sourceBadge(`control.${key}`,joint);
   }
   $("#joint-controls").addEventListener("change",(event)=>{if(event.target.dataset.jointControl)applyJointInput(event.target);});
   $("#joint-controls").addEventListener("input",(event)=>{if(event.target.dataset.poseSlider!==undefined)applyJointInput(event.target,true);});

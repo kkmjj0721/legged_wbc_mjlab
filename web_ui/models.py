@@ -1,4 +1,4 @@
-"""Import self-contained MJCF bundles and validate the migration contract."""
+"""Import MJCF or URDF bundles and validate the migration contract."""
 
 from __future__ import annotations
 
@@ -44,6 +44,16 @@ def _inside(root: Path, path: Path) -> Path:
     if not resolved.is_file():
         raise ModelError(f"缺失模型资源：{path}")
     return resolved
+
+
+def _xml_root(path: Path):
+    content = path.read_text(encoding="utf-8-sig")
+    if "<!DOCTYPE" in content.upper() or "<!ENTITY" in content.upper():
+        raise ModelError("机器人描述不允许 DTD 或外部实体")
+    try:
+        return ET.fromstring(content)
+    except ET.ParseError as exc:
+        raise ModelError(f"XML/URDF 解析失败 {path.name}: {exc}") from exc
 
 
 def _dependencies(root: Path, entry: Path) -> list[Path]:
@@ -125,6 +135,15 @@ def inspect_model(entry: Path) -> dict:
     body_names = [name(mujoco.mjtObj.mjOBJ_BODY, i) for i in range(1, model.nbody)]
     if not all(body_names):
         raise ModelError("所有机器人 body 必须具有唯一名称")
+    # A URDF can have a massless root wrapper welded to the actual trunk.
+    # Keep the floating frame, but bind mass/COM randomization to a massive body.
+    base_ids = {base_id}
+    for i in range(base_id + 1, model.nbody):
+        if int(model.body_parentid[i]) in base_ids and model.body_jntnum[i] == 0:
+            base_ids.add(i)
+    physical_base_id = base_id if model.body_mass[base_id] > 0 else max(base_ids, key=lambda i: float(model.body_mass[i]))
+    if model.body_mass[physical_base_id] <= 0:
+        raise ModelError("浮动机体及其固定子体缺少正质量，请检查 URDF/MJCF 惯量定义")
     for kind, count in ((mujoco.mjtObj.mjOBJ_BODY, model.nbody),
                         (mujoco.mjtObj.mjOBJ_JOINT, model.njnt),
                         (mujoco.mjtObj.mjOBJ_GEOM, model.ngeom),
@@ -142,7 +161,7 @@ def inspect_model(entry: Path) -> dict:
             raise ModelError("12 个驱动关节必须具有唯一名称")
         body_id = int(model.jnt_bodyid[i])
         leg_body = body_id
-        while int(model.body_parentid[leg_body]) not in (0, base_id):
+        while int(model.body_parentid[leg_body]) not in ({0} | base_ids):
             leg_body = int(model.body_parentid[leg_body])
         offset = base_rotation.T @ (data.xpos[leg_body] - data.xpos[base_id])
         geometric_leg = ("F" if offset[0] >= 0 else "R") + ("L" if offset[1] >= 0 else "R")
@@ -180,8 +199,13 @@ def inspect_model(entry: Path) -> dict:
     if model.nkey:
         pos = model.key_qpos[0, qadr:qadr + 3].tolist()
         rot = model.key_qpos[0, qadr + 3:qadr + 7].tolist()
-    return {"name": entry.stem, "joints": joints, "bodies": body_names, "sites": sites,
-            "site_details": site_details, "geoms": geoms, "base_body": body_names[base_id - 1],
+    return {"name": entry.stem, "joints": joints, "bodies": body_names,
+            "body_parents": {body_names[i - 1]: name(mujoco.mjtObj.mjOBJ_BODY, int(model.body_parentid[i]))
+                             for i in range(1, model.nbody)}, "sites": sites,
+            "site_details": site_details, "geoms": geoms, "base_body": body_names[physical_base_id - 1],
+            "floating_body": body_names[base_id - 1],
+            "base_bodies": [body_names[i - 1] for i in sorted(base_ids)],
+            "body_masses": {body_names[i - 1]: float(model.body_mass[i]) for i in range(1, model.nbody)},
             "sensors": [{"name": name(mujoco.mjtObj.mjOBJ_SENSOR, i), "type": int(model.sensor_type[i])} for i in range(model.nsensor)],
             "initial_pos": pos, "initial_rot": rot, "initial_source": "keyframe" if model.nkey else "template",
             "default_joint": {j["name"]: j["default"] for j in joints},
@@ -191,35 +215,82 @@ def inspect_model(entry: Path) -> dict:
 def import_model(root, xml=None, workspace=None):
     workspace = _workspace(workspace)
     root = Path(root).expanduser().resolve()
-    if root.is_file() and xml is None:
+    if root.is_file() and not xml:
         root, xml = root.parent, root.name
     if not root.is_dir():
         raise ModelError("模型根目录不存在")
     if not xml:
-        candidates = sorted(root.glob("*.xml"))
+        candidates = sorted(path for path in root.iterdir() if path.suffix.lower() in (".xml", ".urdf"))
         if len(candidates) != 1:
-            raise ModelError("请指定入口 XML 文件名")
+            raise ModelError("请指定入口 XML 或 URDF 文件名")
         xml = candidates[0].name
     entry = _inside(root, root / xml)
-    files = _dependencies(root, entry)
+    document = _xml_root(entry)
+    if document.tag not in ("robot", "mujoco"):
+        raise ModelError("入口需要是 URDF <robot> 或 MJCF <mujoco>；xacro 请先展开为 URDF")
+    source_format = "urdf" if document.tag == "robot" else "mjcf"
+    # Converted bundles may be wrapped in a top-level ZIP directory. Restore
+    # their canonical bundle root so the report and source archive travel too.
+    if source_format == "mjcf":
+        for parent in entry.parents:
+            if not parent.is_relative_to(root):
+                break
+            report_path = parent / "conversion_report.json"
+            if report_path.is_file():
+                report = json.loads(_inside(root, report_path).read_text())
+                if report.get("source_format") == "urdf" and report.get("xml") == entry.relative_to(parent).as_posix():
+                    root = parent
+                    break
+    source_file = entry.relative_to(root).as_posix()
     model_id = uuid.uuid4().hex
     destination = workspace / "imports" / model_id
     model_root = destination / "model"
     model_root.mkdir(parents=True)
     try:
+        conversion = None
+        if source_format == "urdf":
+            from .urdf import convert_urdf
+            converted = convert_urdf(root, entry, model_root)
+            conversion = converted["report"]
+            xml_path = converted["xml"]
+        else:
+            files = _dependencies(root, entry)
+            xml_path = entry.relative_to(root).as_posix()
+            report_path = root / "conversion_report.json"
+            if report_path.is_file():
+                report = json.loads(_inside(root, report_path).read_text())
+                if report.get("source_format") == "urdf" and report.get("xml") == xml_path:
+                    conversion = report
+                    files.append(report_path)
+                    archive = root / "source"
+                    if archive.is_dir():
+                        files.extend(_inside(root, path) for path in archive.rglob("*") if path.is_file())
+            for path in sorted(set(files)):
+                target = model_root / path.relative_to(root)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
         manifest, digest = [], hashlib.sha256()
-        for path in files:
-            rel = path.relative_to(root)
-            target = model_root / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
+        files = sorted(path for path in model_root.rglob("*") if path.is_file())
+        if len(files) > MAX_FILES or sum(path.stat().st_size for path in files) > MAX_BYTES:
+            raise ModelError("模型资源超出 10000 个文件或 2 GiB 大小限制")
+        for target in files:
+            rel = target.relative_to(model_root)
             file_hash = hashlib.sha256(target.read_bytes()).hexdigest()
             digest.update(str(rel).encode() + file_hash.encode())
             manifest.append({"path": rel.as_posix(), "size": target.stat().st_size, "sha256": file_hash})
-        inspection = inspect_model(model_root / entry.relative_to(root))
+        inspection = inspect_model(model_root / xml_path)
         inspection["files"] = manifest
-        model = {"id": model_id, "root": str(model_root), "xml": entry.relative_to(root).as_posix(),
-                 "sha256": digest.hexdigest(), "name": inspection["name"]}
+        model = {"id": model_id, "root": str(model_root), "xml": xml_path,
+                 "sha256": digest.hexdigest(), "name": inspection["name"],
+                 "source_format": "urdf" if conversion else source_format,
+                 "source_file": conversion.get("source_file", source_file) if conversion else source_file,
+                 "import_format": source_format}
+        if conversion:
+            model["conversion"] = conversion
+            inspection["conversion"] = conversion
+            inspection["issues"].extend({"level": "warning", "message": item} for item in conversion.get("warnings", []))
+            if any("effort" in j for j in conversion.get("joints", [])):
+                inspection["parameter_sources"] = {"control.effort_limit": "model"}
         (destination / "inspection.json").write_text(json.dumps(inspection, indent=2, ensure_ascii=False))
         (destination / "model.json").write_text(json.dumps(model, indent=2, ensure_ascii=False))
         return {"model": model, "inspection": inspection, "spec": make_spec(model, inspection)}
@@ -259,17 +330,22 @@ def import_zip(file, workspace=None, xml=None):
         if xml:
             entry = _inside(extraction, extraction / xml)
             return import_model(extraction, entry.relative_to(extraction), workspace)
-        # Prefer a standalone robot file to scene wrappers and include fragments.
+        # Prefer standalone robot files to scene wrappers and include fragments.
         candidates = []
-        for path in extraction.rglob("*.xml"):
+        for path in extraction.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in (".xml", ".urdf"):
+                continue
+            if any((parent / "conversion_report.json").is_file() and path.is_relative_to(parent / "source")
+                   for parent in path.parents if parent.is_relative_to(extraction)):
+                continue
             try:
-                node = ET.parse(path).getroot()
-                if node.tag == "mujoco" and (node.find(".//freejoint") is not None or node.find(".//joint[@type='free']") is not None):
+                node = _xml_root(path)
+                if node.tag == "robot" or (node.tag == "mujoco" and (node.find(".//freejoint") is not None or node.find(".//joint[@type='free']") is not None)):
                     candidates.append(path)
-            except ET.ParseError:
+            except (ModelError, UnicodeError):
                 continue
         if len(candidates) != 1:
-            raise ModelError("ZIP 必须含唯一的机器人入口 XML；多个模型请使用本地路径指定入口")
+            raise ModelError("ZIP 必须含唯一的机器人入口 XML/URDF；多个模型请填写包内入口路径")
         return import_model(extraction, candidates[0].relative_to(extraction), workspace)
     except zipfile.BadZipFile as exc:
         raise ModelError("上传文件不是有效的 ZIP") from exc
@@ -303,11 +379,16 @@ def make_spec(model, inspection=None):
     for leg in LEGS:
         calf = next((j for j in inspection["joints"] if j["leg"] == leg and j["role"] == "calf"), None)
         body = calf["body"] if calf else ""
+        descendants = {body}
+        for _ in inspection["bodies"]:
+            descendants.update(child for child, parent in inspection.get("body_parents", {}).items()
+                               if parent in descendants)
         site = next((s for s in inspection["site_details"] if s["name"].upper() == leg), None)
         if site is None:
-            site = next((s for s in inspection["site_details"] if s["body"] == body), None)
-        foot_geoms = [g for g in inspection["geoms"] if g["body"] == body and g["collision"] and g["name"]]
+            site = next((s for s in inspection["site_details"] if s["body"] in descendants), None)
+        foot_geoms = [g for g in inspection["geoms"] if g["body"] in descendants and g["collision"] and g["name"]]
         geom = next((g for g in foot_geoms if "foot" in g["name"].lower()), foot_geoms[-1] if foot_geoms else None)
+        body = site["body"] if site else geom["body"] if geom else body
         bindings["feet"].append({"leg": leg, "site": site["name"] if site else "", "body": body,
                                  "geom": geom["name"] if geom else "",
                                  "position": site["position"] if site else geom["position"] if geom else [0, 0, 0]})
@@ -315,11 +396,16 @@ def make_spec(model, inspection=None):
     for geom in inspection["geoms"]:
         if not geom["collision"] or not geom["name"] or geom["name"] in feet:
             continue
-        bindings["base_geoms" if geom["body"] == bindings["base_body"] else "leg_geoms"].append(geom["name"])
+        base_bodies = inspection.get("base_bodies", [bindings["base_body"]])
+        bindings["base_geoms" if geom["body"] in base_bodies else "leg_geoms"].append(geom["name"])
+    control = {"action_clip": {j["name"]: j["range"] for j in inspection["joints"]}}
+    effort = {j["name"]: j["effort"] for j in model.get("conversion", {}).get("joints", []) if "effort" in j}
+    if effort:
+        control["effort_limit"] = effort
     return {"version": 1, "model": deepcopy(model), "robot": {"slug": slug, "prefix": slug.replace("_", "-").title()},
             "bindings": bindings, "parameters": {"init_state": {"pos": inspection["initial_pos"], "rot": inspection["initial_rot"],
                            "default_joint": inspection["default_joint"]},
-                           "control": {"action_clip": {j["name"]: j["range"] for j in inspection["joints"]}}},
+                           "control": control},
             "tasks": {"him": {"terrains": ["Flat", "Rough"], "parameters": {}}}, "confirmed": False}
 
 
@@ -358,8 +444,10 @@ def _validate_spec(spec):
         error("每条腿必须分别绑定 hip、thigh、calf 三个关节，不能重复")
     if any(j.get("sign") not in (-1, 1) for j in joints):
         error("镜像符号只能是 -1 或 +1")
-    if bindings.get("base_body") != inspection["base_body"]:
-        error("机体必须选择浮动基座所在的 body")
+    base_body = bindings.get("base_body")
+    if (base_body not in inspection.get("base_bodies", [inspection["base_body"]])
+            or inspection.get("body_masses", {}).get(base_body, 1) <= 0):
+        error("机体必须选择浮动基座或其固定连接的正质量 body")
     feet = bindings.get("feet", [])
     if len(feet) != 4 or {f.get("leg") for f in feet} != set(LEGS):
         error("必须为 FL、FR、RL、RR 各配置一个足端")

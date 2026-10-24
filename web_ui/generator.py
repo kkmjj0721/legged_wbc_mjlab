@@ -100,8 +100,18 @@ def _model_details(spec):
     bindings["feet"] = sorted(bindings["feet"], key=lambda foot: LEGS.index(foot["leg"]))
     bindings["all_geoms"] = list(dict.fromkeys(bindings["base_geoms"] + bindings.get("leg_geoms", []) +
                                              [foot["geom"] for foot in bindings["feet"]]))
+    floating_id = next(int(model.jnt_bodyid[i]) for i in range(model.njnt)
+                       if model.jnt_type[i] == mujoco.mjtJoint.mjJNT_FREE)
+    base_ids = {floating_id}
+    for i in range(floating_id + 1, model.nbody):
+        if int(model.body_parentid[i]) in base_ids and model.body_jntnum[i] == 0:
+            base_ids.add(i)
+    if model.body(bindings["base_body"]).id not in base_ids or model.body(bindings["base_body"]).mass[0] <= 0:
+        raise ValueError("机体必须绑定浮动基座或其固定连接的正质量 body")
+    # These selectors feed inertia randomization. URDF fixed frame-only links
+    # have zero inertia and must remain massless rather than enter that event.
     bindings["leg_bodies"] = [model.body(i).name for i in range(1, model.nbody)
-                              if model.body(i).name and model.body(i).name != bindings["base_body"]]
+                              if model.body(i).name and i not in base_ids and model.body_mass[i] > 0]
     for name in bindings["base_geoms"] + bindings.get("leg_geoms", []) + [foot["geom"] for foot in bindings["feet"]]:
         if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name) < 0:
             raise ValueError(f"找不到碰撞 geom: {name}")
@@ -269,8 +279,10 @@ def _validate_symmetry(model, bindings, p):
 
 
 def _replace(text, slug, prefix):
-    text = text.replace("ri_4438", slug).replace("Ri4438", "Robot").replace("RI4438", slug.upper())
-    text = text.replace("ri4438", slug).replace("RI-4438", prefix).replace("Ri-4438", prefix)
+    replacements = {"ri_4438": slug, "Ri4438": "Robot", "RI4438": slug.upper(),
+                    "ri4438": slug, "RI-4438": prefix, "Ri-4438": prefix}
+    # Replace only original template tokens: a slug/prefix may contain one too.
+    text = re.sub("|".join(map(re.escape, replacements)), lambda match: replacements[match[0]], text)
     return re.sub(r"from config\.", "from src.config.", text)
 
 

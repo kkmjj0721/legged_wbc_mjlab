@@ -98,6 +98,15 @@ def create_app(repo_root=None, workspace=None):
         preview.stop()
         return jsonify(result)
 
+    @app.post("/api/model-xml")
+    def model_xml():
+        body = payload()
+        model = body.get("model", {})
+        path = models.resolve_model(model)
+        return jsonify(xml=path.read_text(encoding="utf-8"), path=model["xml"],
+                       source_format=model.get("source_format", "mjcf"),
+                       conversion=model.get("conversion"))
+
     def draft_path(draft_id):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", draft_id):
             raise ValueError("草稿 ID 格式无效")
@@ -145,6 +154,14 @@ def create_app(repo_root=None, workspace=None):
     def stop_preview():
         preview.stop()
         return jsonify(status="stopped")
+
+    @app.post("/api/pd/analyze")
+    def analyze_pd():
+        from .pd_analysis import analyze
+
+        body = payload()
+        return jsonify(analyze(spec_from(body), scope=body.get("scope", "common"),
+                               options=body.get("options")))
 
     @app.post("/api/plan")
     def plan():

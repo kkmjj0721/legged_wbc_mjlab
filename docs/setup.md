@@ -16,7 +16,7 @@
 bash setup.sh
 ```
 
-这个命令会自动完成 uv 检查/安装、uv 管理的稳定版 Python 3.11 准备、Python 下载源测速、PyPI 镜像测速、项目依赖安装，以及按本机 CUDA/驱动选择 PyTorch。Python 版本会读取项目根目录的 `.python-version`（也可用 `UV_PYTHON_VERSION` 覆盖）。已经存在可用的 uv Python 3.11 时会直接复用，不会重复下载。脚本会自动使用持久化缓存（默认 `~/.cache/uv`）和 Python 安装目录（默认 `~/.local/share/uv/python`）。
+这个命令会自动完成 uv 检查/安装、uv 管理的稳定版 Python 3.11 准备、Python 下载源测速、PyPI 镜像测速、项目依赖安装，以及按本机已安装的 CUDA Toolkit 选择 PyTorch。Python 版本会读取项目根目录的 `.python-version`（也可用 `UV_PYTHON_VERSION` 覆盖）。已经存在可用的 uv Python 3.11 时会直接复用，不会重复下载。脚本会自动使用持久化缓存（默认 `~/.cache/uv`）和 Python 安装目录（默认 `~/.local/share/uv/python`）。
 
 镜像会先并行测速真实 wheel 文件并按下载速度排序；实际安装时项目依赖每个镜像默认最多等待 300 秒。如果某个镜像连接成功但下载长时间没有完成，脚本会终止本次尝试并自动切换下一个镜像，不会一直卡在第一个地址。Python standalone 默认使用 4 路分段并行下载，单个分段无数据 20 秒就会判定通道异常并回退单流下载；文件保存到持久化缓存后再交给 uv 校验和安装。下载通道默认最多等待 600 秒。可以通过 `--sync-timeout` 和 `--python-install-timeout` 调整上限，设置为 `0` 表示不限制。
 
@@ -103,7 +103,9 @@ bash setup.sh
 
 PyTorch 默认单独允许最多 30 分钟下载（CUDA wheel 较大），可用 `--torch-timeout` 调整；设为 `0` 表示不限制。
 
-PyTorch 不直接照搬锁文件里的固定 CUDA wheel。脚本会优先读取 `nvidia-smi` 报告的驱动 CUDA 版本；只有系统没有 `nvidia-smi` 时才尝试读取 `nvcc`，自动选择兼容的 PyTorch 后端，例如 CUDA 13.0 对应 `cu130`、CUDA 12.4 对应 `cu124`；没有可用 NVIDIA 驱动时安装 CPU 后端。这样同一份代码可以在不同 CUDA/驱动机器上复用。
+PyTorch 不直接照搬锁文件里的固定 CUDA wheel。脚本运行 PATH 中的 `nvcc --version`，读取实际安装的 CUDA Toolkit 版本，再从预设表中选择不高于该版本的 PyTorch 后端，例如 Toolkit 13.0 对应 `cu130`、Toolkit 12.4 对应 `cu124`。不再使用 `nvidia-smi` 报告的驱动支持上限来选版本；即使驱动显示 CUDA 13.0，只要 `nvcc` 显示 12.4，就按 12.4 选择。
+
+安装多个 Toolkit 时，以 PATH 中优先找到的 `nvcc` 为准。找不到 `nvcc`、命令失败或无法解析版本时，自动选择 CPU 后端并说明原因；只有驱动而未安装 Toolkit 的机器也遵循此规则，可用下方参数手动指定 CUDA 后端。自动检测不检查驱动是否可用，运行 CUDA 后端仍需要支持该后端的 NVIDIA 驱动；离线模式仍由 wheelhouse 内实际提供的 wheel 决定后端。
 
 如需手动覆盖自动判断：
 
@@ -154,6 +156,22 @@ python3 tools/uv_auto_sync.py --index https://pypi.example.com/simple
 ```
 
 脚本通过 `uv sync --default-index` 选择下载通道；当索引源改变时，uv 可能同步更新 `uv.lock` 中记录的源地址，请按项目协作约定决定是否提交该变更。
+
+## 可选的本地 Web 工作台
+
+安装机器人迁移工作台的 Web 依赖：
+
+```bash
+bash setup.sh --extra web
+```
+
+已有训练环境且需要保留当前 PyTorch 后端时，使用：
+
+```bash
+python3 tools/uv_auto_sync.py --extra web --skip-torch -- --no-install-package torch
+```
+
+启动 `uv run --no-sync python -m scripts.robot_migration_web --port 5003`，打开 <http://127.0.0.1:5003>。模型和参数配置详见 [迁移工作台](robot_migration_web.md)。
 
 ## 总结
 
