@@ -2393,7 +2393,117 @@ dialog>p {
   margin-top:24px
 }
 .pd-response-table {
-  min-width:800px
+  min-width:1060px
+}
+.pd-response-table td:nth-child(3) {
+  min-width:220px;
+  max-width:320px;
+  white-space:normal;
+  overflow-wrap:anywhere
+}
+.pd-timing-panel,.pd-ground-results {
+  border:1px solid var(--border);
+  border-radius:9px;
+  padding:16px;
+  margin:18px 0;
+  min-width:0
+}
+.pd-timing-panel {
+  background:var(--paper,#fffaf3)
+}
+.pd-timing-grid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px 18px;
+  margin:12px 0 16px
+}
+.pd-timing-grid>div {
+  min-width:0;
+  display:grid;
+  gap:5px;
+  align-content:start;
+  overflow-wrap:anywhere
+}
+.pd-timing-grid span,.pd-timing-grid small {
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.7
+}
+.pd-timing-grid strong {
+  font-size:15px;
+  color:var(--accent-dark)
+}
+.pd-report-timing {
+  padding:0 14px;
+  border-left:3px solid var(--border)
+}
+.pd-test-protocol {
+  padding-left:23px;
+  display:grid;
+  gap:14px;
+  margin:18px 0
+}
+.pd-test-protocol strong {
+  color:var(--accent-dark);
+  font-size:13px
+}
+.pd-test-protocol p {
+  font-size:12px;
+  line-height:1.9;
+  color:var(--muted);
+  margin:5px 0 0
+}
+.pd-stage-badge {
+  display:inline-block;
+  font-size:10px;
+  line-height:1.6;
+  padding:3px 7px;
+  border-radius:4px;
+  font-weight:600;
+  white-space:nowrap
+}
+.pd-stage-badge.passed {
+  background:#e8f2e8;
+  color:#366548
+}
+.pd-stage-badge.failed {
+  background:#f8e9dc;
+  color:#8b5737
+}
+.pd-ground-reasons {
+  color:#8b5737;
+  background:#fcf3e9;
+  padding:12px 14px 12px 30px;
+  border-radius:5px;
+  font-size:12px;
+  line-height:1.9;
+  overflow-wrap:anywhere
+}
+.pd-ground-metrics {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px 18px;
+  margin:18px 0
+}
+.pd-ground-metrics>div {
+  min-width:0;
+  border-bottom:1px solid var(--border);
+  padding:0 0 9px
+}
+.pd-ground-metrics dt {
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.8
+}
+.pd-ground-metrics dd {
+  margin:4px 0 0;
+  font-weight:600;
+  font-size:14px;
+  color:var(--accent-dark);
+  overflow-wrap:anywhere
+}
+.pd-ground-trials {
+  min-width:850px
 }
 .pd-response-review {
   min-width:650px
@@ -2509,6 +2619,12 @@ dialog>p {
 @media(max-width:600px) {
   .pd-options {
     grid-template-columns:1fr
+  }
+  .pd-timing-grid,.pd-ground-metrics {
+    grid-template-columns:1fr
+  }
+  .pd-timing-panel,.pd-ground-results {
+    padding:12px
   }
   .pd-run-row,.pd-section-heading {
     flex-direction:column;
@@ -3389,4 +3505,19 @@ body.pose-focus .pose-settings { overflow:auto; scrollbar-width:thin; }
   body.pose-focus .pose-settings .source-badge { display:none; }
   body.pose-focus .pose-settings .data-table th,body.pose-focus .pose-settings .data-table td { padding-top:2px; padding-bottom:2px; }
   body.pose-focus .pose-settings .pose-control input[type=number] { height:23px; }
+}
+
+/* PD requirements and the separate constraint results share the existing card rhythm. */
+#pd-requirements .form-grid { margin-top:16px }
+.pd-tracking-results,.pd-budget-results {
+  border:1px solid var(--border);border-radius:9px;padding:16px;margin:18px 0;min-width:0
+}
+.pd-response-table { min-width:1220px }
+.pd-response-table td:nth-child(5) { min-width:220px;max-width:360px;white-space:normal;overflow-wrap:anywhere }
+.pd-budget-table { min-width:1100px }
+.pd-budget-table td:last-child { min-width:230px;white-space:normal;overflow-wrap:anywhere }
+.pd-ground-warning { color:var(--warning,#8a5a14);overflow-wrap:anywhere }
+.pd-ground-warning ul { margin-bottom:0 }
+@media(max-width:700px) {
+  .pd-tracking-results,.pd-budget-results { padding:12px }
 }

@@ -95,16 +95,37 @@ def _parameters_for(spec, task_id):
     if not spec:
         return None, None, None
     slug = spec["robot"]["slug"]
-    module = importlib.import_module(f"src.config.{slug}.migration")
     suffix = task_id.removeprefix(spec["robot"]["prefix"])
     algorithm = ("him_lpacrl" if suffix.startswith("-HIM-LPACRL-") else
                  "him_symmetry" if suffix.startswith("-HIM-Symmetry-") else
                  "him" if suffix.startswith("-HIM-") else "ppo")
+    constants_name = spec.get("_constants_module", f"src.assets.robots.{slug}.{slug}_constants")
+    try:
+        constants = importlib.import_module(constants_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != constants_name:
+            raise
+        constants = None
+    config_modules = getattr(constants, "CONFIG_MODULES", None)
+    if config_modules is not None:
+        _require(algorithm in config_modules, f"机器人未配置 {algorithm} 算法")
+        module = importlib.import_module(config_modules[algorithm])
+        parameters = module.get_parameters()
+        _require(isinstance(parameters, dict) and parameters, f"{module.__name__}.get_parameters() 未返回有效配置")
+        return parameters, algorithm, constants.BINDINGS
+    # Keep tasks generated before the compact configuration format usable.
+    module = importlib.import_module(f"src.config.{slug}.migration")
     return module.PARAMETERS[algorithm], algorithm, module.BINDINGS
 
 
 def _saved_spec(robot_cfg):
     module_name = getattr(robot_cfg.spec_fn, "__module__", "")
+    if module_name.startswith("src.assets.robots."):
+        module = importlib.import_module(module_name)
+        if hasattr(module, "CONFIG_MODULES"):
+            return dict(robot=dict(slug=module.ROBOT_SLUG, prefix=module.ROBOT_PREFIX),
+                        bindings=deepcopy(module.BINDINGS), _constants_module=module_name)
+        return None
     if not module_name.startswith("src.config.") or not module_name.endswith((".migration", ".migration_runtime")):
         return None
     module = importlib.import_module(module_name)
@@ -325,7 +346,7 @@ def cpu_check(task_ids, spec, stage_root=None):
         is_him = "estimator" in cfg.observations
         if is_him:
             slug = task_spec["robot"]["slug"] if task_spec else None
-            layout_module = importlib.import_module(f"src.config.{slug}.him_layouts" if slug else "src.config.ri_4438.him_layouts")
+            layout_module = importlib.import_module("src.config.base.him_layouts")
             layout = layout_module.PHASE47
             for group in ("actor", "critic", "estimator"):
                 _require(tuple(cfg.observations[group].terms) == layout.terms(group), f"{group} 的 phase47_v1 观测顺序不匹配")

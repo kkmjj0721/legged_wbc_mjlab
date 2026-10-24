@@ -19,6 +19,11 @@ DEFAULTS = {
     "action_amplitude": 1.0,
     "hardware_pd_hz": None,
     "hardware_delay_ms": None,
+    "max_settling_time_s": 0.5,
+    "max_unit_action_effort_ratio": 0.8,
+    "tracking_frequency_hz": 0.5,
+    "max_tracking_error_ratio": 0.2,
+    "ground_contact_policy": "task",
     "gain_grouping": "auto",
     "joints": {},
 }
@@ -46,6 +51,8 @@ def _settings(options, names):
     settings = {**deepcopy(DEFAULTS), **deepcopy(options)}
     if settings["gain_grouping"] not in ("auto", "individual", "mirror_pairs"):
         raise ValueError("gain_grouping 必须为 auto、individual 或 mirror_pairs")
+    if settings["ground_contact_policy"] not in ("task", "feet_only"):
+        raise ValueError("ground_contact_policy 必须为 task 或 feet_only")
     # These bounds only guard input/numerical scale; they are not hardware limits.
     bounds = {
         "frequency_hz": (0.1, 100.0),
@@ -54,6 +61,10 @@ def _settings(options, names):
         "action_amplitude": (0.0, 1000.0),
         "hardware_pd_hz": (1.0, 100000.0),
         "hardware_delay_ms": (0.0, 1000.0),
+        "max_settling_time_s": (0.05, 2.0),
+        "max_unit_action_effort_ratio": (0.05, 1.0),
+        "tracking_frequency_hz": (0.1, 2.0),
+        "max_tracking_error_ratio": (0.01, 1.0),
     }
     for name, (low, high) in bounds.items():
         settings[name] = _number(settings[name], name, low, high,

@@ -170,10 +170,11 @@
   }
   function pdInputFingerprint(scope=state.scope) {
     const p=effective(scope);
-    return workflow.stable({model:stableModel(),bindings:state.spec.bindings,
+    return workflow.stable({scope,model:stableModel(),bindings:state.spec.bindings,
       algorithms:scope==="common"?Object.keys(state.spec.tasks):[scope],
       control:p.control,init_state:p.init_state,
       environment:{sim_dt:p.environment?.sim_dt,mujoco:p.environment?.mujoco},
+      protocol:"joint_tracking_ground_v2",
       options:pdOptions(scope),motor_curves:state.spec.motor_curves||[]});
   }
   function pdSession(kind,scope=state.scope) {return state[kind].sessions?.[scope];}
@@ -305,17 +306,19 @@
     const phase=state.pdUi?.phase??0,mode=state.pdUi?.mode||"search";
     if(state.step===6)$("#joint-batch").hidden=mode!=="manual"||phase!==3;
     $$("[data-pd-stage]").forEach((node)=>{node.hidden=Number(node.dataset.pdStage)!==phase;});
-    $$(".pd-phase").forEach((node)=>{const index=Number(node.dataset.pdPhase);node.classList.toggle("active",index===phase);node.setAttribute("aria-current",index===phase?"step":"false");node.disabled=index===2&&!report||index===3&&!report&&mode!=="manual";});
+    $$(".pd-phase").forEach((node)=>{const index=Number(node.dataset.pdPhase);node.classList.toggle("active",index===phase);node.setAttribute("aria-current",index===phase?"step":"false");node.disabled=index===2&&!report||index===3&&mode!=="manual"&&(!pdResponseFresh()||!pdCandidateEligible(selected,report));});
     $$("[data-pd-mode]").forEach((node)=>{node.classList.toggle("active",node.dataset.pdMode===mode);node.setAttribute("aria-pressed",String(node.dataset.pdMode===mode));});
-    const control=p.control||{},timing=p.environment||{};
-    $("#pd-input-summary").innerHTML=`<div><strong>模型与站姿</strong><span>${esc(state.spec.model.name||"待导入")} · ${state.spec.bindings.joints.length} 关节</span></div><div><strong>仿真时序</strong><span>dt ${pdNumber(timing.sim_dt,5)} s · ${esc(timing.mujoco?.integrator||"implicitfast")}</span></div><div><strong>执行器延迟</strong><span>${control.delay_min_lag??0}–${control.delay_max_lag??0} 个物理步</span></div><div><strong>力矩与惯量</strong><span>使用第 05 步已填写的逐关节值，来源可展开核对</span></div>`;
+    const control=p.control||{},timing=pdEffectiveTiming();
+    $("#pd-input-summary").innerHTML=`<div><strong>模型与站姿</strong><span>${esc(state.spec.model.name||"待导入")} · ${state.spec.bindings.joints.length} 关节</span></div><div><strong>物理 / 原生 PD</strong><span>${pdNumber(timing.physics_hz,1)} Hz · dt ${pdNumber(timing.sim_dt,5)} s</span></div><div><strong>推理 / 目标更新</strong><span>${pdNumber(timing.policy_hz,1)} Hz · 每 ${pdNumber(timing.decimation,0)} 个物理步</span></div><div><strong>执行器目标延迟</strong><span>${control.delay_min_lag??0}–${control.delay_max_lag??0} 个物理步</span></div>`;
+    renderPdTiming();
     $("#pd-no-result").hidden=!!report;
-    $("#pd-review-next").disabled=!selected||!pdResponseFresh()||pdReferenceOnly(selected)||!selected.summary?.eligible;
+    $("#pd-review-next").disabled=!pdResponseFresh()||!pdCandidateEligible(selected,report);
     $("#pd-applied-status").textContent=current?`已应用：${applied.candidate_label||pdMethods[applied.method]||"所选候选"} → ${pdScopeLabel()}。请在底部确认本步。`:mode==="manual"?`手动填写 ${pdScopeLabel()} 的 Kp / Kd，然后在底部确认。`:report&&!pdResponseFresh()?"相关测试输入已改变，报告保留供查看；请返回核对输入后重新搜索。":"检查下方候选写入值，点击应用后再确认本步。";
     if(mode==="manual")$("#pd-manual-editor").open=true;
   }
   function setPdPhase(phase) {
     if(phase===2&&!pdScopeEntry()?.response_report)return;
+    if(phase===3&&state.pdUi.mode!=="manual"&&(!pdResponseFresh()||!pdCandidateEligible(pdSelectedCandidate())))return;
     if(phase<3)state.pdUi.mode="search";
     state.pdUi.phase=phase;renderPdFlow();
     $("#pd-design").scrollIntoView({behavior:"smooth",block:"start"});
@@ -648,7 +651,7 @@
   }
   function renderOutputLayout() {
     const node=$("#output-layout");if(!node)return;const slug=state.spec.robot.slug||"<机器人名>";
-    const paths=state.plan?.manifest?.output_layout||[{path:`src/assets/robots/${slug}/`,purpose:"机器人运行 XML、网格与工厂"},{path:`src/config/${slug}/`,purpose:"所选算法配置、必要接口与生成清单"},...Object.keys(state.spec.tasks).map((algorithm)=>({path:`src/tasks/locomotion/${slug}_${algorithm}/`,purpose:taskMeta[algorithm]?.label||algorithm}))];
+    const paths=state.plan?.manifest?.output_layout||[{path:`src/assets/robots/${slug}/`,purpose:"机器人运行 XML、网格与工厂"},{path:`src/config/${slug}/`,purpose:"每个所选算法一个可编辑配置文件"},...Object.keys(state.spec.tasks).map((algorithm)=>({path:`src/tasks/locomotion/${slug}_${algorithm}/`,purpose:taskMeta[algorithm]?.label||algorithm}))];
     node.innerHTML=`<h4>按当前选择生成的目录</h4>${paths.map((item)=>`<div><span>${esc(item.purpose||item.algorithm||"")}</span><code>${esc(item.path)}</code></div>`).join("")}<h4>训练命令的输出位置</h4>${trainingOutputs().map((item)=>`<div><span>${esc(taskMeta[item.algorithm]?.label||item.algorithm)}</span><code>${esc(item.path_template)}</code></div>`).join("")}<p class="field-note">timestamp 是启动训练的时间；可用 --agent.run-name 添加目录后缀。只生成选中的算法。</p>${/_(him|ppo|him_symmetry|him_lpacrl)$/.test(slug)?'<p class="notice warning">目录标识目前带有算法后缀。建议改成机器人名，例如 ri_5036；任务目录会自动附加算法名。</p>':""}`;
   }
   function renderTerrainAnalysis() {
@@ -668,7 +671,7 @@
     $("#config-tabs").innerHTML=[{key:"common",label:"公共配置"},...Object.keys(state.spec.tasks).map((key)=>({key,label:taskMeta[key]?.label||key}))].map((item)=>`<button role="tab" aria-selected="${item.key===state.scope}" data-config-scope="${item.key}" class="${item.key===state.scope?"active":""}">${esc(item.label)}</button>`).join("");
     $("#config-scope-note").textContent=state.scope==="common"?"公共修改将应用于全部所选任务。未修改的字段使用各任务原有默认值。3D 预览随当前配置页切换。":`${taskMeta[state.scope]?.label || state.scope} 的专属覆盖；未修改的字段继承公共配置与本模板默认值。`;
   }
-  const pdDefaults={frequency_hz:5,damping_ratio:1,pose_delta_rad:0.15,action_amplitude:1,gain_grouping:"auto",joints:{}};
+  const pdDefaults={frequency_hz:5,damping_ratio:1,pose_delta_rad:0.15,action_amplitude:1,max_settling_time_s:0.5,max_unit_action_effort_ratio:0.8,tracking_frequency_hz:0.5,max_tracking_error_ratio:0.2,ground_contact_policy:"task",gain_grouping:"auto",joints:{}};
   const pdMethods={model:"完整模型锁定惯量",armature:"电机惯量基线"};
   function pdScopeEntry(create=false,scope=state.scope) {
     if(create){state.spec.pd_analysis ||= {version:1,scopes:{}};state.spec.pd_analysis.scopes ||= {};state.spec.pd_analysis.scopes[scope] ||= {};}
@@ -678,6 +681,24 @@
     const options=merge(pdDefaults,pdScopeEntry(false,scope)?.options||{});
     for(const joint of state.spec.bindings.joints.filter((joint)=>joint.name))options.joints[joint.name]={...(options.joints[joint.name]||{}),...motorInertiaInput(joint,scope)};
     return options;
+  }
+  function pdEffectiveTiming() {
+    const parameters=effective(),dt=parameters.environment?.sim_dt,decimation=parameters.control?.decimation,options=pdOptions();
+    const physics=Number.isFinite(dt)&&dt>0?1/dt:null;
+    const period=Number.isFinite(dt)&&dt>0&&Number.isFinite(decimation)&&decimation>0?dt*decimation:null;
+    return {sim_dt:dt,decimation,physics_hz:physics,native_pd_hz:physics,policy_hz:period?1/period:null,target_period_s:period,hardware_pd_hz:options.hardware_pd_hz??null,hardware_delay_ms:options.hardware_delay_ms??null};
+  }
+  function pdTimingMarkup(timing={},live=false) {
+    const physics=timing.physics_hz,native=timing.native_pd_hz??physics,hardware=timing.hardware_pd_hz;
+    const effectiveRate=timing.effective_pd_hz??hardware??native,discrete=hardware!=null||timing.hardware_delay_ms!=null;
+    return `<div class="pd-timing-grid"><div><span>物理 / 原生位置 PD</span><strong>${pdNumber(physics,1)} / ${pdNumber(native,1)} Hz</strong><small>1 ÷ sim_dt</small></div><div><span>推理 / 目标更新</span><strong>${pdNumber(timing.policy_hz,1)} Hz</strong><small>周期 ${pdNumber(timing.target_period_s==null?null:timing.target_period_s*1000,3)} ms · sim_dt × decimation</small></div><div><span>跟踪 / 落地 PD</span><strong>${pdNumber(effectiveRate,1)} Hz</strong><small>${discrete?"采样反馈并保持力矩；实际调度见逐工况数据":"沿用训练原生 PD 时序"}</small></div><div><span>实机控制链延迟</span><strong>${timing.hardware_delay_ms==null?"未提供":`${pdNumber(timing.hardware_delay_ms,3)} ms`}</strong><small>${timing.hardware_delay_ms==null?"不假设实机延迟":"跟踪与落地使用离散控制链延迟"}</small></div></div>${live?'<p class="field-note">推理频率表示目标角更新周期；静站保持确认初姿，不运行策略网络。物理步长与控制降采样继续使用第 06 步的唯一配置。</p>':""}`;
+  }
+  function renderPdTiming() {
+    const node=$("#pd-frequency-summary");if(!node)return;
+    node.innerHTML=pdTimingMarkup(pdEffectiveTiming(),true);
+    const options=pdOptions();
+    const requirementStatus=$("#pd-requirements-status");if(requirementStatus)requirementStatus.textContent=options.action_amplitude>0?"自动搜索使用本次动作幅值；测试与预算均显示实际裁剪后的角度。":"动作幅值为 0 时仅可作高级静态计算；自动搜索需要正数动作幅值。";
+    for(const key of ["hardware_pd_hz","hardware_delay_ms","action_amplitude","max_settling_time_s","max_unit_action_effort_ratio","tracking_frequency_hz","max_tracking_error_ratio","ground_contact_policy"]){const input=$(`#pd-design [data-pd-option="${key}"]`);if(input&&document.activeElement!==input&&!state.invalidFields.has(`pd:${state.scope}:global:${key}`))input.value=options[key]??"";}
   }
   function pdFresh() {const session=pdSession("pd");return !!session&&session.report===pdScopeEntry()?.report&&session.fingerprint===pdInputFingerprint()&&!pdPending();}
   function invalidatePd(reason) {
@@ -752,7 +773,7 @@
     }).join("");
     const masses=Object.values(state.inspection.body_masses||{}).filter((value)=>typeof value==="number"&&Number.isFinite(value)),totalMass=masses.reduce((sum,value)=>sum+value,0);
     const dt=parameters.environment?.sim_dt,control=parameters.control||{},low=control.delay_min_lag??0,high=control.delay_max_lag??0;
-    node.innerHTML=`${intro}<div class="pd-input-model"><strong>刚体质量、质心与惯量</strong> <em class="source-badge model">导入模型</em><p>随 XML / URDF 进入 MuJoCo；编译模型共 ${masses.length} 个 body，总质量 ${pdNumber(totalMass,3)} kg。请核对源模型数据是否符合实物。</p><p><code>armature</code> 是额外折算到关节端的电机惯量，与连杆刚体惯量分开。URDF 的 <code>&lt;inertial&gt;</code> 通常描述刚体，不能据此认定已包含电机折算惯量。</p></div>${templateArmatures?`<p id="pd-input-template-warning" class="notice warning">${templateArmatures} / ${joints.length} 个关节的 armature 沿用模板默认值（当前值 ${Array.from(templateArmatureValues).join(" / ")} kg·m²），尚未确认属于当前机器人。可以据此做假设筛选；请在第 05 步填入真实电机转子惯量，由传动比自动折算。</p>`:""}<div class="table-scroll pd-input-scroll"><table class="data-table pd-input-table"><thead><tr><th>关节</th><th>电机折算惯量<br>armature · kg·m²</th><th>当前 PD<br>Kp / Kd</th><th>力矩限幅<br>N·m</th><th>被动阻尼<br>N·m·s/rad</th><th>被动摩擦<br>N·m</th><th>初始角度<br>rad</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="muted">请先完成关节映射。</td></tr>'}</tbody></table></div><p class="field-note pd-input-timing" data-pd-input-timing>仿真步长 <strong>${pdNumber(dt,6)} s</strong> ${sourceBadge("environment.sim_dt")}；执行器<strong>目标位置</strong>延迟 ${pdNumber(low,0)}–${pdNumber(high,0)} 个物理步（${pdNumber(low*dt*1000,3)}–${pdNumber(high*dt*1000,3)} ms）。延迟保持概率 ${pdNumber(control.delay_hold_prob??0,3)}，更新周期 ${pdNumber(control.delay_update_period??0,0)} 步。这里只延迟位置目标，不延迟 PD 反馈。</p><p class="field-note">关节侧补充参数：额定连续扭矩已填 ${continuousKnown} / ${joints.length}，允许最高工作转速已填 ${velocityKnown} / ${joints.length}；未填项保持未知。连续扭矩仅供高级静态预算比较；转速用于响应超速判定，不钳速、不生成训练限速。已确认的 T–N 离散曲线用于响应测试的速度相关限矩；仅上传图片时保持参考资料。没有温升模型；实机内环频率与实机链路延迟仅记录，不参与本次仿真。</p><div class="pd-input-links"><button type="button" class="button secondary small" data-pd-edit-controls>修改逐关节参数 ↓</button><button type="button" class="button quiet small" data-pd-edit-hardware>补充电机参数 ↓</button></div>`;
+    node.innerHTML=`${intro}<div class="pd-input-model"><strong>刚体质量、质心与惯量</strong> <em class="source-badge model">导入模型</em><p>随 XML / URDF 进入 MuJoCo；编译模型共 ${masses.length} 个 body，总质量 ${pdNumber(totalMass,3)} kg。请核对源模型数据是否符合实物。</p><p><code>armature</code> 是额外折算到关节端的电机惯量，与连杆刚体惯量分开。URDF 的 <code>&lt;inertial&gt;</code> 通常描述刚体，不能据此认定已包含电机折算惯量。</p></div>${templateArmatures?`<p id="pd-input-template-warning" class="notice warning">${templateArmatures} / ${joints.length} 个关节的 armature 沿用模板默认值（当前值 ${Array.from(templateArmatureValues).join(" / ")} kg·m²），尚未确认属于当前机器人。可以据此做假设筛选；请在第 05 步填入真实电机转子惯量，由传动比自动折算。</p>`:""}<div class="table-scroll pd-input-scroll"><table class="data-table pd-input-table"><thead><tr><th>关节</th><th>电机折算惯量<br>armature · kg·m²</th><th>当前 PD<br>Kp / Kd</th><th>力矩限幅<br>N·m</th><th>被动阻尼<br>N·m·s/rad</th><th>被动摩擦<br>N·m</th><th>初始角度<br>rad</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="muted">请先完成关节映射。</td></tr>'}</tbody></table></div><p class="field-note pd-input-timing" data-pd-input-timing>仿真步长 <strong>${pdNumber(dt,6)} s</strong> ${sourceBadge("environment.sim_dt")}；执行器<strong>目标位置</strong>延迟 ${pdNumber(low,0)}–${pdNumber(high,0)} 个物理步（${pdNumber(low*dt*1000,3)}–${pdNumber(high*dt*1000,3)} ms）。延迟保持概率 ${pdNumber(control.delay_hold_prob??0,3)}，更新周期 ${pdNumber(control.delay_update_period??0,0)} 步。该配置延迟位置目标，实机控制链延迟在上方单独填写并用于跟踪与落地测试。</p><p class="field-note">关节侧补充参数：额定连续扭矩已填 ${continuousKnown} / ${joints.length}，允许最高工作转速已填 ${velocityKnown} / ${joints.length}；未填项保持未知。连续扭矩参与动作预算展示，并用于动态跟踪与落地的实测 RMS 筛选；转速用于响应超速判定，不钳速、不生成训练限速。已确认的 T–N 离散曲线用于动态测试的速度相关限矩；仅上传图片时保持参考资料。没有温升模型；实机内环频率与控制链延迟若填写，将用于跟踪与落地离散控制测试；空白时只验证训练原生时序。</p><div class="pd-input-links"><button type="button" class="button secondary small" data-pd-edit-controls>修改逐关节参数 ↓</button><button type="button" class="button quiet small" data-pd-edit-hardware>补充电机参数 ↓</button></div>`;
   }
   const pendingSpeedValues=new WeakMap();
   function motorSpeedUnit() {return state.spec.workflow?.ui?.motor_speed_unit==="rad/s"?"rad/s":"rpm";}
@@ -802,9 +823,6 @@
       ["frequency_hz","设计自然频率","Hz",0.1,false,"决定期望响应速度"],
       ["damping_ratio","设计阻尼比 ζ","",0.05,false,"1 为临界阻尼的理想二阶近似"],
       ["pose_delta_rad","采样姿态扰动","rad",0,false,"从初始姿态按关节类型取 ± 扰动"],
-      ["action_amplitude","预算动作幅值 ±a","",0,false,"检查给定动作幅值下的比例项力矩"],
-      ["hardware_pd_hz","实机内部 PD 频率","Hz",1,true,"不是策略推理或命令发送频率"],
-      ["hardware_delay_ms","实机控制链延迟","ms",0,true,"未知时留空，不从仿真时序推断"],
     ];
     const maxima={frequency_hz:100,damping_ratio:10,pose_delta_rad:Math.PI,action_amplitude:1000,hardware_pd_hz:100000,hardware_delay_ms:1000};
     $("#pd-options").innerHTML=fields.map(([key,label,unit,min,optional,note])=>`<label class="field"><span>${label}${unit?`<em>${unit}</em>`:""}</span><input type="number" step="any" min="${min}" max="${maxima[key]}" value="${esc(options[key]??"")}" data-pd-option="${key}" aria-label="${label}" ${optional?'placeholder="未提供"':"required"}><small>${note}</small></label>`).join("")+`<label class="field full"><span>增益分组</span><select data-pd-grouping aria-label="PD 增益分组">${[["auto","自动（对称任务左右共用）"],["individual","逐关节"],["mirror_pairs","左右成对共用"]].map(([key,label])=>`<option value="${key}" ${options.gain_grouping===key?"selected":""}>${label}</option>`).join("")}</select><small>对称任务要求左右增益相同。成对设计使用配对的最大惯量与阻尼需求，并保留各关节真实惯量范围。</small></label>`;
@@ -836,11 +854,19 @@
     button.disabled=state.busy||state.pd.running||testing||!state.inspection||state.invalidFields.size>0;
     button.textContent=state.pd.running?"计算中…":"计算 PD 候选 ↗";
     const apply=$("#pd-apply");if(apply)apply.disabled=state.busy||state.pd.running||testing||state.invalidFields.size>0||!pdFresh()||!pdScopeEntry()?.report?.proposals?.[state.pd.method];
-    $("#pd-test").disabled=state.busy||state.pd.running||testing||!state.inspection||state.invalidFields.size>0||state.pdUi.inputConfirmed[state.scope]!==pdInputFingerprint();
-    $("#pd-test").textContent=testing?"正在搜索并测试…":"搜索并测试 PD ↗";
+    $("#pd-test").disabled=state.busy||state.pd.running||testing||!state.inspection||state.invalidFields.size>0||pdTestRequirementIssues().length>0||state.pdUi.inputConfirmed[state.scope]!==pdInputFingerprint();
+    $("#pd-test").textContent=testing?"正在并行测试各项约束…":"并行搜索与约束测试 ↗";
     $("#pd-test-stop").hidden=!testing;
     $("#pd-test-stop").disabled=state.pdTest.starting||!state.pdTest.job?.id||!!state.pdTest.job?.stopping;
-    const testApply=$("#pd-test-apply");if(testApply)testApply.disabled=state.busy||state.pd.running||testing||state.invalidFields.size>0||!pdResponseFresh()||!pdSelectedCandidate()?.summary?.eligible||pdReferenceOnly(pdSelectedCandidate());
+    const testApply=$("#pd-test-apply");if(testApply)testApply.disabled=state.busy||state.pd.running||testing||state.invalidFields.size>0||!pdResponseFresh()||!pdCandidateEligible(pdSelectedCandidate());
+  }
+  function pdTestRequirementIssues() {
+    const options=pdOptions(),issues=[];
+    const bounds={action_amplitude:[Number.MIN_VALUE,1000],max_settling_time_s:[0.05,2],max_unit_action_effort_ratio:[0.05,1],tracking_frequency_hz:[0.1,2],max_tracking_error_ratio:[0.01,1]};
+    const labels={action_amplitude:"测试动作幅值必须大于 0",max_settling_time_s:"最长到位时间须为 0.05–2 s",max_unit_action_effort_ratio:"动作比例力矩限矩占比须为 0.05–1",tracking_frequency_hz:"动态目标频率须为 0.1–2 Hz",max_tracking_error_ratio:"动态跟踪误差比例须为 0.01–1"};
+    for(const [key,[low,high]] of Object.entries(bounds))if(typeof options[key]!=="number"||!Number.isFinite(options[key])||options[key]<low||options[key]>high)issues.push(labels[key]);
+    if(!["task","feet_only"].includes(options.ground_contact_policy))issues.push("请选择有效的落地接触要求");
+    return issues;
   }
   function editPdInput(input) {
     const option=input.dataset.pdOption;const name=input.dataset.pdJoint;const key=option||input.dataset.pdHardware;if(!key)return;
@@ -848,6 +874,10 @@
     input.setCustomValidity("");
     const options=pdOptions();const optional=!!name||["hardware_pd_hz","hardware_delay_ms"].includes(key);
     const empty=input.value.trim()==="";
+    if(key==="ground_contact_policy"){
+      if(!["task","feet_only"].includes(input.value)){input.setCustomValidity("请选择有效的接触判定方式");state.invalidFields.add(invalidKey);invalidatePd("接触判定方式无效，请修正。");updateActions();return;}
+      state.invalidFields.delete(invalidKey);input.classList.remove("pd-invalid");options[key]=input.value;pdScopeEntry(true).options=options;changed();return;
+    }
     if(input.validity.badInput||(empty&&!optional)||(!empty&&(!Number.isFinite(Number(input.value))||!input.checkValidity()))){
       input.setCustomValidity("请填写符合范围的有限数值");input.classList.add("pd-invalid");state.invalidFields.add(invalidKey);invalidatePd("分析输入尚未填写完整，请修正后重新计算。");updateActions();return;
     }
@@ -897,34 +927,133 @@
   function pdTestActive() {return state.pdTest.starting||["queued","running"].includes(state.pdTest.job?.status);}
   function pdResponseFresh() {const session=pdSession("pdTest");return !!session&&session.report===pdScopeEntry()?.response_report&&session.fingerprint===pdInputFingerprint()&&!pdPending();}
   function pdSelectedCandidate() {return pdScopeEntry()?.response_report?.candidates?.find((candidate)=>candidate.id===state.pdTest.candidateId);}
-  function pdReferenceOnly(candidate,report=pdScopeEntry()?.response_report) {return !!candidate&&(candidate.reference_only===true||(candidate.id==="current"&&report?.pd_reference?.reference_only===true));}
+  function pdReferenceOnly(candidate,report=pdScopeEntry()?.response_report) {return window.MigrationPdFlow.isReferenceOnly(report,candidate);}
+  function pdCandidateEligible(candidate,report=pdScopeEntry()?.response_report) {return window.MigrationPdFlow.isEligible(report,candidate);}
   function pdDefaultCandidateId(report) {
     const candidates=report?.candidates||[];
-    const recommended=candidates.find((candidate)=>candidate.id===report.recommended_id&&!pdReferenceOnly(candidate,report));
-    return recommended?.id||candidates.find((candidate)=>candidate.id!=="current"&&!pdReferenceOnly(candidate,report))?.id||null;
+    const recommended=candidates.find((candidate)=>candidate.id===report.recommended_id&&pdCandidateEligible(candidate,report));
+    const eligible=candidates.find((candidate)=>pdCandidateEligible(candidate,report));
+    const diagnostic=candidates.find((candidate)=>candidate.id===report.diagnostic_id);
+    const fallback=candidates.filter((candidate)=>!pdReferenceOnly(candidate,report)).sort((a,b)=>Number(b.summary?.joint_eligible===true)-Number(a.summary?.joint_eligible===true)||(b.summary?.passed_joints??0)-(a.summary?.passed_joints??0)||(a.summary?.score??Infinity)-(b.summary?.score??Infinity))[0];
+    return recommended?.id||eligible?.id||diagnostic?.id||fallback?.id||candidates[0]?.id||null;
   }
   function pdSeconds(value) {return typeof value==="number"&&Number.isFinite(value)?`${pdNumber(value,3)} s`:"未到位";}
   function pdPercent(value) {return typeof value==="number"&&Number.isFinite(value)?`${pdNumber(value,1)}%`:"未提供";}
+  function pdGroundStatus(ground) {return {passed:"通过",failed:"未通过",skipped:"未运行"}[ground?.status]||"缺少落地测试";}
+  const pdGroundMetrics={
+    max_tilt_deg:["最大倾角","°",2],min_base_height_m:["最低机身高度","m",3],max_base_drop_m:["最大机身下沉","m",3],max_drift_m:["最大水平漂移","m",3],
+    foot_contact_fraction:["至少三足承重时间占比","ratio"],base_contact_time_s:["机体触地时间 · 最坏工况","s",3],leg_contact_time_s:["腿部触地时间 · 最坏工况","s",3],illegal_contact_time_s:["禁止接触时间 · 最坏工况","s",3],nonfoot_contact_time_s:["非足端触地时间 · 最坏工况","s",3],foot_slip_p95_m_s:["足端滑移 P95","m/s",3],
+    steady_joint_error_max_rad:["稳态最大关节误差","rad",4],max_saturation_fraction:["最大力矩饱和占比","ratio"],peak_joint_velocity_rad_s:["峰值关节速度","rad/s",3],
+    steady_joint_speed_rms_rad_s:["稳态关节速度 RMS","rad/s",3],final_tilt_deg:["结束时机身倾角","°",2],steady_base_speed_rms_m_s:["稳态机身速度 RMS","m/s",3],steady_base_angular_speed_rms_rad_s:["稳态机身角速度 RMS","rad/s",3],leg_contact_fraction:["腿部触地时长占比 · 排序成本","ratio"],peak_base_normal_force_n:["机体接触峰值法向力","N",2],peak_leg_normal_force_n:["腿部接触峰值法向力","N",2],
+  };
+  function pdGroundMetricValue(key,value) {const item=pdGroundMetrics[key];return item?.[1]==="ratio"?pdRatio(value):`${pdNumber(value,item?.[2]??3)}${item?.[1]?` ${item[1]}`:""}`;}
+  function pdGroundCriteriaMarkup(conditions={}) {
+    const criteria=conditions.pass_criteria;if(!criteria)return "";
+    const labels={max_tilt_deg:["最大倾角","≤","°"],min_base_height_fraction:["最低机身高度 / 初始高度","≥","ratio"],max_base_drop_fraction:["最大下沉 / 初始高度","≤","ratio"],max_drift_m:["水平漂移","≤","m"],min_foot_contact_fraction:["至少三足承重时间占比","≥","ratio"],max_foot_slip_p95_m_s:["足端滑移 P95","≤","m/s"],max_steady_joint_error_rad:["稳态关节误差","≤","rad"],max_steady_joint_speed_rms_rad_s:["稳态关节速度 RMS","≤","rad/s"],max_final_tilt_deg:["结束倾角","≤","°"],max_steady_base_speed_m_s:["稳态机身速度 RMS","≤","m/s"],max_steady_base_angular_speed_rad_s:["稳态机身角速度 RMS","≤","rad/s"],max_saturation_fraction:["力矩饱和占比","≤","ratio"]};
+    return `<details class="subsection"><summary>本次落地判定阈值</summary><dl class="pd-ground-metrics">${Object.entries(labels).filter(([key])=>Object.hasOwn(criteria,key)).map(([key,[label,comparison,unit]])=>`<div><dt>${esc(label)}</dt><dd>${comparison} ${unit==="ratio"?pdRatio(criteria[key]):`${pdNumber(criteria[key],3)} ${esc(unit)}`}</dd></div>`).join("")}</dl><p class="field-note">这些是本次仿真筛选阈值，不冒充实机要求。稳态窗口 ${pdNumber(criteria.steady_window_s,2)} s；接触统计跳过初始 ${pdNumber(criteria.contact_settle_grace_s,2)} s，承重接触阈值 ${pdNumber(criteria.contact_force_threshold_n,2)} N。全部条件及完整试验时长均通过才算落地通过。</p></details>`;
+  }
+  function pdContactContractMarkup(conditions={}) {
+    const contract=conditions.contact_contract;if(!contract)return "";
+    const strict=contract.policy==="feet_only";
+    return `<section class="pd-contact-contract"><h5>本次接触要求：${strict?"仅允许足端承重":"按所选任务合同"}</h5><p class="field-note">禁止接触的几何：${strict?"所有非足端几何（包括机体与腿部）":esc((contract.illegal_geom_names||[]).join("、")||"见完整工况")}。法向力 &gt; ${pdNumber(contract.illegal_force_threshold_n,3)} N 的禁止接触累计超过 ${pdNumber(contract.max_illegal_contact_time_s,3)} s，判定未通过。</p>${strict?"":`<p class="field-note">腿部法向力 &gt; ${pdNumber(contract.leg_warning_force_threshold_n,3)} N、累计触地超过 ${pdNumber(contract.leg_warning_contact_time_s,3)} s 时显示警告并计入综合排序成本。</p>`}<p class="field-note">使用当前 Web 所选任务的接触几何映射。这里按累计接触时长筛查；训练终止器的传感器与逐步判定语义另外保留。</p><details class="subsection"><summary>接触合同来源与几何映射</summary><pre class="json-pre">${esc(JSON.stringify(contract,null,2))}</pre></details></section>`;
+  }
+  function pdGroundMarkup(candidate,report) {
+    const ground=candidate?.ground,metrics=ground?.metrics||{},trials=Array.isArray(ground?.trials)?ground.trials:[];
+    if(!ground)return '<section class="pd-ground-results"><h4>整机落地复核</h4><p class="notice warning">这份报告没有完整机器人落地测试。可以查看历史关节响应，重新搜索并通过各层约束后才能应用。</p></section>';
+    const reasons=Array.isArray(ground.reasons)?ground.reasons:[],warnings=Array.isArray(ground.warnings)?ground.warnings:[],names={standing:"平地静站",push_x:"X 方向扰动",push_y:"Y 方向扰动",target_motion:"变化目标与恢复"};
+    const known=Object.keys(pdGroundMetrics).filter((key)=>Object.hasOwn(metrics,key));
+    return `<section class="pd-ground-results" aria-label="完整机器人落地测试结果"><div class="pd-section-heading"><div><h4>整机落地承重与扰动：${esc(pdGroundStatus(ground))}</h4><p>开启重力与地面接触，基座自由运动；12 个关节使用所选候选；静站、扰动与变化目标工况各自独立重置。变化目标为四分之一本次动作幅值的对称腿部屈伸探针，检验目标更新与延迟。</p></div><span class="pd-stage-badge ${ground.passed===true?"passed":"failed"}">${ground.passed===true?"落地通过":"诊断结果"}</span></div>${reasons.length?`<ul class="pd-ground-reasons">${reasons.map((reason)=>`<li>${esc(issueText(reason))}</li>`).join("")}</ul>`:""}${warnings.length?`<div class="notice warning pd-ground-warning"><strong>任务接触警告 · 参与排序</strong><ul>${warnings.map((warning)=>`<li>${esc(issueText(warning))}</li>`).join("")}</ul></div>`:""}${known.length?`<dl class="pd-ground-metrics">${known.map((key)=>`<div><dt>${esc(pdGroundMetrics[key][0])}</dt><dd>${esc(pdGroundMetricValue(key,metrics[key]))}</dd></div>`).join("")}</dl>`:'<p class="field-note">没有有效整机指标，请查看失败原因和日志。</p>'}${trials.length?`<div class="table-scroll pd-result-scroll"><table class="data-table pd-ground-trials"><thead><tr><th>独立工况</th><th>结果 / 原因</th><th>最大倾角</th><th>机身下沉</th><th>水平漂移</th><th>足端滑移 P95</th><th>最大饱和占比</th></tr></thead><tbody>${trials.map((trial)=>{const m=trial.metrics||{};return `<tr><th scope="row">${esc(names[trial.name]||trial.label||trial.name||"落地工况")}</th><td>${trial.passed===true&&trial.status==="passed"?"通过":"未通过"}<small>${(trial.reasons||[]).map((reason)=>esc(issueText(reason))).join("；")}</small>${trial.warnings?.length?`<small class="pd-ground-warning">警告：${trial.warnings.map((warning)=>esc(issueText(warning))).join("；")}</small>`:""}</td>${["max_tilt_deg","max_base_drop_m","max_drift_m","foot_slip_p95_m_s","max_saturation_fraction"].map((key)=>`<td>${esc(pdGroundMetricValue(key,m[key]))}</td>`).join("")}</tr>`;}).join("")}</tbody></table></div>`:""}<p class="field-note">承重时纯 PD 依靠一定关节误差产生支撑力矩；落地阈值与空载阶跃的 2% 到位标准分别判定。这里验证有限仿真工况，后续训练效果和实机表现仍需各自验证。</p>${pdContactContractMarkup(ground.conditions||report.ground_conditions)}${pdGroundCriteriaMarkup(ground.conditions||report.ground_conditions)}<details class="subsection"><summary>实际控制时序与逐工况完整数据</summary><pre class="json-pre">${esc(JSON.stringify({conditions:ground.conditions||report.ground_conditions,metrics,trials:trials.map(({trace,trajectory,...trial})=>trial)},null,2))}</pre></details></section>`;
+  }
+  function pdCandidateGridLabel(report) {
+    const grid=report.candidate_grid;
+    const frequencies=grid?.frequency_hz||grid?.frequencies_hz,ratios=grid?.damping_ratio||grid?.damping_ratios;
+    if(Array.isArray(frequencies)&&Array.isArray(ratios))return `${frequencies.map((value)=>pdNumber(value,1)).join(" / ")} Hz × ζ ${ratios.map((value)=>pdNumber(value,2)).join(" / ")}${grid.budget_boundary_count>0?`；按本次动作幅值和限矩自动补充 ${pdNumber(grid.budget_boundary_frequency_hz,1)} Hz 的 ${grid.budget_boundary_count} 组预算边界候选`:""}`;
+    return `${(report.candidates||[]).filter((candidate)=>candidate.frequency_hz!=null).length} 组设计目标`;
+  }
+  function pdCandidateFailure(candidate,report) {
+    if(!window.MigrationPdFlow.hasGroundProtocol(report))return "旧报告缺少当前动态跟踪与力矩约束协议";
+    if(pdReferenceOnly(candidate,report))return "仅作比较基准，不参与推荐";
+    if(pdCandidateEligible(candidate,report))return "全部约束通过，可审阅应用";
+    const reasons=Array.isArray(candidate.ground?.reasons)?candidate.ground.reasons.map(issueText):[];
+    if(candidate.summary?.joint_eligible!==true){const failed=(candidate.joints||[]).filter((joint)=>joint.metrics?.passed!==true).map((joint)=>joint.name);reasons.unshift(`单关节未通过${failed.length?`：${failed.slice(0,3).join("、")}${failed.length>3?"等":""}`:""}`);}
+    if(candidate.summary?.tracking_passed!==true)reasons.push(...(candidate.tracking?.reasons||["动态目标未通过"]).map(issueText));
+    if(candidate.summary?.budget_passed!==true)reasons.push(...(candidate.torque_budget?.reasons||["动作力矩预算未通过"]).map(issueText));
+    return reasons.join("；")||`落地${pdGroundStatus(candidate.ground)}`;
+  }
+  function pdResponseVideos(candidate,report) {
+    const seen=new Set(),videos=[...(candidate?.videos||[]),...(report.videos||[]).filter((item)=>item.candidate_id===candidate?.id)].filter((item)=>{if(item.candidate_id&&item.candidate_id!==candidate?.id||seen.has(item.url))return false;seen.add(item.url);return true;});
+    const ground=videoMarkup(videos.filter((item)=>item.kind==="ground_trajectory")),joint=videoMarkup(videos.filter((item)=>item.kind!=="ground_trajectory"));
+    if(!ground&&!joint)return '<p class="field-note">所选候选没有可播放视频。可比较有诊断视频的候选，并查看落地原因、曲线和报告；视频会在任务生成成功后自动删除。</p>';
+    return `<section class="test-videos pd-test-videos"><h4>所选候选的试验视频</h4>${ground?`<p class="field-note"><strong>真实整机状态回放：</strong>来自本候选落地试验的完整机体与关节状态，包含重力、接触及扰动过程。</p>${ground}`:""}${joint?`<p class="field-note"><strong>单关节轨迹回放：</strong>固定基座和其他关节、关闭重力与接触，用于检查局部阶跃响应。</p>${joint}`:""}<p class="field-note">视频在生成成功后自动删除，测试报告和日志保留。没有通过的候选也可查看诊断视频，不能据此应用。</p></section>`;
+  }
+  function pdJointRecord(records,name) {
+    return Array.isArray(records)?records.find((item)=>item.name===name)||{}:records?.[name]||{};
+  }
+  function pdTrackingMetric(metrics={},key) {
+    metrics ||= {};
+    const aliases={rms_error_rad:["tracking_rmse_rad","max_tracking_rmse_rad","rms_error_rad","tracking_error_rms_rad","error_rms_rad"],rms_error_ratio:["tracking_error_ratio","max_tracking_error_ratio","rms_error_ratio","max_rms_error_ratio","error_ratio"],saturation_fraction:["saturation_fraction","max_saturation_fraction"],continuous_effort_ratio:["continuous_effort_ratio","max_continuous_effort_ratio","continuous_torque_ratio"]};
+    return (aliases[key]||[key]).map((field)=>metrics[field]).find((value)=>typeof value==="number"&&Number.isFinite(value));
+  }
+  function pdTrackingMarkup(candidate,report) {
+    const tracking=candidate?.tracking;
+    if(!tracking)return '<section class="pd-tracking-results"><h4>实际动作幅值动态跟踪</h4><p class="notice warning">缺少动态目标测试，当前协议下不能推荐或应用。</p></section>';
+    const metrics=tracking.metrics||{},reasons=tracking.reasons||[],conditions=tracking.conditions||report.tracking_conditions||{};
+    const selectedJoint=pdJointRecord(tracking.joints,state.pdTest.jointName),trace=selectedJoint.trace||selectedJoint.metrics?.trace;
+    const chart=trace?pdResponseChart({name:selectedJoint.name||state.pdTest.jointName,trace:{...trace,target:trace.applied_target||trace.target}},"worst"):"";
+    return `<section class="pd-tracking-results" aria-label="实际动作幅值动态跟踪结果"><div class="pd-section-heading"><div><h4>实际动作幅值动态跟踪：${tracking.passed===true?"通过":"未通过"}</h4><p>固定基座与其他关节，沿用动作缩放、裁剪、目标更新和延迟；测试周期目标而非只检查小阶跃。</p></div><span class="pd-stage-badge ${tracking.passed===true?"passed":"failed"}">${tracking.passed===true?"跟踪通过":"查看原因"}</span></div>${reasons.length?`<ul class="pd-ground-reasons">${reasons.map((reason)=>`<li>${esc(issueText(reason))}</li>`).join("")}</ul>`:""}<dl class="pd-ground-metrics"><div><dt>最大 RMS 误差 / 目标幅值</dt><dd>${pdRatio(pdTrackingMetric(metrics,"rms_error_ratio"))}</dd></div><div><dt>最大力矩饱和占比</dt><dd>${pdRatio(pdTrackingMetric(metrics,"saturation_fraction"))}</dd></div><div><dt>已提供连续力矩 · 动态 RMS 筛选</dt><dd>${metrics.continuous_torque_passed===true?"通过":metrics.continuous_torque_passed===false?"未通过":"连续能力未提供"}${Number.isFinite(metrics.known_continuous_torque_joints)?` · ${metrics.known_continuous_torque_joints} 关节`:""}</dd></div></dl>${chart?`<details class="subsection"><summary>查看 ${esc(state.pdTest.jointName)} 的动态跟踪曲线</summary><p class="field-note">目标线为实际延迟后应用的目标；位置和力矩来自本次试验。切换下方阶跃曲线的关节，会同步切换这里的跟踪曲线。</p><div class="pd-response-chart">${chart}</div><div class="pd-chart-legend"><span class="pd-line-position">关节角度</span><span class="pd-line-target">实际目标</span><span class="pd-line-torque">电机力矩</span></div></details>`:""}<details class="subsection"><summary>逐关节跟踪工况与完整结果</summary><pre class="json-pre">${esc(JSON.stringify({conditions,metrics,joints:tracking.joints},null,2))}</pre></details></section>`;
+  }
+  function pdBudgetMarkup(candidate) {
+    const budget=candidate?.torque_budget;
+    if(!budget)return '<section class="pd-budget-results"><h4>动作力矩预算</h4><p class="notice warning">缺少动作力矩预算，当前协议下不能推荐或应用。</p></section>';
+    const joints=Array.isArray(budget.joints)?budget.joints:Object.entries(budget.joints||{}).map(([name,value])=>({name,...value}));
+    return `<section class="pd-budget-results" aria-label="动作力矩预算结果"><div class="pd-section-heading"><div><h4>动作力矩预算：${budget.passed===true?"通过":"未通过"}</h4><p>按本次动作幅值 ±${pdNumber(budget.action_amplitude,3)} 计算静止比例力矩；限矩占比上限 ${pdRatio(budget.limit_ratio)}。比例项预算不包含支撑负载或阻尼项，动态测试另行检查真实力矩。</p></div><span class="pd-stage-badge ${budget.passed===true?"passed":"failed"}">${budget.passed===true?"预算通过":"预算未通过"}</span></div>${(budget.reasons||[]).length?`<ul class="pd-ground-reasons">${budget.reasons.map((reason)=>`<li>${esc(issueText(reason))}</li>`).join("")}</ul>`:""}<dl class="pd-ground-metrics"><div><dt>最大动作力矩 / 限矩</dt><dd>${pdRatio(budget.max_effort_ratio)}</dd></div><div><dt>平均动作力矩 / 限矩</dt><dd>${pdRatio(budget.mean_effort_ratio)}</dd></div><div><dt>最早请求饱和的动作幅值</dt><dd>${pdNumber(budget.minimum_saturation_action,3)}</dd></div></dl><details class="subsection"><summary>逐关节动作幅度、力矩和可用余量</summary><div class="table-scroll pd-result-scroll"><table class="data-table pd-budget-table"><thead><tr><th>关节</th><th>单位动作比例力矩<br>N·m</th><th>本次动作比例力矩 / 限矩<br>N·m</th><th>本次限矩占比</th><th>饱和动作幅值</th><th>本次比例力矩 / 连续力矩</th><th>动作范围与原因</th></tr></thead><tbody>${joints.map((joint)=>`<tr><th scope="row">${esc(joint.name)}</th><td>${pdNumber(joint.unit_action_torque_nm,3)}</td><td>${pdNumber(joint.requested_action_torque_nm,3)} / ${pdNumber(joint.effort_limit_nm,3)}</td><td class="${joint.passed===true?"":"pd-over-budget"}">${pdRatio(joint.effort_ratio)}</td><td>${pdNumber(joint.saturation_action,3)}</td><td>${joint.continuous_torque_nm==null?"连续能力未提供":`${pdRatio(joint.continuous_effort_ratio)} / ${pdNumber(joint.continuous_torque_nm,3)} N·m`}</td><td>${joint.passed===true?"通过":"未通过"}<small>请求 ±${pdNumber(joint.requested_amplitude_rad,3)} rad · 可用 −${pdNumber(joint.available_minus_rad,3)} / +${pdNumber(joint.available_plus_rad,3)} rad</small><small>${(joint.reasons||[]).map((reason)=>esc(issueText(reason))).join("；")}</small></td></tr>`).join("")}</tbody></table></div></details></section>`;
+  }
   function renderPdResponse() {
     const node=$("#pd-test-results");if(!node)return;
     const test=state.pdTest,job=test.job,report=pdScopeEntry()?.response_report;
     const labels={queued:"已排队",running:"测试中",passed:"已完成",failed:"失败",stopped:"已停止",skipped:"未运行"};
     const jobScope=job?.scope==="common"?"公共配置":taskMeta[job?.scope]?.label||job?.scope;
-    $("#pd-test-status").textContent=test.starting?"正在提交受控单关节仿真…":job?`${jobScope} · ${labels[job.status]||job.status}${job.stopping?" · 正在停止…":""}${job.discarded?" · 配置或作用范围已变化，返回结果已丢弃，请重新测试。":""}${job.error?` · ${job.error}`:""}`:"导入模型并确认映射后，即可搜索 PD；审阅并应用后才写入配置。";
+    $("#pd-test-status").textContent=test.starting?"正在提交候选并行测试：响应 + 实际动作跟踪 + 落地 + 力矩预算…":job?`${jobScope} · ${labels[job.status]||job.status}${job.stopping?" · 正在停止…":""}${job.discarded?" · 配置或作用范围已变化，返回结果已丢弃，请重新测试。":""}${job.error?` · ${job.error}`:""}`:"导入模型并确认映射后，即可并行搜索 PD；全部约束通过且审阅应用后才写入配置。";
     $("#pd-test-log-details").hidden=!job;
-    if(job){const log=$("#pd-test-log"),bottom=log.scrollTop+log.clientHeight>=log.scrollHeight-40;log.textContent=job.log||"等待测试日志…";if(bottom)log.scrollTop=log.scrollHeight;}
+    if(job){const log=$("#pd-test-log"),bottom=log.scrollTop+log.clientHeight>=log.scrollHeight-40;log.textContent=job.log||"等待候选及各层测试日志…";if(bottom)log.scrollTop=log.scrollHeight;}
     node.hidden=!report;
     if(!report){node.replaceChildren();$("#pd-application-preview").replaceChildren();$("#pd-application-actions").replaceChildren();updatePdActions();renderPdFlow();return;}
-    const fresh=pdResponseFresh(),candidates=Array.isArray(report.candidates)?report.candidates:[];
+    const fresh=pdResponseFresh(),candidates=Array.isArray(report.candidates)?report.candidates:[],complete=window.MigrationPdFlow.hasGroundProtocol(report);
     if(!candidates.some((candidate)=>candidate.id===test.candidateId))test.candidateId=pdDefaultCandidateId(report);
-    const selected=pdSelectedCandidate(),joints=selected?.joints||[];
+    const selected=pdSelectedCandidate(),joints=selected?.joints||[],eligible=pdCandidateEligible(selected,report);
     if(!joints.some((joint)=>joint.name===test.jointName))test.jointName=joints[0]?.name;
     const joint=joints.find((item)=>item.name===test.jointName),conditions=report.conditions||{},control=selected?.proposal?.control;
-    const current=(binding,key)=>jointValue(effective(),key,binding,null);
-    const warnings=report.warnings||[];
-    node.innerHTML=`${fresh?"":'<div class="notice warning">历史仿真结果 · 当前配置、作用范围或会话已变化，重新测试前不能应用。</div>'}${report.pd_reference?.reference_only?'<div class="notice warning">Kp 20.0 / Kd 0.5 仅在本次测试副本中作为比较基线；该基线没有自动写入配置。它不参与推荐，请选择搜索得到的候选。</div>':""}<div class="pd-section-heading"><div><h4>${report.recommended_id?"候选已比较，请审阅响应与增益":"本次未找到全部关节满足指标的候选"}</h4><p>3 / 5 / 8 Hz × ζ 0.7 / 1 / 1.3，并与已有增益或测试专用基线比较。频率与阻尼比是候选设计目标，下表是仿真实际响应。</p></div><button id="pd-test-download" class="button secondary small">下载测试报告 ↓</button></div><div class="table-scroll pd-result-scroll"><table class="data-table pd-response-table"><thead><tr><th>选择候选 / 设计目标</th><th>通过关节</th><th>最慢到位时间</th><th>最大过冲</th><th>最大饱和时间占比</th><th>最大末端误差</th></tr></thead><tbody>${candidates.map((candidate)=>{const summary=candidate.summary||{};return `<tr class="${candidate.id===test.candidateId?"pd-selected-row":""}"><td><label class="pd-candidate-choice"><input type="radio" name="pd-response-candidate" value="${esc(candidate.id)}" data-pd-test-candidate ${candidate.id===test.candidateId?"checked":""}><span><strong>${esc(candidate.label||candidate.id)}${pdReferenceOnly(candidate,report)?' <em class="source-badge template">仅对照 · 不可应用</em>':""}${candidate.id===report.recommended_id?' <em class="source-badge model">本次推荐</em>':""}</strong><small>${candidate.frequency_hz==null?(report.pd_reference?.baseline_used?"测试专用比较基线 · 未写入配置":"当前配置 · 无指定设计目标"):`${pdNumber(candidate.frequency_hz,1)} Hz / ζ ${pdNumber(candidate.damping_ratio,2)}`}</small></span></label></td><td>${summary.passed_joints??"—"} / ${summary.total_joints??"—"}<small>${pdReferenceOnly(candidate,report)?"仅作测试对照":summary.eligible?"满足本次指标":"请检查未通过关节"}</small></td><td>${pdSeconds(summary.worst_settling_time_s)}</td><td>${pdPercent(summary.max_overshoot_pct)}</td><td>${pdRatio(summary.max_saturation_fraction)}</td><td>${pdNumber(summary.max_final_error_rad,5)} rad</td></tr>`;}).join("")}</tbody></table></div><p class="field-note">到位时间、过冲、饱和占比与末端误差取各关节两个方向的较差结果。推荐只比较本次有限候选与受控工况，应用后仍需检查站立和任务运行。</p><div class="pd-chart-heading"><h4>查看关节响应</h4><label>关节<select id="pd-test-joint" aria-label="响应曲线关节">${joints.map((item)=>`<option value="${esc(item.name)}" ${item.name===test.jointName?"selected":""}>${esc(item.name)} · ${esc(item.leg)} ${esc(item.role)}</option>`).join("")}</select></label><label>方向<select id="pd-test-direction" aria-label="响应曲线测试方向"><option value="worst" ${test.direction==="worst"?"selected":""}>较差方向</option><option value="-1" ${test.direction==="-1"?"selected":""}>负向阶跃</option><option value="1" ${test.direction==="1"?"selected":""}>正向阶跃</option></select></label></div><div class="pd-response-chart">${pdResponseChart(joint,test.direction)}</div><div class="pd-chart-legend"><span class="pd-line-position">关节角度</span><span class="pd-line-target">目标角度</span><span class="pd-line-torque">电机力矩</span><span>选中关节 · ${joint?.metrics?.passed?"通过本次指标":"未通过本次指标"}</span></div><details class="subsection" open><summary>审阅所选候选的实际增益 <span>${esc(selected?.label||"")}</span></summary><p class="field-note">KP：N·m/rad；KD：N·m·s/rad。仅写入下面三项，作用范围为 ${esc(pdScopeLabel())}。</p><div class="table-scroll pd-result-scroll"><table class="data-table pd-response-review"><thead><tr><th>关节</th><th>KP · 现值 → 候选</th><th>KD · 现值 → 候选</th><th>armature kg·m² · 现值 → 候选</th><th>关节测试结果</th></tr></thead><tbody>${joints.map((item)=>{const binding=state.spec.bindings.joints.find((entry)=>entry.name===item.name)||item;return `<tr><td>${esc(item.name)}</td>${["stiffness","damping","armature"].map((key)=>`<td>${pdNumber(current(binding,key))} → <strong>${pdNumber(control?.[key]?.[item.name])}</strong></td>`).join("")}<td>${item.metrics?.passed?"通过":"未通过"}<small>到位 ${pdSeconds(item.metrics?.settling_time_s)} · 过冲 ${pdPercent(item.metrics?.overshoot_pct)}</small></td></tr>`;}).join("")}</tbody></table></div></details>${videoMarkup([...(selected?.videos||[]),...(report.videos||[])])?`<section class="test-videos pd-test-videos"><h4>本次测试视频</h4><p class="field-note">根据实际测得的关节轨迹回放，固定机体与其他关节；没有重力和接触，不代表站立或行走。视频在生成成功后自动删除，测试报告和日志保留。</p>${videoMarkup([...(selected?.videos||[]),...(report.videos||[])])}</section>`:'<p class="field-note">没有可播放的视频，生成任务后会自动清理视频；响应曲线和报告继续保留。</p>'}${warnings.length?`<details class="subsection pd-warning-block"><summary>测试提示 <span>${warnings.length} 项</span></summary><ul>${warnings.map((warning)=>`<li>${esc(issueText(warning))}</li>`).join("")}</ul></details>`:""}<div class="inline-actions pd-response-apply"><span class="muted tiny">${!fresh?"历史结果不能应用，请重新测试。":pdReferenceOnly(selected,report)?"测试基准仅用于对照，不能应用；请选择搜索候选。":!selected?.summary?.eligible?"所选候选未通过全部关节的本次指标，请查看曲线与日志。":"审阅候选后点击应用；不会自动改写配置。"}</span><button id="pd-test-apply" class="button primary">应用此候选到${esc(pdScopeLabel())}</button></div><details class="subsection"><summary>测试工况与说明 <span>REPRODUCIBLE CONDITIONS</span></summary><p class="field-note">CPU · 种子 ${esc(conditions.seed??42)} · 每方向 ${pdNumber(conditions.duration_s,1)} s · 仿真步长 ${pdNumber(conditions.sim_dt,5)} s。固定基座、锁定其他关节，关闭重力和接触；使用配置中的惯量、被动阻尼、摩擦、限矩与执行器延迟。</p>${(report.method_notes||[]).map((note)=>`<p class="field-note">${esc(issueText(note))}</p>`).join("")}<pre class="json-pre">${esc(JSON.stringify(conditions,null,2))}</pre></details>`;
+    const current=(binding,key)=>jointValue(effective(),key,binding,null),warnings=report.warnings||[],analysisWarnings=report.analysis_warnings||[];
+    const recommended=candidates.some((candidate)=>candidate.id===report.recommended_id&&pdCandidateEligible(candidate,report));
+    const parallel=report.parallel||{},workers=parallel.joint_workers??parallel.workers??parallel.max_workers??parallel.worker_count,groundWorkers=parallel.ground?.max_workers;
+    const rows=candidates.map((candidate)=>{
+      const summary=candidate.summary||{},passed=pdCandidateEligible(candidate,report),budget=candidate.torque_budget||{};
+      const kindLabel=candidate.frequency_hz!=null?`${pdNumber(candidate.frequency_hz,1)} Hz / ζ ${pdNumber(candidate.damping_ratio,2)}`:candidate.kind==="retuned_damping"?"保持已有 Kp · 调整阻尼":candidate.id==="current"?(pdReferenceOnly(candidate,report)?"测试专用比较基线 · 未写入配置":"当前配置 · 无指定设计目标"):"已有增益的设计候选";
+      return `<tr class="${candidate.id===test.candidateId?"pd-selected-row":""}"><td><label class="pd-candidate-choice"><input type="radio" name="pd-response-candidate" value="${esc(candidate.id)}" data-pd-test-candidate ${candidate.id===test.candidateId?"checked":""}><span><strong>${esc(candidate.label||candidate.id)}${pdReferenceOnly(candidate,report)?' <em class="source-badge template">仅对照 · 不可应用</em>':""}${candidate.id===report.recommended_id&&passed?' <em class="source-badge model">本次推荐</em>':""}${candidate.id===report.diagnostic_id&&!passed?' <em class="source-badge template">诊断视频</em>':""}</strong><small>${esc(kindLabel)}</small></span></label></td><td><strong>${summary.passed_joints??"—"} / ${summary.total_joints??"—"}</strong><small>${summary.joint_eligible===true?"响应达标":"响应未达标"}</small></td><td><span class="pd-stage-badge ${candidate.tracking?.passed===true?"passed":"failed"}">${candidate.tracking?.passed===true?"通过":candidate.tracking?"未通过":"缺少测试"}</span><small>RMS / 幅值 ${pdRatio(pdTrackingMetric(candidate.tracking?.metrics,"rms_error_ratio"))}</small></td><td><span class="pd-stage-badge ${candidate.ground?.passed===true?"passed":"failed"}">${esc(pdGroundStatus(candidate.ground))}</span>${candidate.ground?.warnings?.length?`<small class="pd-ground-warning">${candidate.ground.warnings.length} 项接触警告 · 参与排序</small>`:""}</td><td><span class="pd-stage-badge ${budget.passed===true?"passed":"failed"}">${budget.passed===true?"通过":candidate.torque_budget?"未通过":"缺少预算"}</span><small>最大 ${pdRatio(budget.max_effort_ratio)}</small><small>${esc(pdCandidateFailure(candidate,report))}</small></td><td>${pdSeconds(summary.worst_settling_time_s)}<small>过冲 ${pdPercent(summary.max_overshoot_pct)}</small></td><td>${typeof candidate.selection?.cost==="number"&&Number.isFinite(candidate.selection.cost)?pdNumber(candidate.selection.cost,4):"不可排名"}<small>${passed?"合格候选中越低越优先":"仅供诊断"}</small></td></tr>`;
+    }).join("");
+    const reviewRows=joints.map((item)=>{
+      const binding=state.spec.bindings.joints.find((entry)=>entry.name===item.name)||item,budget=pdJointRecord(selected?.torque_budget?.joints,item.name),tracking=pdJointRecord(selected?.tracking?.joints,item.name),metrics=tracking.metrics||tracking,trackingPassed=tracking.passed===true||metrics.passed===true;
+      return `<tr><td>${esc(item.name)}</td>${["stiffness","damping","armature"].map((key)=>`<td>${pdNumber(current(binding,key))} → <strong>${pdNumber(control?.[key]?.[item.name])}</strong></td>`).join("")}<td>${item.metrics?.passed===true?"通过":"未通过"}<small>到位 ${pdSeconds(item.metrics?.settling_time_s)} · 过冲 ${pdPercent(item.metrics?.overshoot_pct)}</small></td><td>${pdNumber(budget.unit_action_torque_nm,3)} N·m<small>本次 ${pdNumber(budget.requested_action_torque_nm,3)} / ${pdNumber(budget.effort_limit_nm,3)} N·m (${pdRatio(budget.effort_ratio)})</small><small>饱和动作幅值 ${pdNumber(budget.saturation_action,3)}</small></td><td>${pdNumber(pdTrackingMetric(metrics,"rms_error_rad"),4)} rad<small>幅值比 ${pdRatio(pdTrackingMetric(metrics,"rms_error_ratio"))} · 饱和 ${pdRatio(pdTrackingMetric(metrics,"saturation_fraction"))}</small></td><td>${budget.continuous_torque_nm==null?"连续能力未提供":`${pdRatio(budget.continuous_effort_ratio)} / ${pdNumber(budget.continuous_torque_nm,3)} N·m`}<small>动态 RMS / 连续力矩 ${budget.continuous_torque_nm==null?"未提供连续能力":pdRatio((metrics.torque_rms_nm??metrics.max_torque_rms_nm)/budget.continuous_torque_nm)}</small><small>${budget.passed===true&&trackingPassed?"动作预算与动态跟踪通过":"查看对应测试结果"}</small></td></tr>`;
+    }).join("");
+    node.innerHTML=`${fresh?"":'<div class="notice warning">历史仿真结果 · 当前配置、作用范围或会话已变化，重新测试前不能应用。</div>'}${complete?"":'<div class="notice warning">旧报告缺少当前动态跟踪与力矩约束协议，不能推荐或应用；请重新搜索。</div>'}${report.pd_reference?.reference_only?'<div class="notice warning">Kp 20.0 / Kd 0.5 仅在本次测试副本中作为比较基线；该基线没有自动写入配置，不参与推荐。</div>':""}
+      <div class="pd-section-heading"><div><h4>${recommended?"约束测试已比较，请审阅动作预算与增益":"本次没有全部约束都通过的候选"}</h4><p>${esc(pdCandidateGridLabel(report))}，另与已有增益或测试专用基线比较。设计频率与实际推理频率分别显示。</p></div><button id="pd-test-download" class="button secondary small">下载测试报告 ↓</button></div>
+      <p class="field-note pd-parallel-summary">${workers!=null?`单关节并行 ${esc(workers)} 个候选${groundWorkers!=null?` · 落地并行 ${esc(groundWorkers)} 个候选`:""}`:(complete?"候选并行执行":"历史单关节测试")} · 共 ${candidates.length} 组${parallel.elapsed_s!=null?` · 耗时 ${pdNumber(parallel.elapsed_s,2)} s`:""}。各层未通过的候选保留原因；全部约束通过才可应用。</p>
+      ${report.timing?`<section class="pd-report-timing" aria-label="本次测试实际频率">${pdTimingMarkup(report.timing)}</section>`:""}
+      <div class="table-scroll pd-result-scroll"><table class="data-table pd-response-table"><thead><tr><th>选择候选 / 设计目标</th><th>小阶跃响应</th><th>实际动作幅值跟踪</th><th>整机落地</th><th>动作力矩预算 / 原因</th><th>到位时间 / 过冲</th><th>综合成本</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="field-note">全部硬性约束通过后，按动作力矩需求、动态跟踪误差与腿部触地的综合成本排序；到位时间只检查要求，不奖励更快响应。未推荐时可查看失败原因与诊断视频。</p>
+      ${pdTrackingMarkup(selected,report)}
+      ${pdBudgetMarkup(selected)}
+      ${pdGroundMarkup(selected,report)}
+      <div class="pd-chart-heading"><h4>查看单关节阶跃响应</h4><label>关节<select id="pd-test-joint" aria-label="响应曲线关节">${joints.map((item)=>`<option value="${esc(item.name)}" ${item.name===test.jointName?"selected":""}>${esc(item.name)} · ${esc(item.leg)} ${esc(item.role)}</option>`).join("")}</select></label><label>方向<select id="pd-test-direction" aria-label="响应曲线测试方向"><option value="worst" ${test.direction==="worst"?"selected":""}>较差方向</option><option value="-1" ${test.direction==="-1"?"selected":""}>负向阶跃</option><option value="1" ${test.direction==="1"?"selected":""}>正向阶跃</option></select></label></div>
+      <div class="pd-response-chart">${pdResponseChart(joint,test.direction)}</div><div class="pd-chart-legend"><span class="pd-line-position">关节角度</span><span class="pd-line-target">目标角度</span><span class="pd-line-torque">电机力矩</span><span>选中关节 · ${joint?.metrics?.passed?"通过阶跃指标":"未通过阶跃指标"}</span></div>
+      <details class="subsection" open><summary>审阅所选候选的实际增益 <span>${esc(selected?.label||"")}</span></summary><p class="field-note">KP：N·m/rad；KD：N·m·s/rad。仅写入下面三项，作用范围为 ${esc(pdScopeLabel())}。</p><div class="table-scroll pd-result-scroll"><table class="data-table pd-response-review"><thead><tr><th>关节</th><th>KP · 现值 → 候选</th><th>KD · 现值 → 候选</th><th>armature kg·m² · 现值 → 候选</th><th>单关节响应</th><th>单位动作比例力矩 / 本次预算</th><th>动态跟踪 RMS / 饱和</th><th>连续力矩预算</th></tr></thead><tbody>${reviewRows}</tbody></table></div></details>
+      ${pdResponseVideos(selected,report)}
+      ${warnings.length?`<details class="subsection pd-warning-block"><summary>测试提示 <span>${warnings.length} 项</span></summary><ul>${warnings.map((warning)=>`<li>${esc(issueText(warning))}</li>`).join("")}</ul></details>`:""}
+      ${analysisWarnings.length?`<details class="subsection pd-warning-block"><summary>输入与设计分析提示 <span>${analysisWarnings.length} 项 · 全局</span></summary><p class="field-note">这些提示来自输入或手工设计分析，不代表当前所选候选的实际测试结论；所选候选以各层结果为准。</p><ul>${analysisWarnings.map((warning)=>`<li>${esc(issueText(warning))}</li>`).join("")}</ul></details>`:""}
+      <div class="inline-actions pd-response-apply"><span class="muted tiny">${!fresh?"历史结果不能应用，请重新测试。":!complete?"旧报告缺少当前动态跟踪与力矩约束协议，请重新搜索。":pdReferenceOnly(selected,report)?"测试基准仅用于对照，不能应用；请选择搜索候选。":!eligible?"所选候选未通过全部约束，请查看响应、动态跟踪、落地及预算原因。":"全部约束通过。审阅动作预算与增益后点击应用，不会自动改写配置。"}</span><button id="pd-test-apply" class="button primary" ${fresh&&eligible?"":"disabled"}>应用此候选到${esc(pdScopeLabel())}</button></div>
+      <details class="subsection"><summary>各层测试工况与推荐依据 <span>REPRODUCIBLE CONDITIONS</span></summary><p class="field-note">CPU · 种子 ${esc(conditions.seed??42)}。小阶跃固定基座、锁定其他关节，关闭重力和接触，每方向 ${pdNumber(conditions.duration_s,1)} s；实际动作幅值动态跟踪复核目标变化。整机开启重力与地面接触，基座自由，独立执行静站、X / Y 扰动和变化目标。惯量、被动阻尼、摩擦、限矩与执行器目标延迟均来自当前有效配置。</p>${(report.method_notes||[]).map((note)=>`<p class="field-note">${esc(issueText(note))}</p>`).join("")}<pre class="json-pre">${esc(JSON.stringify({joint_conditions:conditions,tracking_conditions:report.tracking_conditions,ground_conditions:report.ground_conditions,settings:report.settings,selection:report.selection,selected_cost:selected?.selection,timing:report.timing,parallel:report.parallel,candidate_grid:report.candidate_grid},null,2))}</pre></details>`;
     const organized=window.MigrationPdFlow.organize({root:node,applicationPreview:$("#pd-application-preview"),applicationActions:$("#pd-application-actions"),report,selected,fresh,scopeLabel:pdScopeLabel(),applied:pdAppliedMatches()&&pdScopeEntry()?.applied?.candidate_id===selected?.id});
-    const advance=document.createElement("button"),canReview=fresh&&selected?.summary?.eligible&&!pdReferenceOnly(selected);
+    const advance=document.createElement("button"),canReview=fresh&&eligible;
     advance.type="button";advance.className="button primary small";advance.dataset.pdPhase=canReview?"3":"0";
     advance.textContent=canReview?"审阅并应用所选候选 →":"返回核对测试输入 →";
     organized.summary?.append(advance);
@@ -944,7 +1073,7 @@
   async function testPdResponse() {
     if(state.pd.running||pdTestActive())return;
     if(state.pdUi.inputConfirmed[state.scope]!==pdInputFingerprint()){setPdPhase(0);toast("请先核对并确认本次测试输入。","error");return;}
-    const issues=localIssues(3);if(issues.length){displayError(new Error(issues.join("\n")));return;}
+    const issues=localIssues(3).concat(pdTestRequirementIssues());if(issues.length){displayError(new Error(issues.join("\n")));return;}
     const options=pdOptions();
     pdScopeEntry(true).options=clone(options);changed();
     const test=state.pdTest,scope=state.scope,revision=state.revision,epoch=test.epoch,fingerprint=pdInputFingerprint(scope);
@@ -972,7 +1101,8 @@
           const entry=pdScopeEntry(true,job.scope);entry.response_report=report;test.sessions[job.scope]={report,fingerprint:job.fingerprint,inputSnapshot:job.inputSnapshot};entry.response_created_at=new Date().toISOString();entry.response_status="computed_in_session";
           test.report=report;test.revision=job.revision;test.scope=job.scope;test.inputSnapshot=job.inputSnapshot;test.reason="";test.candidateId=pdDefaultCandidateId(report);test.jointName=null;test.direction="worst";if(job.scope===state.scope)state.pdUi.phase=2;
           state.plan=null;state.spec.confirmed=false;$("#confirm-review").checked=false;$("#file-review").hidden=true;$("#diff-section").hidden=true;$("#plan-issues").replaceChildren();$("#plan-summary").textContent="自动测试报告已更新，请重新生成文件预览";
-          toast(report.recommended_id?"PD 响应已比较，请查看曲线与增益，再选择是否应用":"测试已完成，本次没有全部关节满足指标的候选，请查看结果",report.recommended_id?"success":"");
+          const hasRecommendation=report.candidates.some((candidate)=>candidate.id===report.recommended_id&&pdCandidateEligible(candidate,report));
+          toast(hasRecommendation?"各项约束测试已完成，请审阅增益、动作预算和试验视频后应用":"测试已完成，本次没有全部通过的候选；可查看失败原因与诊断视频",hasRecommendation?"success":"");
         }
       }else if(job.status==="failed")toast(job.error||"自动测试失败，请查看日志","error");
     }catch(error){
@@ -991,18 +1121,18 @@
   function applyPdResponse() {
     const candidate=pdSelectedCandidate();
     if(pdReferenceOnly(candidate)){toast("测试基准仅用于对照，不能应用到机器人；请选择搜索候选。","error");return;}
-    if(!pdResponseFresh()||pdTestActive()||state.pd.running||state.invalidFields.size||!candidate?.summary?.eligible){toast("请先按当前配置完成测试，再选择通过本次指标的候选","error");return;}
+    if(!pdResponseFresh()||pdTestActive()||state.pd.running||state.invalidFields.size||!pdCandidateEligible(candidate)){toast("请先按当前配置完成测试，再选择响应、动态跟踪、落地及力矩预算均通过的候选","error");return;}
     const control=candidate.proposal?.control;if(!control)return;
     const entry=pdScopeEntry(),before=Object.fromEntries(state.spec.bindings.joints.map((joint)=>[joint.name,{kp:jointValue(effective(),"stiffness",joint),kd:jointValue(effective(),"damping",joint),armature:jointValue(effective(),"armature",joint)}]));
     const target=targetParameters();target.control ||= {};
     for(const key of ["stiffness","damping","armature"])target.control[key]=clone(control[key]);
-    entry.applied={method:"response",candidate_id:candidate.id,candidate_label:candidate.label,applied_at:new Date().toISOString(),scope:state.scope,options:clone(entry.options),input_snapshot:clone(pdSession("pdTest")?.inputSnapshot||state.pdTest.inputSnapshot),before,proposal:clone(candidate.proposal),response_summary:clone(candidate.summary),conditions:clone(entry.response_report.conditions),hardware_calibrated:false};
+    entry.applied={method:"response",candidate_id:candidate.id,candidate_label:candidate.label,applied_at:new Date().toISOString(),scope:state.scope,options:clone(entry.options),input_snapshot:clone(pdSession("pdTest")?.inputSnapshot||state.pdTest.inputSnapshot),before,proposal:clone(candidate.proposal),response_summary:clone(candidate.summary),protocol:entry.response_report.protocol,conditions:clone(entry.response_report.conditions),ground_conditions:clone(entry.response_report.ground_conditions),ground_summary:clone({status:candidate.ground.status,passed:candidate.ground.passed,metrics:candidate.ground.metrics,reasons:candidate.ground.reasons,warnings:candidate.ground.warnings}),tracking_summary:clone({status:candidate.tracking.status,passed:candidate.tracking.passed,metrics:candidate.tracking.metrics,reasons:candidate.tracking.reasons}),torque_budget:clone(candidate.torque_budget),selection:clone({policy:entry.response_report.selection,candidate:candidate.selection}),timing:clone(entry.response_report.timing),hardware_calibrated:false};
     if(pdSession("pdTest"))pdSession("pdTest").fingerprint=pdInputFingerprint();
     state.pdUi.phase=3;changed();renderJointControls();renderParameters();renderPdResponse();toast(`已将 ${candidate.label} 的 KP、KD 与 armature 应用到${pdScopeLabel()}`,"success");
   }
   function downloadPdResponse() {
     const entry=pdScopeEntry();if(!entry?.response_report)return;
-    const payload={version:1,scope:state.scope,robot:clone(state.spec.robot),model:clone(state.spec.model),options:clone(entry.options||{}),report_status:pdResponseFresh()?"computed_in_session":"needs_recompute",report_created_at:entry.response_created_at,report:entry.response_report,applied:entry.applied||null,hardware_calibrated:false};
+    const payload={version:3,scope:state.scope,robot:clone(state.spec.robot),model:clone(state.spec.model),options:clone(entry.options||{}),report_status:pdResponseFresh()?"computed_in_session":"needs_recompute",report_created_at:entry.response_created_at,report:entry.response_report,applied:entry.applied||null,hardware_calibrated:false};
     const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:"application/json;charset=utf-8"})),link=document.createElement("a");
     link.href=url;link.download=`${state.spec.robot.slug||"robot"}_pd_response_${state.scope}.json`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
@@ -1477,7 +1607,7 @@
     if(phase&&!phase.disabled)setPdPhase(Number(phase.dataset.pdPhase));
     if(mode){state.pdUi.mode=mode.dataset.pdMode;setPdPhase(mode.dataset.pdMode==="manual"?3:0);}
   });
-  $("#pd-input-next").addEventListener("click",()=>{const issues=stepIssues(4).concat(stepIssues(5),stepIssues(3));if(issues.length){displayError(new Error([...new Set(issues)].join("\n")));return;}state.pdUi.inputConfirmed[state.scope]=pdInputFingerprint();setPdPhase(1);updatePdActions();});
+  $("#pd-input-next").addEventListener("click",()=>{const issues=stepIssues(4).concat(stepIssues(5),stepIssues(3),pdTestRequirementIssues());if(issues.length){displayError(new Error([...new Set(issues)].join("\n")));return;}state.pdUi.inputConfirmed[state.scope]=pdInputFingerprint();setPdPhase(1);updatePdActions();});
   $("#pd-review-next").addEventListener("click",()=>setPdPhase(3));
   $("#import-form").addEventListener("submit",importModel);
   $("#import-result").addEventListener("click",(event)=>{

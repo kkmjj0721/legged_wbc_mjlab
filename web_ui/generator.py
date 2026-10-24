@@ -3,7 +3,6 @@
 from copy import deepcopy
 import ast
 import hashlib
-import json
 import keyword
 import importlib
 import inspect
@@ -341,9 +340,9 @@ def _central_config(algorithm, p):
     }[algorithm]
     groups = {"control": "control", "init_state": "init_state", "reset": "reset",
               "randomization": "domain_rand", "environment": "env",
-              "commands": "commands" if algorithm == "him_lpacrl" else "comaman"}
-    if algorithm == "him_lpacrl":
-        groups.update(terrain="terrain", curriculum="curriculum")
+              "commands": "commands" if algorithm == "him_lpacrl" else "comaman",
+              "observations": "observations", "rewards": "rewards",
+              "terrain": "terrain", "curriculum": "curriculum"}
     original_module = importlib.import_module("src.config.ri_4438." + (
         "ri_4438_config" if algorithm == "ppo" else "ri_4438_him_lpacrl_config"
         if algorithm == "him_lpacrl" else "ri_4438_him_config"))
@@ -371,7 +370,7 @@ def _central_config(algorithm, p):
         names.update(supplied)
         for key in sorted(names):
             old = getattr(original, key, None)
-            if inspect.isclass(old):
+            if inspect.isclass(old) or (level == 0 and key in supplied):
                 lines.extend(declaration(old, key, supplied.get(key, {}), level + 1))
             else:
                 value = restore(old, supplied.get(key, old))
@@ -385,16 +384,115 @@ def _central_config(algorithm, p):
 
     from src.config.base.base_config import BaseConfig
     base = "(BaseConfig)" if issubclass(original_env, BaseConfig) else ""
-    lines = ['"""Effective defaults for this selected algorithm; no other algorithm config is needed."""']
+    lines = ['"""Editable defaults for this algorithm; tasks read these classes directly."""',
+             "from src.utils.robot_config import parameters_from_config"]
     if base:
         lines.append("from src.config.base.base_config import BaseConfig")
     # LP constants are used directly by its task configuration.
     for name in sorted(vars(original_module)):
         if name.isupper():
             lines.append(f"{name} = {_literal(getattr(original_module, name))}")
+    if algorithm in ("him", "him_symmetry"):
+        numerics = (REPO_ROOT / "src/config/ri_4438/numerics.py").read_text()
+        lines.extend(["", *numerics.splitlines()[2:]])
     lines.extend(["", *declaration(original_env, env_class, overrides, base=base), "",
-                  *declaration(original_learning, learning_class, p["learning"])])
+                  *declaration(original_learning, learning_class, p["learning"]), "",
+                  "def get_parameters():",
+                  '    """Read current class values into a fresh, independent runtime snapshot."""',
+                  f"    return parameters_from_config({env_class}, {learning_class})"])
     return "\n".join(lines) + "\n"
+
+
+def _robot_constants(slug, prefix, bindings, model_xml, config_modules):
+    """Keep robot structure in its asset package and tunables in one config."""
+    def assignment(name, value):
+        parts = _literal(value).splitlines()
+        prefix = f"{name} = "
+        return prefix + parts[0] + "\n" + "".join(
+            " " * len(prefix) + part + "\n" for part in parts[1:])
+
+    binding_source = assignment("BASE_BODY", bindings["base_body"]) + "\nJOINTS = [\n"
+    for joint in bindings["joints"]:
+        binding_source += "    " + pprint.pformat(joint, width=100_000, sort_dicts=False) + ",\n"
+    binding_source += "]\n\nFEET = [\n"
+    for foot in bindings["feet"]:
+        binding_source += "\n".join("    " + line for line in _literal(foot).splitlines()) + ",\n"
+    binding_source += "]\n\n"
+    for key, name in (("base_geoms", "BASE_GEOMS"), ("leg_geoms", "LEG_GEOMS"),
+                      ("leg_bodies", "LEG_BODIES")):
+        binding_source += assignment(name, bindings.get(key, [])) + "\n"
+    names = {"base_body": "BASE_BODY", "joints": "JOINTS", "feet": "FEET",
+             "base_geoms": "BASE_GEOMS", "leg_geoms": "LEG_GEOMS", "leg_bodies": "LEG_BODIES"}
+    binding_source += "BINDINGS = {\n"
+    for key, value in bindings.items():
+        if key == "all_geoms":
+            expression = ('list(dict.fromkeys(BASE_GEOMS + LEG_GEOMS + '
+                          '[foot["geom"] for foot in FEET]))')
+        else:
+            expression = names.get(key, _literal(value))
+        binding_source += f"    {key!r}: {expression},\n"
+    binding_source += "}\n\n"
+    header = (
+        '"""Robot model, explicit bindings and position-actuator factory.\n\n'
+        'Tune control and initial pose in the selected algorithm configuration.\n'
+        'The task passes those values here when constructing its robot.\n"""\n\n'
+        'from copy import deepcopy\nfrom importlib import import_module\n'
+        'from pathlib import Path\nimport re\n\n'
+        'from mjlab.actuator import BuiltinPositionActuatorCfg\n'
+        'from mjlab.entity import EntityArticulationInfoCfg, EntityCfg\n'
+        'from mjlab.utils.spec_config import CollisionCfg\n'
+        'from src.utils.robot_config import exact_names, joint_value, model_spec\n\n'
+        f'ROBOT_SLUG = {slug!r}\nROBOT_PREFIX = {prefix!r}\n'
+        f'CONFIG_MODULES = {_literal(config_modules)}\n\n'
+        f'MODEL_XML = Path(__file__).resolve().parent / "model" / {model_xml!r}\n\n'
+        f'{binding_source}'
+        'def get_spec():\n'
+        '    """Load the model, foot sites and IMU sensors for MjLab."""\n'
+        '    return model_spec(MODEL_XML, BINDINGS)\n\n'
+        f'def get_{slug}_robot_cfg(control=None, init_state=None):\n'
+        '    """Construct independent actuators from this task\'s effective values."""\n'
+        '    if control is None or init_state is None:\n'
+        '        defaults = import_module(next(iter(CONFIG_MODULES.values()))).get_parameters()\n'
+        '        control = defaults["control"] if control is None else control\n'
+        '        init_state = defaults["init_state"] if init_state is None else init_state\n'
+        '    control, initial = deepcopy(control), deepcopy(init_state)\n'
+    )
+    body = '''    actuators = []
+    for joint in BINDINGS["joints"]:
+        actuators.append(BuiltinPositionActuatorCfg(
+            target_names_expr=exact_names([joint["name"]]),
+            stiffness=float(joint_value(control["stiffness"], joint)),
+            damping=float(joint_value(control["damping"], joint)),
+            effort_limit=float(joint_value(control["effort_limit"], joint)),
+            armature=joint_value(control.get("armature"), joint),
+            frictionloss=joint_value(control.get("friction"), joint),
+            viscous_damping=joint_value(control.get("passive_damping"), joint),
+            **{key: control.get(key, 0) for key in (
+                "delay_min_lag", "delay_max_lag", "delay_hold_prob", "delay_update_period")},
+        ))
+    foot_geoms = exact_names([foot["geom"] for foot in BINDINGS["feet"]])
+    foot_pattern = "(?:" + "|".join(foot_geoms) + ")"
+    collision = CollisionCfg(
+        geom_names_expr=exact_names(BINDINGS["all_geoms"]),
+        contype=1, conaffinity=1,
+        condim={foot_pattern: 3, ".*": 1},
+        priority={foot_pattern: 1, ".*": 0},
+        friction={foot_pattern: (0.6,)}, solref={foot_pattern: (0.02, 1.0)},
+        solimp={foot_pattern: (0.9, 0.95, 0.023)},
+        margin={re.escape(foot["geom"]): foot.get("margin", 0.001) for foot in BINDINGS["feet"]},
+    )
+    return EntityCfg(
+        spec_fn=get_spec,
+        init_state=EntityCfg.InitialStateCfg(
+            pos=tuple(initial["pos"]), rot=tuple(initial.get("rot", [1, 0, 0, 0])),
+            joint_pos={re.escape(j["name"]): float(initial["default_joint"][j["name"]])
+                       for j in BINDINGS["joints"]}, joint_vel={".*": 0.0},
+        ),
+        collisions=(collision,),
+        articulation=EntityArticulationInfoCfg(actuators=tuple(actuators), soft_joint_pos_limit_factor=0.9),
+    )
+'''
+    return header + body
 
 
 def _registration(slug, prefix, algorithm, terrains):
@@ -467,6 +565,11 @@ def _manifest_spec(spec):
         report.pop("cleanup", None)
         for candidate in report.get("candidates", []):
             candidate.pop("joints", None)
+            candidate.pop("videos", None)
+            for joint in candidate.get("tracking", {}).get("joints", []):
+                joint.pop("trace", None)
+            for trial in candidate.get("ground", {}).get("trials", []):
+                trial.pop("trajectory", None)
         report["trajectories_omitted"] = True
     return saved
 
@@ -476,20 +579,32 @@ def render(spec):
     spec = deepcopy(spec)
     _validate(spec)
     root, entry, bindings, limits, model = _model_details(spec)
+    from .motor_curves import compile_envelopes, image_path
+    compile_envelopes(spec, [joint["name"] for joint in bindings["joints"]])
+    for curve in spec.get("motor_curves", []):
+        if curve.get("image"):
+            image_path(curve["image"])
     from .models import check_mesh_budget, _dependencies
     check_mesh_budget(spec["model"].get("mesh_face_limit"), [
         {"name": model.mesh(i).name, "faces": int(model.mesh_facenum[i])}
         for i in range(model.nmesh)
     ])
     effective = _parameters(spec, bindings, limits)
+    # A complete explicit mapping shadows template role defaults. Keep only
+    # the twelve values that the robot actually consumes in its editable file.
+    joint_names = [joint["name"] for joint in bindings["joints"]]
+    for parameters in effective.values():
+        for field in ("stiffness", "damping", "effort_limit", "armature", "friction",
+                      "passive_damping", "action_scale", "action_clip"):
+            values = parameters["control"].get(field)
+            if isinstance(values, dict) and all(name in values for name in joint_names):
+                parameters["control"][field] = {name: values[name] for name in joint_names}
     if "him_symmetry" in effective:
         _validate_symmetry(model, bindings, effective["him_symmetry"])
     slug, prefix = spec["robot"]["slug"], spec["robot"]["prefix"]
     config_root = f"src/config/{slug}"
     asset_root = f"src/assets/robots/{slug}"
     files = {}
-    from .motor_curves import export_files as export_motor_curve_files
-    files.update(export_motor_curve_files(spec))
     model_hashes, template_hashes = {}, {}
     for path in _dependencies(root, entry):
         relative = path.relative_to(root).as_posix()
@@ -497,39 +612,16 @@ def render(spec):
         files[f"{asset_root}/model/{relative}"] = data
         model_hashes[relative] = _sha(data)
     files[f"{asset_root}/__init__.py"] = f"from .{slug}_constants import get_{slug}_robot_cfg\n"
-    first_algorithm = next(iter(effective))
-    files[f"{asset_root}/{slug}_constants.py"] = (
-        '"""Robot factory with explicit control and initial-state inputs."""\n'
-        f"from src.config.{slug}.migration import robot_cfg\n\n"
-        f"def get_{slug}_robot_cfg(control=None, init_state=None):\n"
-        f"    return robot_cfg({first_algorithm!r}, control=control, init_state=init_state)\n")
-    files[f"{config_root}/__init__.py"] = '"""Generated robot and task defaults."""\n'
-    runtime_path = Path(__file__).with_name("template_runtime.py")
-    runtime = runtime_path.read_text()
-    files[f"{config_root}/migration_runtime.py"] = runtime
-    template_hashes["web_ui/template_runtime.py"] = _sha(runtime)
-    migration = (f"from pathlib import Path\nfrom copy import deepcopy\n"
-                 f"from .migration_runtime import create_robot_cfg, model_spec, adapt_env, adapt_runner, joint_value\n\n"
-                 f"BINDINGS = {_literal(bindings)}\n\nPARAMETERS = {_literal(effective)}\n\n"
-                 f"MODEL_XML = Path(__file__).resolve().parents[2] / 'assets' / 'robots' / {slug!r} / 'model' / {entry.relative_to(root).as_posix()!r}\n\n"
-                 "def get_spec():\n"
-                 "    return model_spec(MODEL_XML, BINDINGS)\n\n"
-                 "def robot_cfg(algorithm, *, control=None, init_state=None):\n"
-                 "    p = deepcopy(PARAMETERS[algorithm])\n"
-                 "    if control is not None: p['control'].update(deepcopy(control))\n"
-                 "    if init_state is not None: p['init_state'].update(deepcopy(init_state))\n"
-                 "    return create_robot_cfg(MODEL_XML, BINDINGS, p, spec_fn=get_spec)\n\n"
-                 "def configure_env(cfg, algorithm, *, play=False):\n"
-                 "    return adapt_env(cfg, MODEL_XML, BINDINGS, PARAMETERS[algorithm], play=play, spec_fn=get_spec)\n\n"
-                 "def configure_runner(cfg, algorithm):\n"
-                 "    return adapt_runner(cfg, PARAMETERS[algorithm])\n\n"
-                 "def action_scales(algorithm):\n"
-                 "    import re\n"
-                 "    control = PARAMETERS[algorithm]['control']\n"
-                 "    return {re.escape(joint['name']): float(joint_value(control['action_scale'], joint)) *\n"
-                 "            (float(control.get('hip_reduction', 1)) if joint['role'] == 'hip' else 1)\n"
-                 "            for joint in BINDINGS['joints']}\n")
-    files[f"{config_root}/migration.py"] = migration
+    config_modules = {
+        algorithm: f"src.config.{slug}.{slug}_config" if algorithm == "ppo" else
+                   f"src.config.{slug}.{slug}_{algorithm}_config"
+        for algorithm in effective
+    }
+    files[f"{asset_root}/{slug}_constants.py"] = _robot_constants(
+        slug, prefix, bindings, entry.relative_to(root).as_posix(), config_modules)
+    runtime_path = REPO_ROOT / "src/utils/robot_config.py"
+    if runtime_path.is_file():
+        template_hashes["src/utils/robot_config.py"] = _sha(runtime_path.read_text())
     central = REPO_ROOT / "src/config/ri_4438"
     task_ids, output_roots = [], [asset_root, config_root]
     for algorithm, p in effective.items():
@@ -541,6 +633,7 @@ def render(spec):
         if algorithm in ("him", "him_symmetry"):
             base_text = (central / "ri_4438_config.py").read_text()
             template_hashes["src/config/ri_4438/ri_4438_config.py"] = _sha(base_text)
+            template_hashes["src/config/ri_4438/numerics.py"] = _sha((central / "numerics.py").read_text())
         files[f"{config_root}/{target_name}"] = _central_config(algorithm, p)
         source_package = f"ri_4438_{algorithm}"
         task_root = f"src/tasks/locomotion/{slug}_{algorithm}"
@@ -553,20 +646,29 @@ def render(spec):
             template_hashes[path.relative_to(REPO_ROOT).as_posix()] = _sha(original)
             relative = path.relative_to(source).as_posix().replace("ri_4438", slug)
             text = _replace(original, slug, prefix)
+            text = text.replace(f"src.config.{slug}.him_layouts", "src.config.base.him_layouts")
+            text = text.replace(f"src.config.{slug}.numerics", config_modules[algorithm])
             if "base_action_scale = " in text:
                 text, replaced = re.subn(
                     r"^(?P<indent>[ \t]+)base_action_scale = [^\n]+\n(?P=indent)scale = \{.*?\n(?P=indent)\}",
-                    lambda match: f"{match['indent']}scale = _migration_action_scales({algorithm!r})",
+                    lambda match: f"{match['indent']}scale = _action_scales(_get_parameters()['control'], BINDINGS)",
                     text, flags=re.S | re.M)
                 if replaced != 1:
                     raise ValueError(f"{path}: 无法定位模板动作缩放构造")
-                text += f"\nfrom src.config.{slug}.migration import action_scales as _migration_action_scales\n"
+                text += ("\nfrom src.utils.robot_config import action_scales as _action_scales\n"
+                         f"from src.assets.robots.{slug}.{slug}_constants import BINDINGS\n"
+                         f"from {config_modules[algorithm]} import get_parameters as _get_parameters\n")
             if algorithm == "him_symmetry":
                 text = text.replace(f"src.config.{slug}.{slug}_him_config", f"src.config.{slug}.{slug}_him_symmetry_config")
             if relative == "config/env_cfgs.py":
                 text = re.sub(r"from src.assets.robots import \(\s*get_" + re.escape(slug) + r"_robot_cfg,?\s*\)",
                               f"from src.assets.robots.{slug} import get_{slug}_robot_cfg", text)
-                text += f"\nfrom src.config.{slug}.migration import configure_env\n"
+                text += ("\nfrom src.utils.robot_config import adapt_env\n"
+                         f"from src.assets.robots.{slug}.{slug}_constants import MODEL_XML, BINDINGS, get_spec\n"
+                         f"from {config_modules[algorithm]} import get_parameters as _get_parameters\n\n"
+                         "def _configure_env(cfg, *, play=False):\n"
+                         "    return adapt_env(cfg, MODEL_XML, BINDINGS, _get_parameters(),\n"
+                         f"                     play=play, spec_fn=get_spec, robot_cfg_fn=get_{slug}_robot_cfg)\n")
                 if algorithm == "him_lpacrl":
                     # Original LP assumes three role-named actuators. The generated
                     # factory uses twelve explicit selectors and owns these values.
@@ -574,41 +676,38 @@ def render(spec):
                     b = text.index("    if not setup.terrain_map.plane:", a)
                     text = text[:a] + text[b:]
                     text = text.replace("    finalize_fingerprints(setup, cfg)",
-                                        f"    cfg = configure_env(cfg, {algorithm!r}, play=mode != 'train')\n"
+                                        "    cfg = _configure_env(cfg, play=mode != 'train')\n"
                                         "    finalize_fingerprints(setup, cfg)")
                 else:
                     for terrain in ("rough", "flat"):
                         function = f"{slug}_{terrain}_env_cfg"
                         text += (f"\n_template_{function} = {function}\n"
                                  f"def {function}(play=False):\n"
-                                 f"    return configure_env(_template_{function}(play=play), {algorithm!r}, play=play)\n")
+                                 f"    return _configure_env(_template_{function}(play=play), play=play)\n")
             if relative == "config/rl_cfg.py":
                 function = f"{slug}_ppo_runner_cfg" if algorithm == "ppo" else f"{slug}_him_runner_cfg"
-                text += (f"\nfrom src.config.{slug}.migration import configure_runner\n"
+                text += ("\nfrom src.utils.robot_config import adapt_runner\n"
+                         f"from {config_modules[algorithm]} import get_parameters as _get_parameters\n"
                          f"_template_{function} = {function}\n"
                          f"def {function}(*args, **kwargs):\n"
-                         f"    return configure_runner(_template_{function}(*args, **kwargs), {algorithm!r})\n")
+                         f"    return adapt_runner(_template_{function}(*args, **kwargs), _get_parameters())\n")
             if relative == "rl/symmetry.py" and algorithm == "him_symmetry":
                 text = _symmetry_source(text, bindings, slug)
             if relative == "mdp/rewards.py" and 'asset.find_joints(cfg.params["asset_cfg"].joint_names)' in text:
                 text = text.replace('asset.find_joints(cfg.params["asset_cfg"].joint_names)',
                                     'bound_joints(asset, cfg.params["asset_cfg"])')
-                text += f"\nfrom src.config.{slug}.migration_runtime import bound_joints\n"
+                text += "\nfrom src.utils.robot_config import bound_joints\n"
             if "get_base_metadata" in original and relative.startswith("rl/"):
-                text += (f"\nfrom src.config.{slug}.migration_runtime import "
+                text += ("\nfrom src.utils.robot_config import "
                          "get_migration_metadata as get_base_metadata\n")
             if relative == "config/__init__.py":
                 text, ids = _registration(slug, prefix, algorithm, spec["tasks"][algorithm]["terrains"])
                 task_ids.extend(ids)
             files[f"{task_root}/{relative}"] = text
-    # Copy shared observation/numerical contracts only when a selected task imports them.
-    for name in ("him_layouts", "numerics"):
-        module = f"src.config.{slug}.{name}"
-        if ((name == "him_layouts" and any(key != "ppo" for key in effective))
-                or any(module in value for path, value in files.items() if path.endswith(".py") and isinstance(value, str))):
-            text = (central / f"{name}.py").read_text()
-            template_hashes[f"src/config/ri_4438/{name}.py"] = _sha(text)
-            files[f"{config_root}/{name}.py"] = _replace(text, slug, prefix)
+    if any(key != "ppo" for key in effective):
+        layout_path = REPO_ROOT / "src/config/base/him_layouts.py"
+        if layout_path.is_file():
+            template_hashes["src/config/base/him_layouts.py"] = _sha(layout_path.read_text())
     for path, source in files.items():
         if path.endswith(".py"):
             ast.parse(source, filename=path)
@@ -622,7 +721,7 @@ def render(spec):
         "symmetry_checked": "him_symmetry" in effective,
         "output_layout": [
             {"path": asset_root, "purpose": "机器人运行模型：入口 XML、被引用的网格和资源、机器人工厂"},
-            {"path": config_root, "purpose": "所选算法配置、共享运行适配与迁移清单",
+            {"path": config_root, "purpose": "仅所选算法配置；各算法配置是运行参数的唯一来源",
              "config_files": [f"{config_root}/{slug}_config.py" if key == "ppo" else
                               f"{config_root}/{slug}_{key}_config.py" for key in effective]},
             *({"path": f"src/tasks/locomotion/{slug}_{key}", "algorithm": key,
@@ -636,5 +735,4 @@ def render(spec):
                                   or (key == "him_lpacrl" and task.startswith(prefix + TASK_SUFFIX[key] + "-Rough-"))]}
                              for key, p in effective.items()],
     }
-    files[f"{config_root}/migration_manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     return {"files": files, "task_ids": task_ids, "manifest": manifest}
