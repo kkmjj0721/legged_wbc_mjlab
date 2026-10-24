@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>四足机器人 · 迁移工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="迁移工作台首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>迁移工作台<small>QUADRUPED ROBOT LAB</small></span></a>
+    <div class="topbar-meta"><span class="local-badge"><span class="status-dot"></span>本地工作空间</span><span class="divider"></span><span>MjLab / RI-4438 模板</span></div>
+    <div class="header-actions"><button id="load-draft" class="button quiet">恢复草稿</button><button id="save-draft" class="button secondary">保存草稿 <span aria-hidden="true">↗</span></button></div>
+  </header>
+  <div class="workspace">
+    <aside class="sidebar" aria-label="迁移步骤">
+      <div class="sidebar-caption">BUILD YOUR NEXT ROBOT</div><h1>从模型到<br>训练任务。</h1><p class="sidebar-intro">把新机器人接入熟悉的训练框架。每一步都可以检查、调整与追溯。</p>
+      <nav id="step-nav" class="step-nav">
+        <button class="step-link active" data-step="0"><span class="step-num">01</span><span>导入机器人模型<small>XML 与模型资源</small></span><span class="step-tick"></span></button>
+        <button class="step-link" data-step="1"><span class="step-num">02</span><span>选择训练任务<small>算法与地形组合</small></span><span class="step-tick"></span></button>
+        <button class="step-link" data-step="2"><span class="step-num">03</span><span>确认机器人映射<small>关节、足端与碰撞</small></span><span class="step-tick"></span></button>
+        <button class="step-link" data-step="3"><span class="step-num">04</span><span>配置与姿态预览<small>控制、环境与训练参数</small></span><span class="step-tick"></span></button>
+        <button class="step-link" data-step="4"><span class="step-num">05</span><span>审阅生成文件<small>任务结构与配置差异</small></span><span class="step-tick"></span></button>
+        <button class="step-link" data-step="5"><span class="step-num">06</span><span>生成与验证<small>写入仓库、检查链路</small></span><span class="step-tick"></span></button>
+      </nav>
+      <div class="sidebar-footer"><span class="sidebar-footer-icon" aria-hidden="true">⌘</span><div>一个机器人，一套新起点<small>保留模型名称 · 独立任务实现</small></div></div>
+    </aside>
+    <main class="main-column" id="main-content">
+      <div id="global-error" class="notice error" role="alert" hidden></div>
+      <section class="step-panel active" data-panel="0" aria-labelledby="title-0">
+        <div class="page-heading"><div class="eyebrow">01 / MODEL IMPORT</div><h2 id="title-0">先认识你的机器人</h2><p>导入 MuJoCo XML 和完整资源，自动解析关节、机体与足端。</p></div>
+        <div class="card import-card"><div class="card-top"><div><h3>模型来源</h3><p>选择本机目录，或上传包含模型资源的 ZIP 文件。</p></div><span class="tag">12 自由度四足</span></div>
+          <div class="segmented" role="tablist" aria-label="导入方式"><button id="path-tab" class="active" role="tab" aria-selected="true">本地模型目录</button><button id="zip-tab" role="tab" aria-selected="false">上传 ZIP 资源包</button></div>
+          <form id="import-form">
+            <div id="path-fields"><label class="field"><span>模型目录 <em>ROOT DIRECTORY</em></span><input id="model-root" type="text" required placeholder="/home/you/robots/my_robot" autocomplete="off"><small>目录需要包含入口 XML 及它引用的 meshes、textures 和 include 文件。</small></label><label class="field"><span>入口 XML <em>ENTRY FILE</em></span><input id="model-xml" type="text" placeholder="robot.xml" value="" autocomplete="off"><small>填写相对模型目录的路径；留空时自动选择唯一的入口 XML。</small></label></div>
+            <div id="zip-fields" hidden><label class="upload-zone" id="upload-zone"><span class="upload-symbol" aria-hidden="true">↥</span><strong>拖入机器人资源包</strong><span>或点击选择 .zip 文件</span><input id="model-zip" type="file" accept=".zip,application/zip"><small id="zip-name">保留 XML 与 assets 的相对目录结构</small></label><label class="field"><span>包内入口 XML <em>可选</em></span><input id="zip-xml" placeholder="robot/robot.xml"></label></div>
+            <div class="inline-actions"><span class="muted tiny">模型将先进行 CPU 解析检查</span><button id="import-button" type="submit" class="button primary">解析模型 <span aria-hidden="true">→</span></button></div>
+          </form>
+        </div>
+        <div class="hint-card"><span class="hint-icon" aria-hidden="true">i</span><div><strong>已有模型可以直接开始</strong><p>支持本项目 RI-4438、Go2 及符合 12 关节约束的自定义机器人。模型中的名称会保留下来，通过映射适配训练任务。</p><div id="example-models" class="example-models"></div></div></div>
+        <div id="import-result" hidden></div>
+      </section>
+      <section class="step-panel" data-panel="1" aria-labelledby="title-1" hidden><div class="page-heading"><div class="eyebrow">02 / TASK TEMPLATES</div><h2 id="title-1">选择训练的起点</h2><p>各算法生成独立任务。先选择模板，再分别选择平地或复杂地形。</p></div><div id="task-cards" class="task-cards"></div><div id="contract-info" class="hint-card"></div></section>
+      <section class="step-panel" data-panel="2" aria-labelledby="title-2" hidden><div class="page-heading"><div class="eyebrow">03 / ROBOT MAPPING</div><h2 id="title-2">给每个关节一个位置</h2><p>确认机器人名称和动作顺序，建立模型与四足训练契约的绑定。</p></div>
+        <div class="card"><div class="card-top"><div><h3>机器人标识</h3><p>任务名称使用前缀，Python 包与目录使用标识。</p></div></div><div class="form-grid two"><label class="field"><span>任务名称前缀 <em>prefix</em></span><input id="robot-prefix" placeholder="MyBot" pattern="[A-Za-z][A-Za-z0-9_-]*" maxlength="64"><small>例如 MyBot → MyBot-HIM-Rough</small></label><label class="field"><span>目录标识 <em>robot_slug</em></span><input id="robot-slug" placeholder="my_bot" pattern="[a-z][a-z0-9_]*" maxlength="64"><small>小写字母、数字与下划线，以字母开头</small></label></div><label class="field"><span>机体绑定 <em>base_body</em></span><select id="base-body"></select></label></div>
+        <div class="card"><div class="card-top"><div><h3>动作与关节顺序</h3><p>固定为 FL → FR → RL → RR，各腿 hip → thigh → calf。</p></div><span id="joint-count" class="tag">等待模型</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>动作</th><th>位置</th><th>模型关节</th><th>镜像符号</th><th>关节限位 / rad</th></tr></thead><tbody id="joint-mapping"></tbody></table></div><p class="field-note">镜像符号是左右镜像时关节值的乘数；请依据模型关节轴和左右几何确认。</p></div>
+        <div class="card"><div class="card-top"><div><h3>足端与接触对象</h3><p>已有 site 可直接绑定；缺少时选择足端 body，并填写局部坐标。</p></div></div><div id="feet-mapping"></div><details class="subsection"><summary>碰撞对象绑定 <span>base_geoms / leg_geoms</span></summary><div class="form-grid two"><label class="field"><span>机体碰撞 geom</span><select id="base-geoms" multiple size="6"></select><small>按住 Ctrl / ⌘ 多选</small></label><label class="field"><span>腿部碰撞 geom</span><select id="leg-geoms" multiple size="6"></select><small>包含用于腿部碰撞判定的对象</small></label></div></details></div>
+      </section>
+      <section class="step-panel" data-panel="3" aria-labelledby="title-3" hidden><div class="page-heading"><div class="eyebrow">04 / CONFIGURE & PREVIEW</div><h2 id="title-3">调整到合适的起始状态</h2><p>公共配置用于所有任务；任务页签可以单独覆盖。初始站姿同步到 3D 模型。</p></div>
+        <div class="card viewer-card"><div class="card-top"><div><h3>机器人姿态预览</h3><p>拖动旋转 · 滚轮缩放 · CPU 前向运动学</p></div><button id="start-preview" class="button secondary small">打开 3D 预览</button></div><div class="viewer-stage" id="viewer-stage"><div class="viewer-grid" aria-hidden="true"></div><div class="viewer-empty"><span class="viewer-emblem" aria-hidden="true">⌁</span><strong>在这里检查初始站姿</strong><span>导入模型后，打开本地 3D 预览</span></div><iframe id="viewer-frame" title="机器人 3D 姿态预览" hidden></iframe></div><div id="preview-info" class="viewer-caption">足端、关节轴和初始位置可在写入之前检查。</div></div>
+        <div class="config-toolbar"><div id="config-tabs" class="config-tabs" role="tablist" aria-label="配置作用范围"></div><button id="reset-config" class="button quiet small">恢复此页默认</button></div><div id="config-scope-note" class="scope-note"></div>
+        <div class="card"><div class="card-top"><div><h3>逐关节控制与站姿</h3><p id="joint-control-scope">PD、力矩限幅和动作范围随新机器人一起生成。</p></div><button id="reset-joints" class="button quiet small">恢复默认</button></div><div class="batch-bar"><span>按同类关节批量设置</span><select id="batch-role" aria-label="关节类型"><option value="hip">hip · 髋关节</option><option value="thigh">thigh · 大腿</option><option value="calf">calf · 小腿</option></select><select id="batch-property" aria-label="参数类型"><option value="stiffness">Kp / N·m/rad</option><option value="damping">Kd / N·m·s/rad</option><option value="effort_limit">力矩 / N·m</option><option value="initial">初始角度 / rad</option><option value="armature">armature / kg·m²</option><option value="friction">摩擦 / N·m</option><option value="passive_damping">被动阻尼 / N·m·s/rad</option><option value="action_scale">动作缩放 / rad</option></select><input id="batch-value" type="number" step="any" aria-label="批量值"><button id="apply-batch" class="button secondary small">应用到 4 腿</button></div><div class="table-scroll"><table class="data-table control-table"><thead><tr><th>关节 / 初始角度 rad</th><th>Kp</th><th>Kd</th><th>力矩 N·m</th><th>动作裁剪</th></tr></thead><tbody id="joint-controls"></tbody></table></div></div>
+        <div id="parameter-groups"></div>
+      </section>
+      <section class="step-panel" data-panel="4" aria-labelledby="title-4" hidden><div class="page-heading"><div class="eyebrow">05 / REVIEW FILES</div><h2 id="title-4">让生成结果清晰可见</h2><p>审阅任务目录、配置差异和完整源码。预览不会写入目标目录。</p></div><div class="review-toolbar"><span id="plan-summary" class="muted">尚未生成文件预览</span><button id="refresh-plan" class="button primary">生成文件预览 <span aria-hidden="true">↻</span></button></div><div id="plan-issues"></div><div id="file-review" class="file-review" hidden><nav id="file-tree" class="file-tree" aria-label="生成文件"></nav><div class="code-pane"><div class="code-heading"><span id="current-file">请选择文件</span><button id="copy-file" class="button quiet small">复制内容</button></div><pre id="file-content" tabindex="0"></pre></div></div><details id="diff-section" class="card" hidden><summary>配置覆盖与模板来源 <span>CONFIGURATION DIFF</span></summary><pre id="config-diff" class="json-pre"></pre></details><label class="confirm-box"><input id="confirm-review" type="checkbox"><span>我已确认关节与足端绑定、初始站姿和配置，允许生成这些新任务文件。</span></label></section>
+      <section class="step-panel" data-panel="5" aria-labelledby="title-5" hidden><div class="page-heading"><div class="eyebrow">06 / GENERATE & VALIDATE</div><h2 id="title-5">为下一次训练准备就绪</h2><p>将审阅结果写入新目录，完成 CPU 检查，再按需运行有限预算短仿真。</p></div><div class="card generate-card"><div class="generate-symbol" aria-hidden="true">↗</div><h3 id="generate-title">准备生成独立训练任务</h3><p id="generate-description">目标目录已存在时将拒绝覆盖。文件在检查通过后写入仓库。</p><button id="generate-button" class="button primary large">生成任务并检查 <span aria-hidden="true">→</span></button><div id="generate-result" aria-live="polite"></div></div><div id="validation-card" class="card" hidden><div class="card-top"><div><h3>任务验证</h3><p>短仿真：种子 42 · 4 环境 · 200 个控制步</p></div><span class="tag">串行运行</span></div><div class="validation-controls"><select id="validate-task" aria-label="验证任务"></select><button id="validate-cpu" class="button secondary">CPU 配置检查</button><button id="validate-simulation" class="button secondary">GPU 短仿真</button><button id="stop-job" class="button danger" hidden>停止验证</button></div><div id="job-status" class="job-status" role="status">尚未运行验证</div><pre id="job-log" class="job-log" tabindex="0">等待验证日志…</pre></div><div id="commands-card" class="card" hidden><div class="card-top"><div><h3>从这里开始训练</h3><p>在仓库根目录执行，所有新任务使用原有训练与回放入口。</p></div></div><div id="task-commands"></div></div></section>
+      <footer class="step-footer"><button id="previous-step" class="button quiet">← 上一步</button><span id="step-progress">第 1 步 / 共 6 步</span><button id="next-step" class="button primary">选择训练任务 →</button></footer>
+    </main>
+    <aside class="summary-column" aria-label="迁移摘要"><div class="summary-card"><div class="eyebrow">YOUR WORKSPACE</div><div class="summary-title"><span class="summary-robot-icon" aria-hidden="true">⌘</span><div><h3 id="summary-robot">新机器人</h3><span id="summary-model">等待导入模型</span></div></div><dl class="summary-stats"><div><dt>驱动关节</dt><dd id="summary-joints">— <small>/ 12</small></dd></div><div><dt>训练任务</dt><dd id="summary-count">0</dd></div></dl><div class="summary-divider"></div><h4>将要创建的任务</h4><div id="summary-tasks" class="summary-tasks"><span class="muted">选择算法后显示任务名称</span></div><div class="summary-divider"></div><h4>待确认事项 <span id="pending-count" class="count-badge">3</span></h4><ul id="pending-items" class="pending-items"></ul><div class="summary-divider"></div><div class="source-note"><span class="status-dot"></span><div>基于当前 RI-4438 实现<small>保留 phase47_v1 观测契约<br>模型名称与资源结构保持可追溯</small></div></div></div><div class="small-note"><span aria-hidden="true">◇</span><p>草稿和生成清单保存在本项目中，生成后的任务可独立于本工作台运行。</p></div></aside>
+  </div>
+  <dialog id="draft-dialog"><div class="dialog-heading"><h3>恢复工作草稿</h3><button id="close-drafts" class="button quiet" aria-label="关闭">×</button></div><p class="muted">选择已保存的机器人配置继续工作。</p><div id="draft-list"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="busy-overlay" class="busy-overlay" hidden><span class="spinner"></span><span id="busy-text">正在处理…</span></div>
+</body>
+</html>

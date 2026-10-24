@@ -12,6 +12,7 @@
 - **平地与复杂地形**：提供 Flat / Rough 任务，支持动力学随机化与地形课程。
 - **训练管理**：单 GPU / 多 GPU 训练、检查点续训、TensorBoard 日志；Symmetry 与 LP-ACRL 支持 warm-start 权重初始化。
 - **策略验证**：本地或浏览器回放、视频录制、RI-4438 模型分析与离线评估、ONNX 策略导出。
+- **机器人迁移工作台**：本地 Web 导入 XML 和资源，配置关节、控制与训练参数，交互检查站姿并生成四类独立任务。使用方式见 [迁移工作台](docs/robot_migration_web.md)。
 
 ## 快速开始
 
@@ -27,7 +28,7 @@ bash setup.sh
 uv run --no-sync python -c "import mjlab, torch, rsl_rl; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-安装脚本准备 `uv`、Python、虚拟环境和匹配驱动的 PyTorch 后端。下文命令均在仓库根目录执行，无需手动激活环境；日常运行使用 `uv run --no-sync` 保留安装时选择的后端。镜像、代理、离线安装与可选依赖见 [安装配置](docs/setup.md)。
+安装脚本准备 `uv`、Python、虚拟环境，并根据已安装的 CUDA Toolkit 选择 PyTorch 后端。下文命令均在仓库根目录执行，无需手动激活环境；日常运行使用 `uv run --no-sync` 保留安装时选择的后端。镜像、代理、离线安装与可选依赖见 [安装配置](docs/setup.md)。
 
 ### 2. 查看机器人与环境
 
@@ -78,7 +79,7 @@ LP-ACRL 新增 `Ri-4438-HIM-LPACRL-Rough-Compact`：39 组车体系速度任务�
 
 ```bash
 uv run --no-sync python -m scripts.train Ri-4438-HIM-Rough \
-  --env.scene.num-envs 2048 --gpu-ids 0 1
+  --env.scene.num-envs 2048 --gpu-ids '[0, 1]'
 ```
 
 ### 从检查点继续训练
@@ -143,6 +144,7 @@ legged_wbc_mjlab/
 | --- | --- |
 | [安装配置](docs/setup.md) | 系统环境、镜像、代理、离线安装与 PyTorch 后端 |
 | [使用指南](docs/usage.md) | 检查点与恢复、HIM 对称开关、LP-ACRL 课程与评估、URDF 工具 |
+| [机器人迁移工作台](docs/robot_migration_web.md) | 本地 Web、模型导入、参数配置、3D 预览与任务生成 |
 | [模型分析工具](docs/tool使用.md) | 普通 RI-4438 HIM / PPO 的模型筛选、评估协议与报告 |
 | [HIM 对称机制](docs/HIMPPO对称机制分析与接入方案.md) | 对称增强、训练契约与实验方案 |
 | [LP-ACRL 阅读笔记](docs/LP-ACRL阅读笔记.md) | 算法背景与方法笔记 |

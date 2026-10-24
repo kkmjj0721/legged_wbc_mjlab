@@ -59,8 +59,8 @@ DEFAULT_PYTHON_REQUEST = "3.11"
 DEFAULT_PYTHON_DOWNLOAD_WORKERS = 4
 DEFAULT_PYTHON_REQUEST_TIMEOUT = 20.0
 TORCH_MINIMUM = "2.6.0"
-# A wheel built for a lower CUDA runtime can run with a newer compatible
-# NVIDIA driver.  Select the newest backend supported by the detected runtime.
+# Select the newest backend no newer than the installed CUDA Toolkit.
+# The NVIDIA driver must separately support the selected backend.
 CUDA_BACKENDS = (
     ((13, 2), "cu132"),
     ((13, 0), "cu130"),
@@ -139,62 +139,40 @@ class PythonMirrorResult:
 
 
 def _parse_cuda_version(output: str) -> tuple[int, int] | None:
-    """Extract a CUDA major/minor version from nvidia-smi or nvcc output."""
+    """Extract the installed CUDA Toolkit version from nvcc output."""
 
-    patterns = (
-        r"CUDA Version:\s*(\d+)\.(\d+)",
-        r"release\s+(\d+)\.(\d+)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, output, flags=re.IGNORECASE)
-        if match:
-            return int(match.group(1)), int(match.group(2))
+    match = re.search(r"release\s+(\d+)\.(\d+)", output, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1)), int(match.group(2))
     return None
 
 
 def detect_cuda() -> CudaInfo:
-    """Detect a usable NVIDIA driver and select a compatible PyTorch backend.
+    """Select a PyTorch backend from the CUDA Toolkit exposed on PATH.
 
-    ``nvidia-smi`` reports the maximum CUDA runtime supported by the driver,
-    which is the relevant value for PyTorch wheels.  ``nvcc`` is only used as
-    a fallback when nvidia-smi is not installed (common in build containers).
+    Use ``nvcc --version`` to detect the installed Toolkit.  Do not substitute
+    the driver's maximum supported CUDA version reported by ``nvidia-smi``.
     """
 
-    smi_path = shutil.which("nvidia-smi")
-    if smi_path:
-        try:
-            completed = subprocess.run(
-                [smi_path], capture_output=True, text=True, timeout=4, check=False
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            completed = None
-        if completed is None or completed.returncode != 0:
-            # A present but unusable driver should not cause a CUDA wheel to be
-            # installed merely because nvcc happens to be on PATH.
-            return CudaInfo("cpu", None, "nvidia-smi 未检测到可用 CUDA 驱动")
-        version = _parse_cuda_version(completed.stdout + completed.stderr)
-        if version:
-            for minimum, backend in CUDA_BACKENDS:
-                if version >= minimum:
-                    return CudaInfo(backend, f"{version[0]}.{version[1]}", "nvidia-smi")
-        return CudaInfo("cpu", None, "nvidia-smi 未返回 CUDA 版本")
-
     nvcc_path = shutil.which("nvcc")
-    if nvcc_path:
-        try:
-            completed = subprocess.run(
-                [nvcc_path, "--version"], capture_output=True, text=True, timeout=4, check=False
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            completed = None
-        if completed is not None and completed.returncode == 0:
-            version = _parse_cuda_version(completed.stdout + completed.stderr)
-            if version:
-                for minimum, backend in CUDA_BACKENDS:
-                    if version >= minimum:
-                        return CudaInfo(backend, f"{version[0]}.{version[1]}", "nvcc")
-
-    return CudaInfo("cpu", None, "未检测到 NVIDIA CUDA，使用 CPU 版 PyTorch")
+    if not nvcc_path:
+        return CudaInfo("cpu", None, "PATH 中未找到 nvcc，使用 CPU 版 PyTorch")
+    try:
+        completed = subprocess.run(
+            [nvcc_path, "--version"], capture_output=True, text=True, timeout=4, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return CudaInfo("cpu", None, "nvcc 无法运行，使用 CPU 版 PyTorch")
+    if completed.returncode != 0:
+        return CudaInfo("cpu", None, "nvcc 执行失败，使用 CPU 版 PyTorch")
+    version = _parse_cuda_version(completed.stdout + completed.stderr)
+    if version is None:
+        return CudaInfo("cpu", None, "nvcc 未返回 CUDA Toolkit 版本，使用 CPU 版 PyTorch")
+    version_text = f"{version[0]}.{version[1]}"
+    for minimum, backend in CUDA_BACKENDS:
+        if version >= minimum:
+            return CudaInfo(backend, version_text, "nvcc")
+    return CudaInfo("cpu", version_text, "nvcc：CUDA Toolkit 版本过低，使用 CPU 版 PyTorch")
 
 
 def _python_asset_url(uv: str, python_request: str, timeout: float) -> str | None:
@@ -907,7 +885,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--torch-backend",
         default="auto",
         help=(
-            "PyTorch 后端：auto 根据 nvidia-smi/nvcc 选择，或手动指定 cpu、cu118、cu124 等；"
+            "PyTorch 后端：auto 根据 nvcc 检测的已安装 CUDA Toolkit 选择，"
+            "或手动指定 cpu、cu118、cu124 等；"
             "默认 auto。"
         ),
     )
@@ -1008,7 +987,7 @@ def main() -> int:
         cuda_info = detect_cuda()
         torch_backend = cuda_info.backend
         detected_message = (
-            f"CUDA 检测：{cuda_info.version or '无'}（{cuda_info.source}），"
+            f"CUDA Toolkit 检测：{cuda_info.version or '无'}（{cuda_info.source}），"
             f"PyTorch 后端：{torch_backend}"
         )
     else:

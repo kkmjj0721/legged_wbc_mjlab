@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -64,7 +65,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   cfg.agent.seed = seed
   cfg.env.seed = seed
 
-  print(f"[INFO] Training with: device={device}, seed={seed}, rank={rank}")
+  print(f"[INFO] Training with: device={device}, seed={seed}, rank={rank}", flush=True)
 
   # Check if this is a tracking task by checking for motion command.
   is_tracking_task = "motion" in cfg.env.commands and isinstance(
@@ -94,8 +95,17 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if rank == 0:
     print(f"[INFO] Logging experiment in directory: {log_dir}")
 
+  print(
+    f"[INFO] Creating simulation on {device}; the first run may compile Warp kernels...",
+    flush=True,
+  )
+  init_started = time.perf_counter()
   env = ManagerBasedRlEnv(
     cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None
+  )
+  print(
+    f"[INFO] Simulation ready on {device} in {time.perf_counter() - init_started:.1f}s",
+    flush=True,
   )
 
   log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
@@ -118,12 +128,15 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     )
     print("[INFO] Recording videos during training.")
 
+  print(f"[INFO] Resetting training environment on {device}...", flush=True)
   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
 
   agent_cfg = asdict(cfg.agent)
 
   runner_kwargs = {}
+  print(f"[INFO] Initializing training runner on {device}...", flush=True)
   runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
+  print(f"[INFO] Training runner ready on {device}", flush=True)
   # LPACRL records effective scene/CLI values during runner construction.
   env_cfg = asdict(cfg.env)
 
@@ -198,6 +211,8 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
     run_train(task_id, args, log_dir)
   else:
     # Multi-GPU: use torchrunx.
+    # Workers write to pipes; show kernel compilation and startup progress promptly.
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
     import torchrunx
 
     # torchrunx redirects stdout to logging.
@@ -218,7 +233,7 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
       hostnames=["localhost"],
       workers_per_host=num_gpus,
       backend=None,  # Let rsl_rl handle process group initialization.
-      copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY + ("MUJOCO*",),
+      copy_env_vars=torchrunx.DEFAULT_ENV_VARS_FOR_COPY + ("MUJOCO*", "TMPDIR"),
     ).run(run_train, task_id, args, log_dir)
 
 

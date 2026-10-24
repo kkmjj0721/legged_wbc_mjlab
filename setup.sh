@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # One-command bootstrap for legged_wbc_mjlab.  The Python helper handles
-# Python/PyPI mirror selection and the machine-specific PyTorch backend.
+# Python/PyPI mirror selection and the installed-Toolkit-based PyTorch backend.
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # Keep uv's downloads across projects and shell sessions.  Override these
