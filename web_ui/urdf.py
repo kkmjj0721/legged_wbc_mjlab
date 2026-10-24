@@ -20,7 +20,6 @@ import xml.etree.ElementTree as ET
 
 MAX_BYTES = 2 * 1024**3
 MAX_FILES = 10000
-STL_FACES_PER_PART = 190000
 
 
 class UrdfError(ValueError):
@@ -165,24 +164,30 @@ class _Resources:
                 self.report["warnings"].append(warning)
         key = (path, tuple(scale))
         if key in self.meshes:
-            if collision and len(self.meshes[key]) > 1:
-                raise UrdfError(f"碰撞网格 {reference} 超过 MuJoCo STL 的 200000 面限制；请人工提供碰撞代理。工具不会拆分碰撞凸包或自动简化。")
             return self.meshes[key]
         name = self.asset_name(path)
         if any(p == path for p, _ in self.meshes):
             name += "_" + hashlib.sha256(_fmt(scale).encode()).hexdigest()[:8]
         extension = path.suffix.lower()
         data = path.read_bytes()
-        converted = False
+        converted, encoding = extension != ".obj", {}
+        relative = f"assets/{name}.obj"
+        target = self.destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
         if extension == ".stl":
             face_count = struct.unpack_from("<I", data, 80)[0] if len(data) >= 84 else -1
-            if face_count < 0 or 84 + face_count * 50 != len(data):
-                data = self._convert_mesh(path)
-                converted = True
+            if face_count >= 0 and 84 + face_count * 50 == len(data):
+                if not face_count:
+                    raise UrdfError(f"STL 没有三角面：{reference}")
+                encoding = self._stl_to_obj(data, target, reference)
+            else:
+                encoding = self._mesh_to_obj(path, target)
         elif extension == ".obj":
             # MuJoCo reads mesh geometry. URDF material/color remains authoritative.
             if re.search(rb"(?m)^\s*(mtllib|usemtl)\s", data):
                 self.report["warnings"].append(f"{reference} 的 OBJ 材质不参与转换；使用 URDF material/color。")
+            target.write_bytes(data)
+            encoding = {"encoding": "obj_copy", "geometry_preserved": True}
         elif extension in (".dae", ".ply", ".off"):
             if extension == ".dae":
                 if importlib.util.find_spec("collada") is None:
@@ -195,47 +200,61 @@ class _Resources:
                         self.files[dependency] = dependency.stat().st_size
                         if len(self.files) > MAX_FILES or sum(self.files.values()) > MAX_BYTES:
                             raise UrdfError("URDF 资源超过 10000 个文件或 2 GiB")
-            data = self._convert_mesh(path)
-            extension, converted = ".stl", True
+            encoding = self._mesh_to_obj(path, target)
         else:
             raise UrdfError(f"不支持网格格式 {path.suffix}：{reference}；请导出 STL/OBJ。")
-        outputs = []
-        if extension == ".stl":
-            count = struct.unpack_from("<I", data, 80)[0]
-            if not count:
-                raise UrdfError(f"STL 没有三角面：{reference}")
-            if collision and count > 200000:
-                raise UrdfError(f"碰撞网格 {reference} 超过 MuJoCo STL 的 200000 面限制；请人工提供碰撞代理。工具不会拆分碰撞凸包或自动简化。")
-            chunk_size = STL_FACES_PER_PART if count > 200000 else count
-            chunks = range(0, count, chunk_size)
-            for offset in chunks:
-                n = min(chunk_size, count - offset)
-                suffix = f"_part_{offset // chunk_size + 1}" if count > 200000 else ""
-                part_name = name + suffix
-                relative = f"assets/{part_name}.stl"
-                target = self.destination / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data[:80] + struct.pack("<I", n) + data[84 + offset * 50:84 + (offset + n) * 50])
-                outputs.append((part_name, relative))
-            if count > 200000:
-                self.report["warnings"].append(f"{reference} 有 {count} 个三角面；按原记录拆成 {len(outputs)} 部分以满足 MuJoCo STL 面数限制，未简化网格。")
-        else:
-            relative = f"assets/{name}{extension}"
-            target = self.destination / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            outputs.append((name, relative))
-        if converted:
-            self.report["warnings"].append(f"{reference} 已转换为二进制 STL；保留三角几何，不保留网格自身材质。")
+        outputs = [(name, relative)]
+        if extension in (".dae", ".ply", ".off"):
+            self.report["warnings"].append(f"{reference} 已直接编码为 OBJ，保留解码后的三角几何与可用 UV；材质/颜色使用 URDF material/color。")
         for mesh_name, relative in outputs:
             ET.SubElement(self.asset, "mesh", {"name": mesh_name, "file": relative, "scale": _fmt(scale)})
         self.report["meshes"].append({"source": path.relative_to(self.root).as_posix(), "scale": scale,
-                                      "outputs": [relative for _, relative in outputs], "converted": converted})
+                                      "outputs": [relative for _, relative in outputs], "converted": converted,
+                                      **encoding})
         self.meshes[key] = [mesh_name for mesh_name, _ in outputs]
         return self.meshes[key]
 
-    def _convert_mesh(self, path):
+    def _stl_to_obj(self, data, target, reference):
+        """Change STL storage without splitting its geometry or collision hull."""
+        import numpy as np
+
+        # Binary STL contains float32 vertices in the order of the original
+        # triangles. Deduplicate equal coordinates only; keep face order and
+        # winding. Seventeen decimal digits round-trip every float32 value.
+        record_type = np.dtype([("normal", "<f4", (3,)),
+                                ("vertices", "<f4", (3, 3)),
+                                ("attribute", "<u2")])
+        records = np.frombuffer(data, dtype=record_type, offset=84)
+        triangles = records["vertices"]
+        if not np.isfinite(triangles).all():
+            raise UrdfError(f"STL 顶点含有非有限数值：{reference}")
+        vertices, inverse = np.unique(triangles.reshape(-1, 3), axis=0, return_inverse=True)
+        self._write_obj(target, vertices, inverse.reshape(-1, 3))
+        return {"encoding": "stl_to_obj", "triangle_count": len(triangles),
+                "vertex_count": len(vertices), "coordinate_precision": "float32_exact",
+                "triangle_order_preserved": True, "winding_preserved": True,
+                "collision_hull_preserved": True, "simplified": False,
+                "split": False}
+
+    @staticmethod
+    def _write_obj(target, vertices, faces, uv=None):
+        import numpy as np
+
+        if not len(faces) or not np.isfinite(vertices).all():
+            raise UrdfError("网格没有有效三角面或顶点含有非有限数值")
+        with target.open("w", encoding="ascii", newline="\n") as output:
+            output.write("# Original decoded triangle geometry; no simplification or hull splitting.\n")
+            np.savetxt(output, vertices, fmt="v %.17g %.17g %.17g")
+            if uv is not None:
+                np.savetxt(output, uv, fmt="vt %.17g %.17g")
+                indices = np.repeat(faces + 1, 2, axis=1)
+                np.savetxt(output, indices, fmt="f %d/%d %d/%d %d/%d")
+            else:
+                np.savetxt(output, faces + 1, fmt="f %d %d %d")
+
+    def _mesh_to_obj(self, path, target):
         try:
+            import numpy as np
             import trimesh
 
             geometry = trimesh.load(path, process=False)
@@ -243,9 +262,18 @@ class _Resources:
                 geometry = geometry.to_geometry()
             if not isinstance(geometry, trimesh.Trimesh) or not len(geometry.faces):
                 raise ValueError("没有可用三角几何")
-            return geometry.export(file_type="stl")
+            uv = getattr(geometry.visual, "uv", None)
+            if uv is not None:
+                uv = np.asarray(uv)
+                if uv.shape != (len(geometry.vertices), 2) or not np.isfinite(uv).all():
+                    raise ValueError("纹理坐标无效")
+            self._write_obj(target, geometry.vertices, geometry.faces, uv)
+            return {"encoding": path.suffix.lower().lstrip(".") + "_to_obj",
+                    "triangle_count": len(geometry.faces), "vertex_count": len(geometry.vertices),
+                    "coordinate_precision": "float64_roundtrip", "texcoords_preserved": uv is not None,
+                    "geometry_preserved": True, "simplified": False, "split": False}
         except Exception as exc:
-            raise UrdfError(f"无法转换网格 {path.name}：{exc}；请在建模工具中导出二进制 STL/OBJ。") from exc
+            raise UrdfError(f"无法转换网格 {path.name}：{exc}；请在建模工具中导出 OBJ。") from exc
 
 
 def _parse_xml(content, context):
@@ -322,12 +350,24 @@ def convert_urdf(root: Path, entry: Path, destination: Path) -> dict:
     if any("xacro" in str(node.tag) or "${" in str(value) or "$(" in str(value)
            for node in robot.iter() for value in [node.tag, *node.attrib.values()]):
         raise UrdfError("不直接执行 xacro；请先展开宏并导出 URDF")
-    if robot.find(".//mimic") is not None:
-        raise UrdfError("第一版不支持 URDF mimic 联动关节；请提供独立 12 关节四足模型")
-    if robot.find(".//loop_joint") is not None or robot.find(".//loop") is not None:
-        raise UrdfError("第一版不支持 URDF 闭链约束")
     links = _named(robot.findall("link"), "link")
     joints = _named(robot.findall("joint"), "joint")
+    mimics = [(name, joint.find("mimic")) for name, joint in joints.items()
+              if joint.find("mimic") is not None]
+    if mimics:
+        counts = {kind: sum((joint.get("type") or "未指定") == kind for joint in joints.values())
+                  for kind in sorted({joint.get("type") or "未指定" for joint in joints.values()})}
+        relationships = [f"{name} 跟随 {node.get('joint', '未指定')}"
+                         f"（倍率 {node.get('multiplier', '1')}，偏移 {node.get('offset', '0')}）"
+                         for name, node in mimics]
+        raise UrdfError("当前迁移工具尚不支持 URDF mimic 联动关节，未改变源模型。\n"
+                        f"实际读取文件：{entry}\n机器人：{robot.get('name') or entry.stem}\n"
+                        f"关节数量：{', '.join(f'{kind}={count}' for kind, count in counts.items())}\n"
+                        f"联动关系：{'；'.join(relationships)}\n"
+                        "当前任务模板要求四条腿共 12 个独立驱动关节；含机械臂、夹爪或额外被动联动的模型需要专门适配。"
+                        "若文件与预期不同，请检查两个路径输入框或 ZIP 入口；不要直接删除 mimic 标签来绕过约束。")
+    if robot.find(".//loop_joint") is not None or robot.find(".//loop") is not None:
+        raise UrdfError("第一版不支持 URDF 闭链约束")
     if not links:
         raise UrdfError("URDF 没有 link")
     children, parents = {name: [] for name in links}, {}
@@ -359,7 +399,7 @@ def convert_urdf(root: Path, entry: Path, destination: Path) -> dict:
         types = [node.text or "" for node in transmission.findall("type")]
         if len(transmission.findall("joint")) != 1 or any("SimpleTransmission" not in item for item in types):
             raise UrdfError("第一版不支持差速或多关节 transmission；请提供独立驱动关节 URDF")
-    report = {"version": 1, "source_format": "urdf", "source_entry": entry.relative_to(root).as_posix(),
+    report = {"version": 1, "source_format": "urdf", "mesh_output_format": "obj", "source_entry": entry.relative_to(root).as_posix(),
               "source_file": entry.relative_to(root).as_posix(),
               "source_sha256": hashlib.sha256(source).hexdigest(), "root_link": roots[0],
               "style_references": ["go2/xmls/go2.xml", "ri_4438/xmls/ri_4438.xml"],

@@ -132,6 +132,12 @@ def _check_effective(cfg, model, spec, parameters, algorithm):
             _equal(actual, environment[key], f"environment.{key}")
     if "sim_dt" in environment:
         _equal(cfg.sim.mujoco.timestep, environment["sim_dt"], "environment.sim_dt")
+    for key, expected in environment.get("mujoco", {}).items():
+        actual = getattr(cfg.sim.mujoco, key)
+        if isinstance(expected, str) or key in ("enableflags", "disableflags"):
+            _require(_plain(actual) == expected, f"environment.mujoco.{key} 不一致")
+        else:
+            _equal(actual, expected, f"environment.mujoco.{key}")
     if "decimation" in control:
         _equal(cfg.decimation, control["decimation"], "control.decimation")
     for key in ("nconmax", "njmax", "contact_sensor_maxmatch"):

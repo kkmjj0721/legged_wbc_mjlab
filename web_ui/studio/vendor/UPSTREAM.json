@@ -1,0 +1,1799 @@
+{
+  "repository": "https://github.com/OpenLegged/URDF-Studio",
+  "commit": "23b96e2f3d5b1b68ad9629925d4479e9847d35a5",
+  "license": "Apache-2.0",
+  "unmodified_sources": [
+    {
+      "path": "src/core/image-compressor/index.ts",
+      "sha256": "117947f7eaa2c06227a5ce867ebe2a7cdfcaabb4b438690f99324edc1ed348d3"
+    },
+    {
+      "path": "src/core/image-compressor/pngOptimizeWorkerProtocol.ts",
+      "sha256": "64a9b27dea7dd7bd35cc701ca0778abdc41e71a2a5496fad561fb20179946a34"
+    },
+    {
+      "path": "src/core/image-compressor/pngOptimizerBridge.ts",
+      "sha256": "85fcccbba9e882365761f3b7cc0f05caa7be2a70ce7370a72b6a4aabbcaaf35e"
+    },
+    {
+      "path": "src/core/image-compressor/workers/pngOptimize.worker.ts",
+      "sha256": "b4a35cb2c4be73d76c9be21280b16388992982f990269f922a5953f895d15569"
+    },
+    {
+      "path": "src/core/loaders/assetPathIndex.ts",
+      "sha256": "9569dcbc04d223fcb03944ff0037199c0bde0e22450d90e27bd69ed298088422"
+    },
+    {
+      "path": "src/core/loaders/colladaCoplanarMaterialFixups.ts",
+      "sha256": "5d3943a2b8438585346770e810bcb36ce84021b42e35bb8d017bdc59fe66090e"
+    },
+    {
+      "path": "src/core/loaders/colladaParseWorkerBridge.ts",
+      "sha256": "cfd014362c9212d911d5817573ebc251d4cd2670f56780f17c4109fb41107bf4"
+    },
+    {
+      "path": "src/core/loaders/colladaParseWorkerProtocol.ts",
+      "sha256": "e993a06d3e927eaa5bccc911cc2df98377a2ce8360185b0dd17ca7d55c98694a"
+    },
+    {
+      "path": "src/core/loaders/colladaRootNormalization.ts",
+      "sha256": "24b9f02a104e46a8f5be7e37b5291b465cfad7fa9c4f40b565fa622f97929202"
+    },
+    {
+      "path": "src/core/loaders/colladaRootTransform.ts",
+      "sha256": "f344177adeb4501221714d0c9ff86a8c58393895a56d4f2ef7d9cc27cefa4ace"
+    },
+    {
+      "path": "src/core/loaders/colladaUpAxis.ts",
+      "sha256": "0e12af1b4c1138d917abc4ca2510c1b23444fc9be7f1ce98bd4a3a30e21d9227"
+    },
+    {
+      "path": "src/core/loaders/colladaWasmParser.ts",
+      "sha256": "13106a678534ed654f9f7f33e8e0d89758ebcf42ee365872ed277fb4d10cf611"
+    },
+    {
+      "path": "src/core/loaders/colladaWorkerSceneData.ts",
+      "sha256": "772f8fe13b8283f025823048a7b71115a0cb18319215196259f98c47dd4cf3c1"
+    },
+    {
+      "path": "src/core/loaders/coplanarMaterialOffset.shared.js",
+      "sha256": "bcb9d4566834a67c77bd6d6bd6ad2d5e870a56104751fab736d0daa9ff12c84b"
+    },
+    {
+      "path": "src/core/loaders/coplanarMaterialOffset.ts",
+      "sha256": "28d778b6e5afa73090677782803abfc6b9982935f9a84062c55d4bd62a972803"
+    },
+    {
+      "path": "src/core/loaders/index.ts",
+      "sha256": "f4035a81fdeb6b7001160b1214b7f9e44a1bdede6d846464cb5732b204bd082a"
+    },
+    {
+      "path": "src/core/loaders/meshLoadPerformance.ts",
+      "sha256": "75cf952373ff49209dd4ca5b5ce8ebaf259cc0a22ff67419d3381c405bebc8c9"
+    },
+    {
+      "path": "src/core/loaders/meshLoader.ts",
+      "sha256": "f8792bde3673bed73d93bbee4520c980d1c150afb485965cd099abbbd453e32c"
+    },
+    {
+      "path": "src/core/loaders/meshParseWorkerBridge.ts",
+      "sha256": "ceb233a016a50530535c8fc20a4933f11ef8b5a5bfc5aa8ceb959aa35fbcf0ae"
+    },
+    {
+      "path": "src/core/loaders/meshScaleHints.ts",
+      "sha256": "8ecba5b0ff7d7293ecc544845a37238c62fffa54d8f9d84bbbfb5ffcbfc42085"
+    },
+    {
+      "path": "src/core/loaders/meshSurfaceOrientation.ts",
+      "sha256": "0178a849cc5d5f02becea409246b58282ea6588881ee6012ad1f555343e3aeb1"
+    },
+    {
+      "path": "src/core/loaders/mshGeometryData.ts",
+      "sha256": "094affa2c8b5b2712db40e70734eaad51cd49b2dd89fe967bc7fa51a8e7acc17"
+    },
+    {
+      "path": "src/core/loaders/mshParseWorkerBridge.ts",
+      "sha256": "fb9d8268d56c83098f4a609a7221f391315b10116be2d78c7c08ce3d2bf05dd5"
+    },
+    {
+      "path": "src/core/loaders/mshParseWorkerProtocol.ts",
+      "sha256": "96cde2cfbd2c71fda3a3f24a85f5f6802080081040a9a4a7b94a53eaec945cd1"
+    },
+    {
+      "path": "src/core/loaders/objMaterialMetadata.ts",
+      "sha256": "db5867ce9c69e12bd97606a85a24ce8bb400cedcf0381af9d66984db66864f8e"
+    },
+    {
+      "path": "src/core/loaders/objMaterialUtils.ts",
+      "sha256": "aeb5bc3ed095a288b8fd64c7169db1254a8b553f5515159f6cf5c69156e78f7b"
+    },
+    {
+      "path": "src/core/loaders/objModelData.ts",
+      "sha256": "799d19a7d10c7a7ba1f128ee26750d0802bafb5000f45dc60ebc17e9cdbc9d8e"
+    },
+    {
+      "path": "src/core/loaders/objParseWorkerBridge.ts",
+      "sha256": "5030d80766833e187b496f6aed5c3592ffc90a383c6c4bbf049dc6d96dc9b0af"
+    },
+    {
+      "path": "src/core/loaders/objParseWorkerProtocol.ts",
+      "sha256": "657c96bb6bf7ca5f328ef8b3573249f25665d3f7cbdc07b342e98673e71935b0"
+    },
+    {
+      "path": "src/core/loaders/objWasmParser.ts",
+      "sha256": "13f5ca47ce25df8247ab290769a376b77e730f94da8ea192a256e7b59e409633"
+    },
+    {
+      "path": "src/core/loaders/pathNormalization.ts",
+      "sha256": "8041d4a0fb11942056c85199b2dc6d6e6e391d0f15289f0dbbabf14ccc078db3"
+    },
+    {
+      "path": "src/core/loaders/stlGeometryData.ts",
+      "sha256": "a76e6b874225f62d944606d74edc5555b779dc67e50d207f84b953f0653f27a8"
+    },
+    {
+      "path": "src/core/loaders/stlParseWorkerBridge.ts",
+      "sha256": "834ac1c4de24cf564cd20a4a7a61d14c366b91bc2729a59a5fbca238032b6318"
+    },
+    {
+      "path": "src/core/loaders/stlParseWorkerProtocol.ts",
+      "sha256": "ec5853a6c4556428942dce862ab611a1dd4738aec42d75aacd178c80dad1054d"
+    },
+    {
+      "path": "src/core/loaders/textureLoaderHandlers.ts",
+      "sha256": "d6f644123c40440bb60ddba2486273b67f9243572cc6adef9a760818bd05b68a"
+    },
+    {
+      "path": "src/core/loaders/visualMeshStacking.ts",
+      "sha256": "e7391f3b7ed98b83eb31853cbb74db4db0ba7b6afd960845a11d7d3df8b8739d"
+    },
+    {
+      "path": "src/core/loaders/workers/meshParse.worker.ts",
+      "sha256": "127727907fa0b2480618fed2055adf142e5b978fe202a06c36ce36e90f1b069e"
+    },
+    {
+      "path": "src/core/loaders/workers/mshParse.worker.ts",
+      "sha256": "f0d593ab2b212fe3481f035d05a9f2be8780473a7578f96f7d9b2764876866e8"
+    },
+    {
+      "path": "src/core/loaders/workers/stlParse.worker.ts",
+      "sha256": "345f969f60b42909df0fc0bac80167d779d243d7430b6c1b93ece912817a774f"
+    },
+    {
+      "path": "src/core/parsers/format_detection.ts",
+      "sha256": "7820dcbadd6f0f6af4fc8b2e43a7c978e93c15c19e6c8bbc44b0bbc1a1f302ec"
+    },
+    {
+      "path": "src/core/parsers/meshPathUtils.ts",
+      "sha256": "90c4911563108f1adae8168330d82ea49de6260b3fa332bc16db9c502435efbe"
+    },
+    {
+      "path": "src/core/parsers/meshPathUtilsHelpers.ts",
+      "sha256": "aadf5861fbb071f3faeb41f07ca0a7fdb507ef31597df59d3943758e16274fb5"
+    },
+    {
+      "path": "src/core/parsers/mjcf/index.ts",
+      "sha256": "1cca6d8555d1f3c9d0c0cf6aeb4250114379e00cd610e968467e143e888fc5a9"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfBuiltinTextures.ts",
+      "sha256": "d5b24e6b9275ea79e59a95db5a8a6f98d922798d2c36cc8da9fd2bac32138775"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfCanonicalMaterials.ts",
+      "sha256": "01a2878a2bdb1046a9322f5f681f4491860e5af2b844570e2144f13c104df735"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfCanonicalPhysicalImport.ts",
+      "sha256": "bbecbb9dc316ab77c681f459f00191ce289b3fff2ab91f09e5babdacc2704828"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfClosedLoops.ts",
+      "sha256": "56e5778aff94fab9ae21db2e5c09f347fe9771c9d0e902add14b79ce55dcde27"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfCompilerScope.ts",
+      "sha256": "5d3ddba68d2f854b00644defd9691a03c1486fa044b0a6d59f149944011041be"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfCubeTextures.ts",
+      "sha256": "35fcf9e72ac6117af27a2c7f4a759a8cd07e5e9e4de413c3772f6f0dd341f984"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfGeneratedNames.ts",
+      "sha256": "470eb1138932101b762ef2ce707ab4da1fa16e20048606e820f99ad4a9821301"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfGenerator.ts",
+      "sha256": "76e571789226579d331543e14ae99a216d7588e136b9ce87f7531b7bf26bf3f2"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfGeneratorFormatting.ts",
+      "sha256": "a14d550b52eecaa05f7cee13b1f58e17497b6b206bfdd049f7d2e0bf61d8d9e1"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfGeneratorUtils.ts",
+      "sha256": "379218a0ebdbd76eb3911e5cb1ccdf32f77716a2b2ca8440e333a1a64ce0836f"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfGeomClassification.ts",
+      "sha256": "41c382bd3cb2837cfc32910a2555012dea545a153a3290dca394a7dd6d290d6f"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfGeometry.ts",
+      "sha256": "23452583675384ffcaaa2702dbebf93e9db9bf9b7b9355d7e30c2a9aaee7b1ff"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfHierarchyBuilder.ts",
+      "sha256": "dc33c8388a253914a30dc28f7e1b59d73654b48b6704bde4a9a9ebad6d3a542b"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfInertial.ts",
+      "sha256": "b5e3639ef68da248533741f9a96637d3f89998b1ca913d68e5fb314df30754dc"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfKeyframePose.ts",
+      "sha256": "95ddfa4e41900453546577a8b073d7348632d39d0ab28777aa06e0f367e9bf4b"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfLoadLifecycle.ts",
+      "sha256": "5c7fae1431ca76d4061d2c33e316f1cb3839b9e5e4123f29646a224ae49aa577"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfLoader.ts",
+      "sha256": "cac6e84ae4da7d1cbcbc22fc5fdbda64fed35eff282a5e6663b4d6b7f6359a14"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfMassInference.ts",
+      "sha256": "798a5d37757d5940fd4a1b5b11a01bad59f2460e3a8f03cd6181d221abc9a953"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfMath.ts",
+      "sha256": "433c948e56e91d4eb56c2dc507bb58fe2d3012b51f14f7df81bd3a74134af516"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfMeshAssetLoader.ts",
+      "sha256": "e04038c2fa7ebc595875d31b6de79104da0ce7ff62f7fc08b8242942c4903bc5"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfMeshBackedPrimitiveResolver.ts",
+      "sha256": "1af6299b3cf27c78804d7746b330f59a7a605292f6487ee2b20fe0f49836e13c"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfModel.ts",
+      "sha256": "b944212d42dd2a0a07dafb28313efb236ad8e7bf3bf8cddb32e80f8839e9ed48"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfParser.ts",
+      "sha256": "5ad956bc59ec768a25720eec00f6e27829d592c97b77797159d32bc7afb48c0e"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfParserUtils.ts",
+      "sha256": "de87e9d64fe0ef440c78f3ef6d21819d13d8fe9e4433503a7f8266a51bb7ef37"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfPrimitiveGeometry.ts",
+      "sha256": "2d7e1d510b2720652b2a8083dc2ae089a9b23a8c3ce67070d57296f970ea63af"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfRenderHelpers.ts",
+      "sha256": "8d228cdbe94dad94bea154dbf93c86791b6654c2d4b023a0c422e5817dedc571"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfSourceResolver.ts",
+      "sha256": "aaa91a2d5bb33cd3cd0842a38447a1f2b5591e34317bf1f08cf4b64a7ecde7f0"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfUtils.ts",
+      "sha256": "588df0011d0bea91235dcc4bdee5122ded615b13c453fc133d0ce7ffdaab2b68"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfUtilsHelpers.ts",
+      "sha256": "818377b752085ebb41762ba6b3d3570c2c1c5d396fda04b1aad531f3bb6ef2f0"
+    },
+    {
+      "path": "src/core/parsers/mjcf/mjcfXml.ts",
+      "sha256": "3bc438f1e3a7d1484f919845f32f90e38ba998cff7484d072fff22d9a1a97388"
+    },
+    {
+      "path": "src/core/parsers/mjcf/skeletonGenerator.ts",
+      "sha256": "f31bf4c335e3f6296b955879b5f7cd3e70877385757da98e380a9c084bfee447"
+    },
+    {
+      "path": "src/core/parsers/recoveryDiagnostics.ts",
+      "sha256": "f7909035cfd39f8fc3059b12dd2924b3ee1593a9579068324d1cf63a94152354"
+    },
+    {
+      "path": "src/core/parsers/sdf/gazeboMaterialScripts.ts",
+      "sha256": "d1447d441154aa04949799395426a643fe2f9b4460dcb905e93b1891fd515f1d"
+    },
+    {
+      "path": "src/core/parsers/sdf/sdfIncludeResolution.ts",
+      "sha256": "0626151f253c073a14f8fd906c30771c73ccad8538f42c0d331d5f5b728f1ab6"
+    },
+    {
+      "path": "src/core/parsers/sdf/sdfParser.ts",
+      "sha256": "53553d6614e5915a5fadb5af12b055c355ab6614b9f9ebd61558bd20227889b0"
+    },
+    {
+      "path": "src/core/parsers/sdf/sdf_closed_loop.ts",
+      "sha256": "8fde6331c6dceaa6a68c8ff56068fabafa219f12b86605ee71ddff6a33b5aab1"
+    },
+    {
+      "path": "src/core/parsers/sdf/sdf_joint_frames.ts",
+      "sha256": "753376fcf08be4ee8e5d442984c21a812d61f0e5f426a4d8b6a05c58e1151a16"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/URDFClasses.ts",
+      "sha256": "7abc7addd75bdffc047a244257f32d0764571be8234be5bdc5c1a22cc22c93c3"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/URDFLoader.ts",
+      "sha256": "7d857dcbf4a67235b1a50f37e6c3d166e0ca22f726fc0ad7686615225c456e50"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/buildRuntimeRobotFromState.ts",
+      "sha256": "ba543e4afe7c26c4aed9cc82b2f187acb972a4f93d9c0bc87af2f2ab408202e0"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/buildRuntimeRobotFromStateHelpers.ts",
+      "sha256": "dd83d9cde74d8060a289b215d47175a81c65e805ecfa3f0c6011847a8686c26d"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/index.ts",
+      "sha256": "20bd608859a514b0bb457c22e163a07943c328aaaf505a88bbc55ea80b7d5603"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/primitiveGeometry.ts",
+      "sha256": "a34a7f3422b0947c26151740d5ac22be78f09ba5754c8b7e3ae54fdf910131f6"
+    },
+    {
+      "path": "src/core/parsers/urdf/loader/visualRestackBatch.ts",
+      "sha256": "cc7f313571db217457656e89c43be51f35b42994392bee6a2628b2ea36ead3c7"
+    },
+    {
+      "path": "src/core/parsers/urdf/meshScale.ts",
+      "sha256": "97c7c0ca525ee2a7140ee4c90f5e2dee4a3c583a4a481f6f4c697b60d82a38ce"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/diagnostics.ts",
+      "sha256": "ac6cf55da7fc870015c1e52bcbc6f7c98332d9512e799f1f43d801ea938dfecb"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/geometry.ts",
+      "sha256": "5919684f5ce58300b8aa437bbb65918f87c014bcfd1105a3feab4a4bda406993"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/index.ts",
+      "sha256": "812183b63b7cd78a3308002880efe92587af0c4f4798478cda87459291cd96b0"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/jointParser.ts",
+      "sha256": "e7e2581d8091dc37444f74b77472b4e02fb491395b2dd64d54940abcf26187b6"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/linkParser.ts",
+      "sha256": "2e350bc88cf437412f48fd2dbc7fb8a0d7e964a15be818929c073476e77bcbe2"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/materialParser.ts",
+      "sha256": "05f7542b6e6b3e6aade6e75522dd9b85cb56152c3aedfa571326d1d45fd6d3ce"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/recovery.ts",
+      "sha256": "9eba579ea9c2ff76c4787fd81fe0fd7a017370e01e481186da4454cd75285bac"
+    },
+    {
+      "path": "src/core/parsers/urdf/parser/utils.ts",
+      "sha256": "019df6067f4388b441b41362fb19ccae8a5d5f1e2e449f0c4d6b6dd35ce0dfaa"
+    },
+    {
+      "path": "src/core/parsers/usd/index.ts",
+      "sha256": "7ee00d39ec3465655ea52d3a4be0452328cb1c1ae3aca6e6cb160a68533dc785"
+    },
+    {
+      "path": "src/core/parsers/usd/usdAssetPaths.ts",
+      "sha256": "0289d3c925e7f316d7c91e9b0af9d38acbab817975ad65bc622df69d92ed042b"
+    },
+    {
+      "path": "src/core/parsers/usd/usdFormatUtils.ts",
+      "sha256": "3cc811ddc42660710ec27051b3e80b1b3d02552383079075d4f0836375459b2a"
+    },
+    {
+      "path": "src/core/parsers/xacro/expressionEvaluation.ts",
+      "sha256": "d1e0182b45c3a8eb5029b13a227416fac156a0e6fedf2e82d00bc1f4bf87c7ab"
+    },
+    {
+      "path": "src/core/parsers/xacro/expressionSyntax.ts",
+      "sha256": "f6a2aa041058f5b0f364fae615d2ac8cfe9cac528e486f39de795f3409d7897d"
+    },
+    {
+      "path": "src/core/parsers/xacro/index.ts",
+      "sha256": "0b6a9bba37dd977d6b0686f6d195bc3ee7bb95baf3133436580eb410ffa36687"
+    },
+    {
+      "path": "src/core/parsers/xacro/xacroParser.ts",
+      "sha256": "ca9baf298493fdd94dd1331ded959239d81697859552a1aff8d1c255193cc61f"
+    },
+    {
+      "path": "src/core/parsers/xacro/yamlLoader.ts",
+      "sha256": "abeff84d725ddc287ec515684010b056ae8746cecd157648d6d8c76983965da3"
+    },
+    {
+      "path": "src/core/robot/assemblyBridgeTopology.ts",
+      "sha256": "4074dc1c77dc7cc1a9ca08fbb29588b97e79f71c95a57dd374de6e68607f46c1"
+    },
+    {
+      "path": "src/core/robot/assemblyComponentPreparation.ts",
+      "sha256": "84697d8828534e20b02e038d15e52f4349afbf37def99f9212aba14cdf08a37f"
+    },
+    {
+      "path": "src/core/robot/assemblyConnectivity.ts",
+      "sha256": "7bac7dd5beba701bba7276f699b2464d08bd1170829d0f9d31422599b31cdec7"
+    },
+    {
+      "path": "src/core/robot/assemblyMerger.ts",
+      "sha256": "03917c487bc2f4d95e6458c4a70e62c94ac50e7cf2d8c92ca4c0fd95644a5776"
+    },
+    {
+      "path": "src/core/robot/assemblyPlacement.ts",
+      "sha256": "ce4830101b3eacf72dba86d3a072826a950d6e99539b5ee419dfd263808fad32"
+    },
+    {
+      "path": "src/core/robot/assemblyProjectedMerger.ts",
+      "sha256": "06725b597d9ce5647057a84cedf81a0186bbeff52c6c7a48297ebed12dfd210f"
+    },
+    {
+      "path": "src/core/robot/assemblyReroot.ts",
+      "sha256": "934bfed03ee73abc20abcbf65ce3068a952ee0625b6c6d10a3e6af62491c441a"
+    },
+    {
+      "path": "src/core/robot/assemblyResourcePaths.ts",
+      "sha256": "a508448bb6b0301d6a1e65bb753c93b0e6259b591c41ca92f81a78455ec893f3"
+    },
+    {
+      "path": "src/core/robot/assemblyScenePlacement.ts",
+      "sha256": "643dfdea48298a0ea55b24f4db3540e2219b03110b69ec015462c815c0b56630"
+    },
+    {
+      "path": "src/core/robot/assemblySceneProjection.ts",
+      "sha256": "f5a7a6190d1d0676ae0c8147c8c5a33f49d2f06243f6b5562f90f656bd2b675b"
+    },
+    {
+      "path": "src/core/robot/assemblyTransformUtils.ts",
+      "sha256": "820ecde1466702544c97478cd288bcab6842eda6d745a79c51a061cd017b55fc"
+    },
+    {
+      "path": "src/core/robot/assemblyTransforms.ts",
+      "sha256": "0ab569a33f21ed753b5b08326545d6c0f416b6391fa840e9c93a47db71fb80a4"
+    },
+    {
+      "path": "src/core/robot/builders.ts",
+      "sha256": "dd89e58db68358f0c0d08e84212dd3f06f6eb66953d8271b71f938734fb2bc1e"
+    },
+    {
+      "path": "src/core/robot/canonicalRobotValidation.ts",
+      "sha256": "047878de7f0791c9c484af3813edaf5345f7cd39a5455a15174d44429aa384cc"
+    },
+    {
+      "path": "src/core/robot/canonicalWorkspace.ts",
+      "sha256": "6be1dbca5e30ad8c1832dad42b044eee0eef888c53435a6f49610a37e2cc6cec"
+    },
+    {
+      "path": "src/core/robot/canonicalWorkspaceHelpers.ts",
+      "sha256": "8af3565a8ff20bdbf179f02d95a9ce7d2f8119a1bd4d9c2fe0577495d39f7c1f"
+    },
+    {
+      "path": "src/core/robot/closedLoopJointConstraint.ts",
+      "sha256": "dec5f4e2540794d63d589ccbc2f8221bfbbd71e7711c703f9b075e670452fdaa"
+    },
+    {
+      "path": "src/core/robot/closedLoops.ts",
+      "sha256": "e8f3ee74d5f0021c85890aa5fd5112ba7bef7b9c4ada9f4cc1b9ce7a45deff8f"
+    },
+    {
+      "path": "src/core/robot/collisionBodies.ts",
+      "sha256": "2720f8fd4b9c036e6b981d6a0f2529c863c020166bcfb2e10d4831f2c1f2ad31"
+    },
+    {
+      "path": "src/core/robot/componentSourceDraft.ts",
+      "sha256": "9d70523bcf89046646fa7e3aeff35e838389cbabe477feeb9f36d415ac21982c"
+    },
+    {
+      "path": "src/core/robot/constants.ts",
+      "sha256": "462fbd6eed8b16b8cbd8f9a3a8c0ff3b9175b565f211e1023ae7fc243981e05f"
+    },
+    {
+      "path": "src/core/robot/editorLock.ts",
+      "sha256": "d04fded196d27a7ed5aebf05038d162259421025513ec216daf72fd40462c61b"
+    },
+    {
+      "path": "src/core/robot/identity.ts",
+      "sha256": "fe7df7e800a1caad88d46cf78e2b741124de4955187c88a7d7d093b9fa8be0f2"
+    },
+    {
+      "path": "src/core/robot/index.ts",
+      "sha256": "90b32d83e26fbf281f0c8333fd58f410d0392fec04329ad0cbab3ddf825f06b2"
+    },
+    {
+      "path": "src/core/robot/jointInteractionLimits.js",
+      "sha256": "bba8eed20314bf71f497ef8214714a621ec2432b6e6f4c0b13cf205e5bdb3c72"
+    },
+    {
+      "path": "src/core/robot/jointLimits.ts",
+      "sha256": "5b4818fe913488fdc2e93329e9fb3f6b62571578b4d95c43be924a071349be61"
+    },
+    {
+      "path": "src/core/robot/kinematics.ts",
+      "sha256": "0fd82ef9a32f962938556033826e3d8754969dcf514dfea8ff2e635749371c23"
+    },
+    {
+      "path": "src/core/robot/linkIk.ts",
+      "sha256": "9f23a03679ff2046813526d009065609f729fff8f3d70d27d14e7e4a67a9190e"
+    },
+    {
+      "path": "src/core/robot/linkIkHelpers.ts",
+      "sha256": "acd5be0a4299dc55450fe0f0c22cb38b7476c3360b5fcd737b9e6184daddb900"
+    },
+    {
+      "path": "src/core/robot/materials.ts",
+      "sha256": "b08389e79f09c57ba4c05a8b2095062435d120690a1eaeb68ad0950a9d015201"
+    },
+    {
+      "path": "src/core/robot/mimic.ts",
+      "sha256": "2640d748b43747591c29eb1238331dbd305265efa7df2b722b303b24139344aa"
+    },
+    {
+      "path": "src/core/robot/passiveSpringJoints.ts",
+      "sha256": "5df6fcee33a4d4890e72e2276d1b918488076a27b3c247b3a959850616a7a0d7"
+    },
+    {
+      "path": "src/core/robot/runtime_patch_diff.ts",
+      "sha256": "16fa0b5abb32d454fb000bfc85b3394b0eb4f91eed012d51c8f1f51fb1733d77"
+    },
+    {
+      "path": "src/core/robot/semanticSnapshot.ts",
+      "sha256": "19cf3e7c2d29634efe79fefde95518b601ede4ed105b7edc962ffa0219552d74"
+    },
+    {
+      "path": "src/core/robot/transforms.ts",
+      "sha256": "b077ad3b1b80980b35f383bed6c758dbfbba762e619410af91883e21c55c5bde"
+    },
+    {
+      "path": "src/core/robot/treeOperations.ts",
+      "sha256": "6b6894d624a618e2fe79753162087232aa2aa87251a77747c704caffa16376bb"
+    },
+    {
+      "path": "src/core/robot/treeRoots.ts",
+      "sha256": "9d1dada9f492aead8a09d585f13ed4d63f4f1ee1b00659147f76e65f2cbe9260"
+    },
+    {
+      "path": "src/core/robot/validators.ts",
+      "sha256": "6e0bd004c179e74233911589f4fd3900362c57458e7848a34bfff6bb29e4c658"
+    },
+    {
+      "path": "src/core/robot/visualBodies.ts",
+      "sha256": "8da940350bd577227deeaff0745ed4a12c414547f27ae1f7c4234882692a6af1"
+    },
+    {
+      "path": "src/core/robot/visualMaterials.ts",
+      "sha256": "11e1182959c07b5dd20dd5f0bb450a518064865830e233924a8caf01cb480124"
+    },
+    {
+      "path": "src/core/robot/visualMeshMaterialGroups.ts",
+      "sha256": "390b58c3376b6bb3db2041485d642317c8a77e9c3de5b940cfab0c8efdd4b730"
+    },
+    {
+      "path": "src/core/robot/workspaceRobotTarget.ts",
+      "sha256": "b5d6776824e0afc043c5c235c05bd859c83ebfae32b29c4495086ffaa16ab0f6"
+    },
+    {
+      "path": "src/core/utils/assetFileTypes.ts",
+      "sha256": "dd83532d612429fe0d0ae3a72da678bd58419889b382fbe60020fd8a83301c3d"
+    },
+    {
+      "path": "src/core/utils/boxFaceMaterialArray.ts",
+      "sha256": "63b41c2511b2cdec4bc27f1d64ee6fc1fc553720408c9f24e58c3c0f7b8ceaf1"
+    },
+    {
+      "path": "src/core/utils/color.ts",
+      "sha256": "f68844811286ec6b1ef57e4b0257271997520e0d4d1d9486165f932315fd7275"
+    },
+    {
+      "path": "src/core/utils/ensureWorkerImageDomApis.ts",
+      "sha256": "6d49da5765a85995c88fa94dff6dbd811bce78d605fd6f6ab452717c35057ef5"
+    },
+    {
+      "path": "src/core/utils/ensureWorkerXmlDomApis.ts",
+      "sha256": "4736d19d547c88776a2ec4394ebda8b19956ccf82b09ea947c734f1d9999e298"
+    },
+    {
+      "path": "src/core/utils/heightmapBlendMaterial.ts",
+      "sha256": "dc9a187ad4aed2212eae93b2bbd36db94bc5b20f90bbcccbd08f2cdd565174a6"
+    },
+    {
+      "path": "src/core/utils/materialFactory.ts",
+      "sha256": "74f1f3d667f850806dc425b61c3f3dc4fc16be4f96c1575210c6bdfa3c6e0dfc"
+    },
+    {
+      "path": "src/core/utils/meshMaterialGroups.ts",
+      "sha256": "5e1c00b3762701cc984a5790c2574add9f65dfba787a5fe28b833ff95e64d20f"
+    },
+    {
+      "path": "src/core/utils/numberPrecision.ts",
+      "sha256": "778a65905f849d688e1c8abd8baa8769a53d6d1819f1aac63a9ecd752eac8604"
+    },
+    {
+      "path": "src/core/utils/pathKeys.ts",
+      "sha256": "9941357d7937dd05cded2388e84de78f2f09331a138fa2bfe33d8ae097f1683f"
+    },
+    {
+      "path": "src/core/utils/pathNormalization.ts",
+      "sha256": "5bd66be15a3ecef00b2bff39b7a8dae637116a7547a77a7d46e21e3b43479332"
+    },
+    {
+      "path": "src/core/utils/runtimeDiagnostics.ts",
+      "sha256": "aeac50a765c56150169f548bfcb9a7b92e08afb1422643f4fca608688db24655"
+    },
+    {
+      "path": "src/core/utils/three/collisionOverlayMaterial.ts",
+      "sha256": "fd428edd1a829639259838e877f00cb96e8d8940839862be3644972f31a40a90"
+    },
+    {
+      "path": "src/core/utils/three/materialProtection.ts",
+      "sha256": "750c3f1f634ab4ba3d4dc020a53010737473259f793d654f9a783e98b1e31d3d"
+    },
+    {
+      "path": "src/core/utils/three/materialSide.ts",
+      "sha256": "6d38be5dc75b4a7bd5fd18679bdf074897e36b7b23c6108540975f06e186dc1e"
+    },
+    {
+      "path": "src/core/utils/three/objectRenderQuality.ts",
+      "sha256": "1fd848fa866f5f617937dcfde3fa125fa89860c6958c265aece2f32b82de6c6c"
+    },
+    {
+      "path": "src/core/utils/threeResourceOwnership.ts",
+      "sha256": "d0000dc8816d724ec6c1f6a3be57dd4628ebe19fea3ce597fab5d0f3c0d3c52e"
+    },
+    {
+      "path": "src/core/utils/usdMdlPreset.ts",
+      "sha256": "561f58d36d9693ffbc69a4a21020314015ccbba3526cb70420a47968c28a3519"
+    },
+    {
+      "path": "src/core/utils/usdTextureArithmetic.ts",
+      "sha256": "aa94f7588c6e25a40f42c49cb603e04b93638e8f05f42e9641d01f93db79b8f5"
+    },
+    {
+      "path": "src/core/utils/usdTextureInput.ts",
+      "sha256": "6d0e6f1e99f2dd0256f8e4b24b8f8b1f7d6ff0ebaf6d3b67f80e6f8dc8c01ab1"
+    },
+    {
+      "path": "src/core/utils/visualMaterialOverrides.ts",
+      "sha256": "2332516c7e8d75cef03e1c141d54de9b0024fae497367fc5fbc62fbeb513d8ce"
+    },
+    {
+      "path": "src/core/utils/visualMeshShadowPolicy.ts",
+      "sha256": "6753c469fe4d655c3678970a7187c6b3f16f5b747ee683684a31f0c17f698b62"
+    },
+    {
+      "path": "src/core/utils/xmlSourceTextUtils.ts",
+      "sha256": "ccac6289f01921131ee50ed539616ed6ed989ece3671d00b24de333d611c1e23"
+    },
+    {
+      "path": "src/core/utils/yieldToMainThread.ts",
+      "sha256": "417866b0682caead3c71a106f7eb8d031aafb852a78280ba184b698c5478a8c2"
+    },
+    {
+      "path": "src/core/workers/workerPoolClient.ts",
+      "sha256": "41eb60c61b36d417abd923112c7ea0d547ab40a431fd364c0361ec3e40da67ae"
+    },
+    {
+      "path": "src/lib/components/RobotCanvas.tsx",
+      "sha256": "dc831aadde7114944ca61af79f9c0c0ab467e65d0517b7f4b52739a2b25006bd"
+    },
+    {
+      "path": "src/lib/components/RobotCanvasViewport.tsx",
+      "sha256": "e883022499ce20ce55785d307c93d0bac65cc7348f12594d57fc04b294bc1714"
+    },
+    {
+      "path": "src/lib/hooks/useControllableState.ts",
+      "sha256": "20c8b7c2d6e53303f68fca8f8bb349d75d00164d51c26bf02fcf91600d328e94"
+    },
+    {
+      "path": "src/lib/index.ts",
+      "sha256": "1406084df17bba88c9938804f5db11908767a8185b756733de08ae241fc2f8b1"
+    },
+    {
+      "path": "src/lib/robot-parser/dispatch.ts",
+      "sha256": "35cb5d29a94a955d6c97729634fc46a05c6c6b5434a5f79833f7319a5fc04713"
+    },
+    {
+      "path": "src/lib/robot-parser/toRobotData.ts",
+      "sha256": "111b4b5fbbef1c87a0cd61e562285192b6a68457d155410da91ba5be37da46df"
+    },
+    {
+      "path": "src/lib/robot-parser/types.ts",
+      "sha256": "65da351f7523735473586b11780dafd94281ff6c685a010b93a8bc0f978c9550"
+    },
+    {
+      "path": "src/lib/styles.css",
+      "sha256": "6660fe3af4a1b1d0661359fc1aa92caa1c3f061344153f5ccb1ac28168c36275"
+    },
+    {
+      "path": "src/lib/types.ts",
+      "sha256": "9969de0781ddbefdef87b33b116a3e379c12eb1874d7aabf3917d7791919e49e"
+    },
+    {
+      "path": "src/shared/components/3d/LinkIkTransformControls.tsx",
+      "sha256": "69b29c15d034fdc5d3060668375ca15d71093174127e4df1a02c0ac9ce965fe1"
+    },
+    {
+      "path": "src/shared/components/3d/LoadingHud.tsx",
+      "sha256": "f99a8bf34812ed57d087b9a158b7c69cddbbbe0ebea5e25466c602f40608eb02"
+    },
+    {
+      "path": "src/shared/components/3d/MeshAssetNode.tsx",
+      "sha256": "20ee6d2126d2fe899440bec3785afce3cc8242222f01a4a495b0bd86ecb71dfd"
+    },
+    {
+      "path": "src/shared/components/3d/MeshRenderers.tsx",
+      "sha256": "12d37727d8b48dafe863c6870064b0a28567eafe03cf92d70058b16f8b617ba4"
+    },
+    {
+      "path": "src/shared/components/3d/SceneUtilities.tsx",
+      "sha256": "57ced2188458fd3c476f07fc25ea09b44df0f8240516e89a7719b4778807e9c3"
+    },
+    {
+      "path": "src/shared/components/3d/TransformConfirmHtmlOverlay.tsx",
+      "sha256": "9c4d1832cad854b02d5c9a1706efacdff18b073ac3d899f41018e933bab9f317"
+    },
+    {
+      "path": "src/shared/components/3d/TransformConfirmOverlay.tsx",
+      "sha256": "ba514995061e6b90995f061e6bd7b49a99828c27b2a071bd94ea70d8fae10099"
+    },
+    {
+      "path": "src/shared/components/3d/UnifiedTransformControls.tsx",
+      "sha256": "41a0640426e2234a3f41aa6b3ff05a06b22120b03225eeed7879180003d0e2d5"
+    },
+    {
+      "path": "src/shared/components/3d/UsageGuide.tsx",
+      "sha256": "102b23de8c0306cfe08db35f25eb2d075bbe16f29e5a665a4dc2af4a87b00d63"
+    },
+    {
+      "path": "src/shared/components/3d/ViewModeBadge.tsx",
+      "sha256": "6b48cbe8d21660e66bd705f9a478b87bc54d3cfdc5e55cf708388fca1fc0e278"
+    },
+    {
+      "path": "src/shared/components/3d/helpers/CenterOfMass.tsx",
+      "sha256": "2bf4b955e5469c8b57e96c4de5746fcf1259c3f5c31f84f6b309fa20e48c1018"
+    },
+    {
+      "path": "src/shared/components/3d/helpers/CoordinateAxes.tsx",
+      "sha256": "26875254e2d35f92f82885e42fd582cbf091687ea506ed682e88a893da2e7693"
+    },
+    {
+      "path": "src/shared/components/3d/helpers/InertiaBox.tsx",
+      "sha256": "d5ef29e7fb4c23aa581c51d6b717ee2de1bb866c0d609e38de09f1e94f0158c6"
+    },
+    {
+      "path": "src/shared/components/3d/helpers/JointAxis.tsx",
+      "sha256": "684dec64e8d6fb444c3e29ffd8533ef111e04d8c4b428e250b9f4d3683f2044d"
+    },
+    {
+      "path": "src/shared/components/3d/helpers/coordinateAxesSizing.ts",
+      "sha256": "8d1d47e1864195c5f14e40eee017d2342c7cae82f823a6ac925957545ae14edd"
+    },
+    {
+      "path": "src/shared/components/3d/helpers/index.ts",
+      "sha256": "75e470ce79ff908cf4e7200ce0ab1845e67c3bb9a2e0c94fd3128b23f078ec34"
+    },
+    {
+      "path": "src/shared/components/3d/index.ts",
+      "sha256": "2d0d16074abd004197c5acbe656cd5caa06820750384ce44f843fac6bbfb3ab8"
+    },
+    {
+      "path": "src/shared/components/3d/linkIkDragPreview.ts",
+      "sha256": "b733ac859d061e2793f631fdc0269c3c4950e42a291524e219b23ec33dd8be5c"
+    },
+    {
+      "path": "src/shared/components/3d/loadingHudState.ts",
+      "sha256": "dd695d8c55fce3f7d7ddff1e0e901dd9bcfd6ed8b2c66f9f69a8dfd2d8f92b29"
+    },
+    {
+      "path": "src/shared/components/3d/loadingTypes.ts",
+      "sha256": "28b82e51f9a338b21f8e96ec0c274971718de959dce5476853eb112568a85bd9"
+    },
+    {
+      "path": "src/shared/components/3d/materialDisposal.ts",
+      "sha256": "e1d30d509bd6ecf826f7381d65712325c73e7620cf94a11054affc000b7e921b"
+    },
+    {
+      "path": "src/shared/components/3d/materials.ts",
+      "sha256": "2efaf5892b4ca895d9f7c70ec48660a57670fc071709d7b793db789ec0aa0438"
+    },
+    {
+      "path": "src/shared/components/3d/meshAssetPreload.ts",
+      "sha256": "6e1531dd997781912e8322dddadf802e82e300d235538a5e57257532f6eb1967"
+    },
+    {
+      "path": "src/shared/components/3d/meshLoadingManager.ts",
+      "sha256": "1aa1cf524b26f117575f90187cf6132b4ea2666da986e1ca384090fe1d76eef5"
+    },
+    {
+      "path": "src/shared/components/3d/renderers/DAERendererImpl.tsx",
+      "sha256": "489ad82f42b6efca5fe119605f9018359b5652392036773198ae2a56d767089c"
+    },
+    {
+      "path": "src/shared/components/3d/renderers/GLTFRendererImpl.tsx",
+      "sha256": "32ef92b953b444b6f3db3479c385f3ea4c6c7d9695ac01d0daaf6e244829317d"
+    },
+    {
+      "path": "src/shared/components/3d/renderers/OBJRendererImpl.tsx",
+      "sha256": "de338e8c352d90b17f3b3a4a8a898d8d9989eebdcfbdbebad251b731b1bab926"
+    },
+    {
+      "path": "src/shared/components/3d/renderers/STLRendererImpl.tsx",
+      "sha256": "d3dcd0d92a35db103e4e26765e89fc3e254e3c898f61f30322030b9ca38da8e3"
+    },
+    {
+      "path": "src/shared/components/3d/renderers/colladaScene.ts",
+      "sha256": "28ee81106ef9b22615b0b1fc8d75a86bc6c7fd11f90c5d946d62e7a1e700b23b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/components/CollisionTransformControls.tsx",
+      "sha256": "9b5d518c72429efe7aee78aa240d090d42bb129c612c0b47dc8d3e420cbb3e2d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/components/JointInteraction.tsx",
+      "sha256": "7c3d32c955cab57cd44e03a403935ad1aad0b3047bef79e5a6a77cfe8f95514b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/components/OriginTransformControls.tsx",
+      "sha256": "8ea5c596f486ea7177269fb4b6f2808981e175ff9159538cfb40846b52bd4d97"
+    },
+    {
+      "path": "src/shared/components/3d/robot/components/RobotModelKernel.tsx",
+      "sha256": "51201d8133d5718293e91af18e4621d710a1d46e3ba7bc71b04b8b48394db59b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/components/RobotModelLoadingHud.tsx",
+      "sha256": "62263f5532b5a0e53e46a296139c6c4d0d8918beef0d7b5dd85a8643a40a04f5"
+    },
+    {
+      "path": "src/shared/components/3d/robot/components/ViewerLoadingHudOverlay.tsx",
+      "sha256": "1e50337a7b6a3f9e6f769015cb83dbf3fadd596d29a330464c04cbe8cfcfcaa7"
+    },
+    {
+      "path": "src/shared/components/3d/robot/constants.ts",
+      "sha256": "eccf0c73da48fa5a5f8d3e98071caf5a76019b6a8a702f3d951330c262c65707"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useCameraFocus.ts",
+      "sha256": "fdd9c79756ee3e30c1cd4383a5c8a79b5c150cb35df2f9748428489e7a01232d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useCollisionTransformDragLifecycle.ts",
+      "sha256": "ea6114c38d1dd882c75028f03f0b056c208237b8946fc81cf0508baac6221d88"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useExternalHoverHighlightSync.ts",
+      "sha256": "9d0d6f43e2246ba5ba3f561721d530e9bfcd4937f34d3a8c5150af870515b719"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useHighlightManager.ts",
+      "sha256": "75f50bc8e7d8b6e88249e0253c13a22bbbbd0d9d540c651235b10247344366b5"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useHoverDetection.ts",
+      "sha256": "064fd3569eccc660b9dbf6692545461ae3648de19fcbbef3889a1725b0513bb2"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useMouseInteraction.ts",
+      "sha256": "8b3bc7c5f123a9ee7173cb957eadcda763f6fcb0de2b26020a4b90294ff22fcd"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/usePointerInteractionTargets.ts",
+      "sha256": "59dfa81100e4e11900b745bce607401dc0f8a2efd5c7a2a4be534f65d69d3e50"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useRendererBackend.ts",
+      "sha256": "7e477a7ba63d5028414cbe4bf5564b9ce51c13491d3f77ee8bb0f9fa772a7287"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useRobotHoverLock.ts",
+      "sha256": "004cd01b74eb69ea4e1f8d5b80d6cb0f7dd3939a274af9360cd8f9b49f463930"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useRobotModelIkState.ts",
+      "sha256": "9ba4ea94b2e0bbd18c1aa14dd6c00500e67bc28e59711f356ac13fdc1af62f7b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useRobotModelPaintInteraction.ts",
+      "sha256": "4144cd4cb6cee681a2f46c8cce388f61fc3906b0667f183dd3dfb6fa3d13345e"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useRobotModelRuntimeRegistration.ts",
+      "sha256": "f0bfd1cf8916dba13f5baa7eb84812071215fc768445ad83fe2a02abe24b4b6a"
+    },
+    {
+      "path": "src/shared/components/3d/robot/hooks/useVisualizationEffects.ts",
+      "sha256": "661c300aae15dad9ec44abf8716701cceb586af8350044f0a9d8bdd7ba8d91c9"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/ThreeJsBackend.ts",
+      "sha256": "731d8fcda5cbfd2b8734f2d6b49a76e3d4c2286a3b798ffc6f577a5fc18c24e3"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/createRendererBackend.ts",
+      "sha256": "8f734d30847f66ab4d2a82c697a068e0161977840c726c93dba2b99be7f013fb"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/loadedRobotSceneSync.ts",
+      "sha256": "ea3d8070230c5bd2ed5b2474689435defd73af7f360e9c07e1f144cb7aac0c59"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/robotLoaderSourceMetadata.ts",
+      "sha256": "0fd4ae660f925e301079cedf3dbf89d2f32756789a7d33250452437d2d829a06"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/sourceFormat.ts",
+      "sha256": "4485a5a2158c9c5449f28eb4c1845d685328ec1b3c71faab8e134a67f2d0163b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/types.ts",
+      "sha256": "3a64a8f82cb61dca8232014c53714d8d915cc8893f0487e96c78a957d126e501"
+    },
+    {
+      "path": "src/shared/components/3d/robot/renderers/urdfXmlFallbackPolicy.ts",
+      "sha256": "757a0f177390e23e1e538d7eb2ce0833385d949254a777d69713d9d6f23ff829"
+    },
+    {
+      "path": "src/shared/components/3d/robot/types.ts",
+      "sha256": "8e09e57897f858e1c0c91d93c4bc1a9e5d20d353d774fe4c6f636e4127563b3c"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/cameraAutoFrame.ts",
+      "sha256": "95060d4a5ff7f4d987da1b044bc7f8fe72682a243b947371b04ff6b2314230e2"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/cameraFrame.ts",
+      "sha256": "b8d291b33b3d81c807170d8e6dd2277a1c9963cf463b4bc1b61e709dce179a9a"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/clickSelectionPolicy.ts",
+      "sha256": "06b93b56c7302fdc58210ce3b9866af1c30bf6d53a65fed65626aba2b48ac630"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/collisionTransformControlsShared.ts",
+      "sha256": "67fde4d9a09b1f2b83ade779e4eb769d279e1980776e4833b41201ad3c631cbf"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/collisionTransformMath.ts",
+      "sha256": "f285c05b8d1e0e750c37f5ad87e6911acb6b5e32410019b2cbb6c57e0c7a7d5a"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/collisionVisibilitySync.ts",
+      "sha256": "c75e5c7148c694344417dc84b48f0cc5e44471cb1774fe37e050609e204276a1"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/directHelperInteraction.ts",
+      "sha256": "8f8960b4c77d0bd7af5a1689b5e7093717fefd0e533efbb647a0f8c1a389ac29"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/directJointDragController.ts",
+      "sha256": "d4591ae79e1ba0944cfa2d4be7cbda895ddf1d746d42e187476b7555f5f6eb33"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/directJointDragGeometry.ts",
+      "sha256": "93a26cf3e90b40febd9b581af71400393fd29a9e6d52a46b799caef0091d3909"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/directJointDragJointResolver.ts",
+      "sha256": "7173b895667a505232f47537e679b05d06656dbd811a75d1fe1209bbfc671a12"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/editorInteractionLock.ts",
+      "sha256": "8bea30998530ba2e36a04a6e52075da17b91f7eaef80df5a888f03c5200eda6d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/geometryTransformPolicy.ts",
+      "sha256": "a7a97338b191caf8844a867f75224b13225196116aa0af9bb2493e9249beb17b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/helperSelectionIdentity.ts",
+      "sha256": "b83bf1ba4c4076f096dfecc9175cb404bb8187986484d279713e6577b2388590"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/helperSelectionPlan.ts",
+      "sha256": "ec3202f8c198d71f077b5eaded647aa9c304e4d026d0b5034aa777ce007e850b"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/hoverInteractionResolution.ts",
+      "sha256": "c990d0f0495bd70e7822d48aae33ffae56708687b1798031f1ba27e2b02227e0"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/hoverMoveEventName.ts",
+      "sha256": "df1f0734b84c96781be57a8d8d63220dcf36622f3f9b4b2ee2358e92df53944a"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/ikGeometrySelectionState.ts",
+      "sha256": "4140e788dc3c5586f6d482edd36df7def9d0f018fcaf9667e188c338d142110c"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/interactionMode.ts",
+      "sha256": "23cb686fb03ce5943e54a3fc58b24b7c753f16b124b8411f8bd4a2135ee35d41"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/jointDragDelta.ts",
+      "sha256": "2d1ee65ddb5ddc989eb2fcbf1abb03588b2b4e9f989a63d1401fc3cc2c5ea86f"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/jointDragFrameSync.ts",
+      "sha256": "b9abde2c079781dd9089950b5b27737abb7a4dc5ca4045b77e7becf075cba5c5"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/jointDragRuntimeStep.ts",
+      "sha256": "ceae2580e184e5ec0e6ba942bf98fef74696aadb7427a906a7bd316936eaa078"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/jointInteractionControlsShared.ts",
+      "sha256": "4ded639d86d8e9e60109fec9ad7bf1f22c64f442e0e5453f4ca3f1ed903e2cea"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/localTransformGizmoSizing.ts",
+      "sha256": "7bd0c5ac3f1296881d395d7d5ce05ac82e95a5178e57b83d59f36ccaf49b1ee7"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/measurements.ts",
+      "sha256": "1dc66761ee5298a358be2781b659180eab404ab8b3e1cc8d839bf841186db2b9"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/mjcfTendonVisualMeshMap.ts",
+      "sha256": "39f14609fc75ed309281b8070810cab507e9bf524632731251e191de025bb41a"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/mouseDownSelectionPlan.ts",
+      "sha256": "2325ba534425fc795b9330c01b245fd0db394bff63fffa0b9733fac9a9012ea9"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/originTransformControlsShared.ts",
+      "sha256": "bfb2442f099c40fdea75af3b76d5f1abe85a051effd135d2cee9de4cd4b925b5"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/passiveSpringJointDragTarget.ts",
+      "sha256": "0895c2cf1f57eb4d0db9c78ba5ed9862c3eb7d94d37c7ac15f0d3f146f5f454d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/pickFilter.ts",
+      "sha256": "f971125e21885704456b9e5b00f93ffb4476bc495190ed70386015eea9a43589"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/pickTargetBounds.ts",
+      "sha256": "425d3ae0377a3f35e0a82cd86170ce289ffbc11158cf49efd6b1acb12914528d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/pickTargets.ts",
+      "sha256": "52341b55df05f3aef6bd9a50f833c44bf07198c689bb4e132149cd1458adc890"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/pointerDownHitResolution.ts",
+      "sha256": "0c9ee54fdbdd9c3141bf0929e93a7c00a29e1d5d2aebea36e56c415a49268120"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/pointerInteractionFinalizer.ts",
+      "sha256": "24b5c0b60753af485a0e2f74603f2ebadd4093123642f0ddf71fd0332c7d64a8"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/pointerSelectionCommit.ts",
+      "sha256": "6b14586572b83389328ac34cb95bca515e45949ae1f84d8c3a801136887cb659"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/raycast.ts",
+      "sha256": "1d17387417ab2d5535547c2824752994ead7b7b6446f5425b22c931d345f17b4"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/regressionProjectionTargets.ts",
+      "sha256": "e54f96cb3c8dbe6489c846e6e67ab752de20128181d0c5c31e343381ad0a0aa4"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/rendererBackendLoadScope.ts",
+      "sha256": "d16b943d20fe257edeeea6f6dd98d530a5aa08154ccdae1b42c815824aa227dc"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotGeometryVisibilitySync.ts",
+      "sha256": "b8bf3175e45c31fcf66b674c6cecd585c05ad4f38d44ca7c5799d5949328b0b8"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotLoadScope.ts",
+      "sha256": "634b7d5a081ff5513c56d54a384587085a2343e4d2313826a8ef28a2fe155ff1"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotLoaderGeometryPatch.ts",
+      "sha256": "73ffae82fea4b7714cd7b63156ef4d7c5cc7636bfe6d28cce29521afa4e812ad"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotLoaderGeometryPatchHelpers.ts",
+      "sha256": "39fecd800c00c274128fa2a6d3afe77511a442c9cbd95aeb67da1e36b6c4ad44"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotLoaderJointPatch.ts",
+      "sha256": "10a9f497892e9d1f5dab997f0b373372c54ad7076d355ba0f7514dafd490ce1d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotLoaderPatchUtils.ts",
+      "sha256": "e8a9d25f7cad6bd80a23355359f81ab98eb6666cffcf618f3a21c821dcc8bd16"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotSceneNodeIndex.ts",
+      "sha256": "ef62547208d61abbdfa371b798cec621079e50ae30878aa865651664e67a9c7f"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/robotVisualMeshIndex.ts",
+      "sha256": "9aaba301046ae771b759bde41e050574b87229067acfda1859b1f0753ee4a072"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/runtimeSceneMetadata.ts",
+      "sha256": "547a1ef9eff422de89120fcdc479913a323d53eeffb424444d7508914e1c684f"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/runtimeVisibility.ts",
+      "sha256": "f5be9aa1fb7d5ea63ed7b714a19042660da04c8c738b02c76c43d64bd873c566"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/sceneCompileWarmupPolicy.ts",
+      "sha256": "323b7a26d3ae724c0b3c1034e07825f1702765c7dd25a38d443c55e109ab39ce"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/screenSpaceHelperInteraction.ts",
+      "sha256": "6ffef27359f6364414d7d0bd4bdd40490089e18ee0201957c6e1ed93de3617f8"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/selectedIkDragLink.ts",
+      "sha256": "86aa44bea413aa699bbac3ef56424d9bf0f6362f555b7a410e3dc73cf430113c"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/selectionCommitHoverPolicy.ts",
+      "sha256": "33819f3b85023cc29bab7c1651f923c9c8217c07814329b0db3e23a3a770bb71"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/selectionMissGuard.ts",
+      "sha256": "d85c19135c1eedf6599dff3e5b1ee2e5d29de083cac878e81e763be545747690"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/selectionTargets.ts",
+      "sha256": "aaf7c9c185093654dde7bbfbc85cb309b9fbb5c9d052ea9c608fff055bc4cdb0"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/stabilizedAutoFrame.ts",
+      "sha256": "c31e3ee38def4e02ad7b60ae51ffdea3d3bfdd4a96d264622eab8a0f5a871fc4"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationFactories.ts",
+      "sha256": "7593207be8037e6207b7b851af35776e30dfcfdc992bcc59686beeadcf9e1bc9"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/interactionPrimitives.ts",
+      "sha256": "077f9721fc5f5e0d8c35690d09bc7e8d6fdf10a3981347128a1f1245b4080a3f"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/interactionStateSync.ts",
+      "sha256": "f6018da25fa44ac2a5df619bfe798f4c649ac2f1f9c0c58fed38cd584f521649"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/mjcfSiteTendonSync.ts",
+      "sha256": "e73f6df3d3b17ba91f074d55c6908d1158fcc54a6a5a2afc5da3d1bd281cb15d"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/mjcfTendonGeometry.ts",
+      "sha256": "259eb54140122ea558d458f74553ac0fdc664639afe1208b5c33be39990e98c4"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/objectPrimitives.ts",
+      "sha256": "00bd4985baf28a41cabb3ab17bf070dc8e0825563b2051fb6b1472cc3d4e9ac1"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/scratch.ts",
+      "sha256": "ad46ac97c1bcb358bf0919e9e2a6ec9f2efe5dba83e4a190d7b9a156289dfaf7"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSync/structuralHelperSync.ts",
+      "sha256": "55a1777d1016e3a6df26197084be691bfc7a3b59699637f0515dd49aa4388a32"
+    },
+    {
+      "path": "src/shared/components/3d/robot/utils/visualizationSyncActivity.ts",
+      "sha256": "b0fc9c95ca8de4bcaad60d1cbee33263c3bdcffac1f9b553581ecfe1f948960b"
+    },
+    {
+      "path": "src/shared/components/3d/robotPositioning.ts",
+      "sha256": "01f73ccb297866af9b6221b97a989078b3eb3daf77e5bdcd51144c2ad6115254"
+    },
+    {
+      "path": "src/shared/components/3d/runtimeGeometrySelection.ts",
+      "sha256": "8159204394b2468f19d8857246f5218b702dd08091b3e1b494de74f4f1206098"
+    },
+    {
+      "path": "src/shared/components/3d/runtimeRobotTypes.ts",
+      "sha256": "effd0938cae86db30f0448b9357eaaaf39c0f0214ca1d509a65b8477a764a5af"
+    },
+    {
+      "path": "src/shared/components/3d/scene/AdaptiveGroundPlane.tsx",
+      "sha256": "17014686e916d526076f54f5a9da4409df337f52daddf57875d499235437ef75"
+    },
+    {
+      "path": "src/shared/components/3d/scene/CanvasResizeSync.tsx",
+      "sha256": "d004f0007b2fa749749addb219bb7712a7b594514307492ea9477542b11648ee"
+    },
+    {
+      "path": "src/shared/components/3d/scene/GroundShadowPlane.tsx",
+      "sha256": "6cf2c38c2719e9d6ebbc0ba82b4e4036d83708e9dcb29e4d8bfbf46fb4a5e180"
+    },
+    {
+      "path": "src/shared/components/3d/scene/HoverInvalidator.tsx",
+      "sha256": "0ef7b3c67781fe564e201fb556e7903a80ded675ae4487e4da3c3535e36fd345"
+    },
+    {
+      "path": "src/shared/components/3d/scene/NeutralStudioEnvironment.tsx",
+      "sha256": "5cd39c5384b45945394128166cfb7b6f9d898cf992f911db80d47f7cee278fa3"
+    },
+    {
+      "path": "src/shared/components/3d/scene/ReferenceGrid.tsx",
+      "sha256": "40fa4d506e30dad0f71bf2ee29016c2494fb217193b42f31122c9bce00f3089d"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SceneCompileWarmup.ts",
+      "sha256": "e252fee02e5a6ae73ee12521d25bbe7c56070686db211dd5eafae00b32a9ccb4"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SceneLighting.tsx",
+      "sha256": "40ead9cc60b771582cf8e62dd9afefc6a9f9617c317a842e8acbf05daf390ee7"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SemanticOutline.tsx",
+      "sha256": "ae01abf3717077cf73a8a9e48a90d66a51c4f4e0d8d0dffba71677b4c4e65327"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SnapshotContactShadows.tsx",
+      "sha256": "ea8e3c618f5304e35bd57a6ffba77e64b1c82e3c18ea67acead6ddeeaa0e8d13"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SnapshotExportLook.tsx",
+      "sha256": "aef19e1f7647106ad3cedafbc9de59013ba0c96f796f25aa1b012d6bbb5575be"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SnapshotManager.tsx",
+      "sha256": "b49ca3fb87d371036c582f6affaffacdb9f7f807e863aa76642d939f55475b27"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SnapshotManagerRuntime.tsx",
+      "sha256": "5fd9049f9ef176aac7fec472b15a12d6634a5e51e3af91c9a08c7485bb1d1bc8"
+    },
+    {
+      "path": "src/shared/components/3d/scene/SnapshotRenderContext.tsx",
+      "sha256": "28ba1df0926bcbb5fae1bd962be750818f3a4ac3674aca87f492322122592d8e"
+    },
+    {
+      "path": "src/shared/components/3d/scene/WorkspaceOrbitControls.tsx",
+      "sha256": "f742aa167b13d53ce25853cc56fc2189ad2c675ea1723f839b4e94074263bb7a"
+    },
+    {
+      "path": "src/shared/components/3d/scene/constants.ts",
+      "sha256": "97e943c72d1391bc7601a70609c0124189ee483f969b2d1ab6fcd14e003846a3"
+    },
+    {
+      "path": "src/shared/components/3d/scene/groundPlaneSizing.ts",
+      "sha256": "4ee8b5c422115b7ca100ca87a20d34878cd2f81dbf7c42a680f82fdadddf9b5b"
+    },
+    {
+      "path": "src/shared/components/3d/scene/index.ts",
+      "sha256": "34e81c182a99fa90d8e083bb975e94d7d814ba2d41c30a6fe1024ed498f0cab7"
+    },
+    {
+      "path": "src/shared/components/3d/scene/interactionQuality.ts",
+      "sha256": "587b9941dc8b011fca0546ca309638a2972414a778a4c6633caad07d0d3e1739"
+    },
+    {
+      "path": "src/shared/components/3d/scene/realtimeViewportComposer.ts",
+      "sha256": "301b9f8161d6c242588293d3d31949cc2cf3de50b488ed438003029b30ab0e0f"
+    },
+    {
+      "path": "src/shared/components/3d/scene/realtimeViewportPolicy.ts",
+      "sha256": "514c71941991bade8860bc7a0b772828cfa63876fa60777f8a572da858ac463f"
+    },
+    {
+      "path": "src/shared/components/3d/scene/semanticOutlineComposer.ts",
+      "sha256": "dba98d69d37505047cbae2711a85bd7304923a6233dbab6bac97351d9a4b67e5"
+    },
+    {
+      "path": "src/shared/components/3d/scene/shadowMapRefresh.ts",
+      "sha256": "f1a3cef0e5187ef7f79d4fd84a0ec15260636d8c010ba055ba353291c9e9d649"
+    },
+    {
+      "path": "src/shared/components/3d/scene/snapshotConfig.ts",
+      "sha256": "a4375c9c2bc67b428ee3b9b35507c228b3c4e65ee338efe00bc57e3d7de071ea"
+    },
+    {
+      "path": "src/shared/components/3d/scene/snapshotPreviewConfig.ts",
+      "sha256": "3a044e06173bf794df67ec965394041acb024be26eb20bf89a1c3fb30c536755"
+    },
+    {
+      "path": "src/shared/components/3d/scene/snapshotResolution.ts",
+      "sha256": "c0ae37bb98da1986483dc14006b2e9d7b145782cabc1c6c4cb9333dbc4feb7e7"
+    },
+    {
+      "path": "src/shared/components/3d/scene/snapshotRuntimeActionRegistry.ts",
+      "sha256": "a5e1707c9c072581d61cd21e3fa4ce1b53ecf39c4b6457bcd036b81ffc3c299d"
+    },
+    {
+      "path": "src/shared/components/3d/scene/snapshotSceneQuality.ts",
+      "sha256": "fbea0d3857e2c214a59b5e27b16f34c3d82b7202b5e17a7b602aaf0d9bb90410"
+    },
+    {
+      "path": "src/shared/components/3d/scene/staticShadowCache.ts",
+      "sha256": "1d56888300ffe10520e2d90821763e8410772b8bc80a3d42cf864cf8f7313d77"
+    },
+    {
+      "path": "src/shared/components/3d/scene/themeUtils.ts",
+      "sha256": "27a03cd84cfdddcc1df838572c225b22fbf024d8a70f998c19b3e65244870efe"
+    },
+    {
+      "path": "src/shared/components/3d/scene/useSceneBoundsCache.ts",
+      "sha256": "1be49976ab1216f6151ed9f538b4c69a33e57b525fa6dd5af7b0336530aa7b33"
+    },
+    {
+      "path": "src/shared/components/3d/scene/viewerOverlaySafeArea.ts",
+      "sha256": "5311504e0cd6083b69d26331c80faaa32b176d4f59e3503dbd361a6be9a5dca6"
+    },
+    {
+      "path": "src/shared/components/3d/scene/workspaceOrbitClipping.ts",
+      "sha256": "0d34a2ef68e8fc601e45554d95bde17cab7a4170865ae9a9c1d0648fe463c416"
+    },
+    {
+      "path": "src/shared/components/3d/scene/workspaceOrbitPan.ts",
+      "sha256": "5628e56c92a201d602f8f072cbaa4a9421ea7da06e8d5f8d304ef8659d9a2a04"
+    },
+    {
+      "path": "src/shared/components/3d/scene/workspaceOrbitRenderPolicy.ts",
+      "sha256": "a77bb658b845ed5914fadd60955f555d5cf465c67271ef904ae0ec756fe05562"
+    },
+    {
+      "path": "src/shared/components/3d/scene/zUpRoomEnvironment.ts",
+      "sha256": "e8380a39459d9c5f0a39d40b78472a90b69483429e4771c5c3cbe23d791bd387"
+    },
+    {
+      "path": "src/shared/components/3d/sharedMaterials.ts",
+      "sha256": "484c0665c21044129f23105afe7aa407c8b9ee0646760923cac5cf7d23d70b50"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/FusionTransformControls.constants.ts",
+      "sha256": "7e7e43e7eb3ce01be3ea21925461bce29a58e208a94f162b9591224c8fc24ca7"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/FusionTransformControls.regression.ts",
+      "sha256": "24ff5647f573d42fb5476046a47768efd6c159559f29cee74bad8eff6f0e4c2f"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/FusionTransformControls.tsx",
+      "sha256": "3120c5f480a4d1e23de8c15b31593b77a5a240b9c464c87e9ee486bee14bed7f"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/FusionTransformControls.types.ts",
+      "sha256": "959061883d424bfae227c461ba712871be9dbb8558bf0c4a63b7378664e1e71d"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/FusionTransformControls.utils.ts",
+      "sha256": "e5bcdcc197bc423de8a097d46b25997a595a8ae9e38ef22e2ee2cc7363891552"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/FusionTransformMaterials.tsx",
+      "sha256": "37257d1cb0b842272fd8a3eea54c225ddce93e135d1dcb0e3fa9be051597c382"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/displayPatchShared.ts",
+      "sha256": "82e4e6601b58aa0f55c8cecea4508aa2019961acac6f759200b51d70182b5557"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/displayPatches.ts",
+      "sha256": "be4182de660427caee7772ebe22a596c8c39e5a524e6d27c76199ec3174e3034"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/fusionRotateGeometry.ts",
+      "sha256": "4c98038c633f3e07adeea3edac895573925718474e6df90d266ec5054ed8903d"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/fusionRotateKnob.ts",
+      "sha256": "454f8cf04d13df6aac2e3d05f7a93dc9ce237795580bd9e38e0698196b66f5f7"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/fusionTranslatePlane.ts",
+      "sha256": "d41ee3b6d95bc3688c92b4f5974f122b040d7ef8e399524d69eea84776bc51cc"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/gizmoCore.ts",
+      "sha256": "588df7d0ba9399f0b985ffb78a07d067be10107c083f9f7cc7911a18695d0b10"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/RotateAxisHandle.tsx",
+      "sha256": "9ee8491a1f965d82ace15b48f5a0f3404db3f7568c567509261e1a5a32a57ec4"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/RotateGuideRing.tsx",
+      "sha256": "e7b4b4699d4ba8acdb53548b56dbac4b496e64aef8b73de7b017660747ab2a1f"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/RotateScreenRingHandle.tsx",
+      "sha256": "3c70a50720fc9950837d53f1a1fe7c66ca586299fa45645f61be31a46ad5a02e"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/RotateTrackballHandle.tsx",
+      "sha256": "ff175105a52c432d4836d84b26523cc430b8dfd4318c9bf9ee199ff999967651"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/TranslateAxisHandle.tsx",
+      "sha256": "2ba170d5886c03680ac12fad572a30f1eb35c4cb652c31f0ef14c1317c1aefbe"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/TranslateCenterHandle.tsx",
+      "sha256": "781a266c2c8e678789282ea213d3f49fb91ea7110f5724ff583475a08046c327"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/TranslateGuideLine.tsx",
+      "sha256": "0c15b5b7fdfcb94fc039b734bd3d1f04a38db9cf37a63f92ce56777fa87b7008"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/handles/TranslatePlaneHandle.tsx",
+      "sha256": "525a5f94a33256c43564c7b2e477bd21a3e415d5ae0bcd81eb8781d15a14234a"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/helpers.ts",
+      "sha256": "7331d8db233163f515e4be0cfd96178ee07a408f0a8ba246bb1332c725c7cf6b"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/hooks/useDisposableGeometry.ts",
+      "sha256": "8d670e80c8ed01dbf3a188dac1d1fd9cfc8dba8f58e5d4be2c7ae1cc852fdb39"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/hoverBehavior.ts",
+      "sha256": "dc342fde3c8eeeebfccb942f6012ad29f289a8428e54862d966f9cb49c614c9f"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/ownership.ts",
+      "sha256": "c69e4783118be6d49b106f9437da78b57e1d556a4c6c5ecd6cc2369394f4fc79"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/pointerState.ts",
+      "sha256": "efbb4691584885a2f85fd9b2340fba1a9789e1a80b843a0a88ebf119294dacb5"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/rotateDisplayPatches.ts",
+      "sha256": "a8da4d95a9ab1681e478bdc7aa46d31060bb7514ffc76460b8a09ed86c941f68"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/translateDisplayPatches.ts",
+      "sha256": "37b58bf3e374a809579dfb0cce1d594237c08d0e890870d44de9cf845e2a1ad0"
+    },
+    {
+      "path": "src/shared/components/3d/unified-transform-controls/visibleHitTesting.ts",
+      "sha256": "91b7786167bd724cf33b20f5ca71849af8cb233c8a586f9a58dbb625175f771a"
+    },
+    {
+      "path": "src/shared/components/3d/urdfMaterials.ts",
+      "sha256": "26513f788d8fbe734f98c95c023ef45cdd61432f4b26174cbe1ec0b26c0b1dd3"
+    },
+    {
+      "path": "src/shared/components/3d/viewerInteractionTypes.ts",
+      "sha256": "22b4731fcba1599cb793a5f126d4ab0dfb71ef85aac92149cc393d648b78dfc4"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/WorkspaceCanvas.tsx",
+      "sha256": "34d73c6037e4f7560eb13ad10bc1bb1b2672b14164b19d49760da342362595e8"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/WorkspaceCanvasErrorBoundary.tsx",
+      "sha256": "af9ce61fb6bcb907c6c5416ea016f8f1047b9ebeffcf9e44c4ab256c2bf50701"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/index.ts",
+      "sha256": "6eabdfe536e91732d300545bc9c12357450a7dc858ad547b3f1bd91edeb0fa5f"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/lateralWheelBlocker.ts",
+      "sha256": "15511bdae37a830c15adafeec70cc5860819240cbef22d7de7b06633432ea740"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/workspaceCameraSnapshot.ts",
+      "sha256": "486c2a0ca38c724721f251b1742b236265dfbebd05e942b20958da955881ccc5"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/workspaceCanvasConfig.ts",
+      "sha256": "3b6530fbe0faea589916de702dfd2b7af6b5db2627781ed7c68ce487dceff038"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/workspaceCanvasRendererCleanup.ts",
+      "sha256": "37ff20d26c08478eee2a4efb5605551650e629a67e11d2c812c691d2bb56aeb5"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/workspaceCanvasWebgl.ts",
+      "sha256": "faaae83fded701cca3ee3915d1ec4e806d719fcc06bcf603d0f92d74360fbee5"
+    },
+    {
+      "path": "src/shared/components/3d/workspace/workspacePointerMissPolicy.ts",
+      "sha256": "28e8a1b03add8130e73a655f02229d62b5ba344dce0150163d573987435dc6d4"
+    },
+    {
+      "path": "src/shared/components/ui/BooleanSegmentedControl.tsx",
+      "sha256": "874f5c0ef0631a50fb770c6063df13af923daa8aa6327ed36e2a0707a3eab536"
+    },
+    {
+      "path": "src/shared/components/ui/Button.tsx",
+      "sha256": "6eec3f3acc52cae715e7eece471bc0cf9445cd0556658169d27b88b23bbf4176"
+    },
+    {
+      "path": "src/shared/components/ui/Card.tsx",
+      "sha256": "d3747ed927f689a19f019d86c6145f50f1802d258a12bd9fe2d3acd51f0c0cfd"
+    },
+    {
+      "path": "src/shared/components/ui/Checkbox.tsx",
+      "sha256": "41bea07e0447db1b9c1c2a47edb17195fb431a1df8eb532175de4dab720c7fe0"
+    },
+    {
+      "path": "src/shared/components/ui/CompactSwitch.tsx",
+      "sha256": "31afd2eaa14b7a98ac8ddae167d41fc46146eae4a8ca1cc2569070734f272f5a"
+    },
+    {
+      "path": "src/shared/components/ui/ContextMenu.tsx",
+      "sha256": "390adb7b4fbd59eb79438baa5c689eea1f67a4c5f3f9c37a92d2ac148e1587e7"
+    },
+    {
+      "path": "src/shared/components/ui/Dialog.tsx",
+      "sha256": "d42063445399d8bcff07ef43ecee6449d58f5e11db21c1142f5d7c55e82340fb"
+    },
+    {
+      "path": "src/shared/components/ui/IconButton.tsx",
+      "sha256": "9a05a398c5d5de4a067daa63db62c8080e0591ce93425c8b600e3fd102225a42"
+    },
+    {
+      "path": "src/shared/components/ui/Input.tsx",
+      "sha256": "85f29b21f9c7e769eceaa41d0ba9d346feb8c5ad24a6c253719dad81a28bec37"
+    },
+    {
+      "path": "src/shared/components/ui/Label.tsx",
+      "sha256": "f0e1de62a2515c563870ebcfd5010e42da8856031307bb651a816119dfafa727"
+    },
+    {
+      "path": "src/shared/components/ui/PanelSegmentedControl.tsx",
+      "sha256": "dd3410e8148f82185432c1fae397ff9028d93d87dcfbfa628a81c04f67e65191"
+    },
+    {
+      "path": "src/shared/components/ui/PanelSelect.tsx",
+      "sha256": "4936aed8559960b205123e76c3dff1390c9f0775ac67dc05ef2f46c194fe2346"
+    },
+    {
+      "path": "src/shared/components/ui/SegmentedControl.tsx",
+      "sha256": "190504886ead1ae407a99d6fef830ec6b8b0e2c7eed6d90e956db33d6c3b2414"
+    },
+    {
+      "path": "src/shared/components/ui/Select.tsx",
+      "sha256": "d61e16b6ba6c8d1aaf9caf591f3d1efd46fdc232f92d4866e3bdb58b8b7d7e77"
+    },
+    {
+      "path": "src/shared/components/ui/Separator.tsx",
+      "sha256": "c08b6322d197da4565a941e0aecf0a56d659ae23e18b939b30e781a33631420c"
+    },
+    {
+      "path": "src/shared/components/ui/Slider.tsx",
+      "sha256": "a8c6d9ce824a274b15f82324da741a5c2173accee573ec4d69370405a6a7a3d7"
+    },
+    {
+      "path": "src/shared/components/ui/Switch.tsx",
+      "sha256": "f82924a68a0791ea76073b85dfa760eb461e801ad4c442912219e7324c0a8058"
+    },
+    {
+      "path": "src/shared/components/ui/ToolbarToggleGroup.tsx",
+      "sha256": "cacd544b7440ac1175829faf97c4a920d75257fada8b319e3993f1fb6fa5840f"
+    },
+    {
+      "path": "src/shared/components/ui/Tooltip.tsx",
+      "sha256": "0f4b8bdf1c2ec41b4878e220212aa8a2d84d7c6bef67685bb34000a551c42304"
+    },
+    {
+      "path": "src/shared/components/ui/closeButtonStyles.ts",
+      "sha256": "a6b451ef92ca6fa9413feeae71beab988662020e7ef971585c4eb6938cb7ceda"
+    },
+    {
+      "path": "src/shared/components/ui/index.ts",
+      "sha256": "e6db195ce845c841a0f995977f644b7ba457c7a724857517429f06b2d422dc6c"
+    },
+    {
+      "path": "src/shared/debug/consoleDiagnostics.ts",
+      "sha256": "60f23d4d4c6af3cd1c4bba0ab60048e3c091bfefab633586e95945340d9cb9a9"
+    },
+    {
+      "path": "src/shared/debug/regressionDebugEnabled.ts",
+      "sha256": "3da4dbba5106456c228af0a50977907f43f8394da8efbd551972dfeab8ff26e7"
+    },
+    {
+      "path": "src/shared/debug/regressionState.ts",
+      "sha256": "a0fd3664fc99b7329173c069a7e9312222c550bc0b5370ba60cab3efc5cd6a4b"
+    },
+    {
+      "path": "src/shared/hooks/pointerResizeEvents.ts",
+      "sha256": "557f808409d42f85ff522d600822f5966781cb21b370c7f238f215d22f8194c1"
+    },
+    {
+      "path": "src/shared/hooks/useTheme.ts",
+      "sha256": "935ad8fe9c9c318f767c2fee03fd735e085fccf06b1b277e868833e5017b14a2"
+    },
+    {
+      "path": "src/shared/i18n/index.ts",
+      "sha256": "24912de99e5229a3a2c20fc3b2e84737698f2d467eee616fc1b490b44cbdb54d"
+    },
+    {
+      "path": "src/shared/i18n/locales/en.ts",
+      "sha256": "8e780153f593f8a9d521280d312f4d41b4fb3c4bf069e5456f1354afb7d0861a"
+    },
+    {
+      "path": "src/shared/i18n/locales/enWorkflow.ts",
+      "sha256": "90b0079b4956eee1fdb323ffde42f40c23b06c3a26e0d4f35bac6ef692a9fac9"
+    },
+    {
+      "path": "src/shared/i18n/locales/index.ts",
+      "sha256": "6ceb7a4d8bd11da5f3440a6f250c34ed2db48420739387085e100a1fa2371cba"
+    },
+    {
+      "path": "src/shared/i18n/locales/zh.ts",
+      "sha256": "a8a3a01ddc53e999240a1919b02643b285c8f0923ab087af333aad9ea3944c20"
+    },
+    {
+      "path": "src/shared/i18n/locales/zhWorkflow.ts",
+      "sha256": "3bb2658a967ac834d99aa0f0ea623627cd22bb8aa076410ced2687737be745b8"
+    },
+    {
+      "path": "src/shared/i18n/runtimeLanguage.ts",
+      "sha256": "ada2c3507224f3c8d0d630449a241c985c8d3194563c573f6eef5350329d5e5f"
+    },
+    {
+      "path": "src/shared/i18n/translationWorkflowKeys.ts",
+      "sha256": "f8a123947965c49eeac0ea7e0e8b87832411b76a0ca4dda655a0b0a0680726ad"
+    },
+    {
+      "path": "src/shared/i18n/translations.ts",
+      "sha256": "48cbf43b9ed0b435ad0a9b4bc8bfe24644acce07dbb9e7bb2216b4c5dbbbe173"
+    },
+    {
+      "path": "src/shared/i18n/types.ts",
+      "sha256": "5323dcbc9d24e29896348c966c247b4b5a58f61968f9011b62aa5f35e808ea6c"
+    },
+    {
+      "path": "src/shared/utils/active_joint_selection.ts",
+      "sha256": "7784074a88bf8d6bc83253f3e5aef4a2e65d017b7626245a7d04be7a1afd2c01"
+    },
+    {
+      "path": "src/shared/utils/continuousJointAngle.ts",
+      "sha256": "749a6013aec53f9a22ca2d8db6c48acae27abd8c26f3f07df74991598995e568"
+    },
+    {
+      "path": "src/shared/utils/domEvents.ts",
+      "sha256": "af1e63b2cf64f9e5e9e845418ede4d9245c04d8d89d072293ef8181dc3e1623f"
+    },
+    {
+      "path": "src/shared/utils/index.ts",
+      "sha256": "14e1a72297f9f95331cdfd6ed445841af2a1bf677f5936ca6719713179c7475f"
+    },
+    {
+      "path": "src/shared/utils/jointDragStoreSync.ts",
+      "sha256": "cf481994b11993156c4f3ef5e379a69e7ee688b0059738803d4cbe9c3f9cccaf"
+    },
+    {
+      "path": "src/shared/utils/jointPanelState.ts",
+      "sha256": "309ffda662c18ee23d065391ef71dbc11e5b4528ad0d6e61f1eb279d97e1ac28"
+    },
+    {
+      "path": "src/shared/utils/jointPanelStore.ts",
+      "sha256": "d523973b5ac9ea905141fb780528a9f9bd8ef97c1348f2117cf460653ea15307"
+    },
+    {
+      "path": "src/shared/utils/jointTypes.ts",
+      "sha256": "f65060363fdf8a01897754f911b63758066da42307d14dc77cf3e338937fdfe7"
+    },
+    {
+      "path": "src/shared/utils/jointUnits.ts",
+      "sha256": "e87b9952c54f3f53f0c424566bbe214a1dbc0292a7fd8a204f4d9543a8c84665"
+    },
+    {
+      "path": "src/shared/utils/math.ts",
+      "sha256": "15656960e48decd5d0a8e87b4b908e0727ce682c10ce447478ea7a6bd40f1ca6"
+    },
+    {
+      "path": "src/shared/utils/robot/semanticSnapshot.ts",
+      "sha256": "c0a4ba42d89f2f82e698ef78c18cfa3c3887072f01fbebe8848c0d5c2213ae1d"
+    },
+    {
+      "path": "src/shared/utils/robotFileSupport.ts",
+      "sha256": "5c46cdb617343856410181026ca0dcf2e12189b5d1aefdb331d4ad5203a7250f"
+    },
+    {
+      "path": "src/shared/utils/theme.ts",
+      "sha256": "05df7625257aebc2a9c567a4a4988c3b3092304e90027634a59dd506e6b61e65"
+    },
+    {
+      "path": "src/shared/utils/three/collisionOverlayMaterial.ts",
+      "sha256": "70648b6034339ce0d425fa217348215dc0c2557f71b03156603d3fea28642a7a"
+    },
+    {
+      "path": "src/shared/utils/three/dispose.ts",
+      "sha256": "4972df4c943c80cd4db0b2323a4b0c269c0c12db62fe1d2cdce6c397a90d8cf6"
+    },
+    {
+      "path": "src/shared/utils/three/hoverSupportSurface.ts",
+      "sha256": "ffb35bda434115ad80bfa2f72d188781583e9bfdec726a1de282f41ca2987c2e"
+    },
+    {
+      "path": "src/shared/utils/three/ignoreRaycast.ts",
+      "sha256": "a81f560ccc0bd65c9f95fc8e599c6bffe938f885ceaede6fb7b6fa20b3e3af0d"
+    },
+    {
+      "path": "src/shared/utils/three/jointRotationIndicator.ts",
+      "sha256": "5143bbdb8a94410b9d382ba91283a892089eac2278d5e1737937fa3d969b05e2"
+    },
+    {
+      "path": "src/shared/utils/threeBounds.ts",
+      "sha256": "545ac0dbe4a81356081603c0ae486a926f1bec239359934ef1525ce277d7db77"
+    },
+    {
+      "path": "src/shared/utils/throttle.ts",
+      "sha256": "e111b4f5f1f78176e1103113c76ba28e3d7e34a1e5b23793cd95b19d64b4ef6e"
+    },
+    {
+      "path": "src/shared/utils/viewerRenderQuality.ts",
+      "sha256": "47c415c8430d234fd2f1f58242a5c0522c699c13aa988bb69ce86e4101ace627"
+    },
+    {
+      "path": "src/types/constants.ts",
+      "sha256": "18a4c9fa601ef9ee260aa0ed63023c94634361d84dd12b502d2e34f70d7d5d3c"
+    },
+    {
+      "path": "src/types/geometry.ts",
+      "sha256": "05376dd05961e8d583256e95becfc3a01328bfcf7f7e6983b323c459e493de3e"
+    },
+    {
+      "path": "src/types/hardware.ts",
+      "sha256": "a82b459fa52698454f5643e53a605e6fa3046386189c285d7686a6abc484ef42"
+    },
+    {
+      "path": "src/types/index.ts",
+      "sha256": "6514d5eda846c88cc7e67eac5362482fbb08323ebdd4edf4025c7cbdc18c2a61"
+    },
+    {
+      "path": "src/types/inspection.ts",
+      "sha256": "72e15101069f4994f040a8525789c9ddca6419fa14c471e7da8191203fd4076f"
+    },
+    {
+      "path": "src/types/robot.ts",
+      "sha256": "9772381f8f06a09b50b3b8b3107f5117407a4bf7835dd199db80408336b47974"
+    },
+    {
+      "path": "src/types/sourceDraft.ts",
+      "sha256": "ce0498b10603cd91cb3ca8e91204fd261304c2f88119930d799c181368adf819"
+    },
+    {
+      "path": "src/types/ui.ts",
+      "sha256": "ee10f493a020f056039722f88b468c0e8dd17533c3e848866140c02e2deca11c"
+    },
+    {
+      "path": "src/types/usd.ts",
+      "sha256": "be905e3fa46f73abf69571d3dd443ba6a855434bbad8e6b476e0613a58838ae4"
+    },
+    {
+      "path": "src/types/usdMaterial.ts",
+      "sha256": "b5c7bc4a082e440764fab3404ea49f4071390fbe972d2d5ffb5620c4204deeff"
+    },
+    {
+      "path": "src/types/viewer.ts",
+      "sha256": "079f354cc31170098be7f3609a5ed41a2af55634e52fc898dcb08c76e39aa598"
+    },
+    {
+      "path": "src/types/workspace.ts",
+      "sha256": "00d3de910084d59c7c58f55aa76cf60b92a8554c0bf5d7a715f4f7916840c7be"
+    }
+  ]
+}

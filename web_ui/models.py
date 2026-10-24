@@ -6,6 +6,7 @@ from copy import deepcopy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -194,12 +195,16 @@ def inspect_model(entry: Path) -> dict:
     site_details = [{"name": sites[i], "body": body_names[int(model.site_bodyid[i]) - 1], "position": model.site_pos[i].tolist()}
                     for i in range(model.nsite)]
     qadr = int(model.jnt_qposadr[free_ids[0]])
+    meshes = [{"name": name(mujoco.mjtObj.mjOBJ_MESH, i),
+               "faces": int(model.mesh_facenum[i]), "vertices": int(model.mesh_vertnum[i])}
+              for i in range(model.nmesh)]
     pos = model.qpos0[qadr:qadr + 3].tolist()
     rot = model.qpos0[qadr + 3:qadr + 7].tolist()
     if model.nkey:
         pos = model.key_qpos[0, qadr:qadr + 3].tolist()
         rot = model.key_qpos[0, qadr + 3:qadr + 7].tolist()
     return {"name": entry.stem, "joints": joints, "bodies": body_names,
+            "meshes": meshes, "mesh_max_faces": max((m["faces"] for m in meshes), default=0),
             "body_parents": {body_names[i - 1]: name(mujoco.mjtObj.mjOBJ_BODY, int(model.body_parentid[i]))
                              for i in range(1, model.nbody)}, "sites": sites,
             "site_details": site_details, "geoms": geoms, "base_body": body_names[physical_base_id - 1],
@@ -212,19 +217,108 @@ def inspect_model(entry: Path) -> dict:
             "issues": [{"level": "warning", "message": "角色、关节镜像符号和足端是推测值，请逐项确认；PD 等模板值不代表实机标定参数。"}]}
 
 
-def import_model(root, xml=None, workspace=None):
+def _infer_model_root(entry: Path) -> Path:
+    """Infer a portable bundle from an explicitly supplied model file path."""
+    directory = entry.parent.resolve()
+    package = next((parent for parent in (directory, *directory.parents)
+                    if (parent / "package.xml").is_file()), None)
+    root = package or (directory.parent if directory.name.lower() in ("urdf", "xml", "xmls") else directory)
+    document = _xml_root(entry)
+    parents = [root]
+    if document.tag == "robot":
+        # Only the files referenced by this URDF are copied, even if relative
+        # resources need a common ancestor above the conventional package root.
+        for node in document.iter():
+            reference = node.get("filename") if node.tag in ("mesh", "texture") else None
+            if reference and "://" not in reference:
+                path = Path(reference).expanduser()
+                parents.append((path if path.is_absolute() else directory / path).resolve().parent)
+    elif document.tag == "mujoco":
+        compiler = document.find("compiler")
+        assetdir = compiler.get("assetdir", "") if compiler is not None else ""
+        for node in document.iter():
+            reference = node.get("file")
+            if reference and not Path(reference).is_absolute():
+                key = "meshdir" if node.tag == "mesh" else "texturedir" if node.tag == "texture" else "assetdir"
+                prefix = compiler.get(key, assetdir) if compiler is not None and node.tag != "include" else ""
+                parents.append((directory / prefix / reference).resolve().parent)
+    # Common ancestors cover resources; no directory tree is imported wholesale.
+    return Path(os.path.commonpath(parents))
+
+
+def _import_location(root, xml, *, strict_root=False):
+    raw_root, raw_xml = str(root or "").strip(), str(xml or "").strip()
+    if not raw_root and not raw_xml:
+        raise ModelError("请填写模型目录或完整的 XML / URDF 文件路径")
+    selected = Path(raw_root).expanduser() if raw_root else None
+    requested = Path(raw_xml).expanduser() if raw_xml else None
+    if requested is not None and requested.is_absolute():
+        if selected is not None and selected.is_file() and selected.resolve() != requested.resolve():
+            raise ModelError(f"两个输入框指向不同的模型文件，未执行导入。\n模型路径：{selected}\n"
+                             f"入口路径：{requested}\n请清空其中一个，或将两处填写为同一个文件。")
+        entry = requested
+        directory = (selected.resolve() if selected is not None and selected.is_dir()
+                     and entry.resolve().is_relative_to(selected.resolve()) else None)
+    elif selected is not None and selected.is_file():
+        entry, directory = selected, None
+    elif selected is not None and selected.is_dir():
+        directory = selected.resolve()
+        if requested is not None:
+            entry = directory / requested
+        else:
+            candidates = []
+            for folder in (directory, directory / "urdf", directory / "xml", directory / "xmls"):
+                if not folder.is_dir():
+                    continue
+                for path in sorted(folder.iterdir()):
+                    if not path.is_file() or path.suffix.lower() not in (".xml", ".urdf"):
+                        continue
+                    try:
+                        node = _xml_root(path)
+                    except (ModelError, UnicodeError):
+                        continue
+                    if node.tag == "robot" or (node.tag == "mujoco" and
+                        (node.find(".//freejoint") is not None or node.find(".//joint[@type='free']") is not None)):
+                        candidates.append(path)
+            if len(candidates) != 1:
+                raise ModelError("模型目录中未找到唯一的机器人入口；请在任一输入框填写完整 XML / URDF 路径，或指定相对入口")
+            entry = candidates[0]
+    elif requested is not None and not raw_root:
+        entry, directory = requested, None
+    else:
+        raise ModelError(f"模型路径不存在：{selected}；请填写模型目录或完整 XML / URDF 文件路径")
+    if entry.is_symlink():
+        raise ModelError(f"模型不接受符号链接：{entry}")
+    if not entry.is_file():
+        raise ModelError(f"入口模型文件不存在：{entry}")
+    if not strict_root:
+        inferred = _infer_model_root(entry)
+        directory = (Path(os.path.commonpath([directory, inferred]))
+                     if directory is not None and entry.resolve().is_relative_to(directory) else inferred)
+    if directory is None:
+        raise ModelError("ZIP 模型缺少有效的包内根目录")
+    try:
+        return directory.resolve(), _inside(directory.resolve(), entry)
+    except ModelError as exc:
+        raise ModelError(f"{exc}\n当前模型目录：{directory}\n可直接填写完整入口路径，由工具确定资源目录。") from exc
+
+
+def check_mesh_budget(limit, meshes):
+    """A generation budget, separate from MuJoCo's fixed STL decoder limit."""
+    if limit is None:
+        return
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ModelError("mesh_face_limit 需要正整数（三角面 / 网格）")
+    exceeded = [m for m in meshes if m["faces"] > limit]
+    if exceeded:
+        maximum = max(m["faces"] for m in exceeded)
+        raise ModelError(f"网格面数超过配置预算：{exceeded[0]['name']} 等 {len(exceeded)} 个网格，"
+                         f"最大 {maximum} 面，预算 {limit} 面；请在配置页将模型资源面数预算调至至少 {maximum}。")
+
+
+def import_model(root, xml=None, workspace=None, *, _strict_root=False):
     workspace = _workspace(workspace)
-    root = Path(root).expanduser().resolve()
-    if root.is_file() and not xml:
-        root, xml = root.parent, root.name
-    if not root.is_dir():
-        raise ModelError("模型根目录不存在")
-    if not xml:
-        candidates = sorted(path for path in root.iterdir() if path.suffix.lower() in (".xml", ".urdf"))
-        if len(candidates) != 1:
-            raise ModelError("请指定入口 XML 或 URDF 文件名")
-        xml = candidates[0].name
-    entry = _inside(root, root / xml)
+    root, entry = _import_location(root, xml, strict_root=_strict_root)
     document = _xml_root(entry)
     if document.tag not in ("robot", "mujoco"):
         raise ModelError("入口需要是 URDF <robot> 或 MJCF <mujoco>；xacro 请先展开为 URDF")
@@ -284,7 +378,9 @@ def import_model(root, xml=None, workspace=None):
                  "sha256": digest.hexdigest(), "name": inspection["name"],
                  "source_format": "urdf" if conversion else source_format,
                  "source_file": conversion.get("source_file", source_file) if conversion else source_file,
-                 "import_format": source_format}
+                 "import_format": source_format,
+                 "mesh_max_faces": inspection["mesh_max_faces"],
+                 "mesh_face_limit": max(200000, inspection["mesh_max_faces"])}
         if conversion:
             model["conversion"] = conversion
             inspection["conversion"] = conversion
@@ -293,7 +389,8 @@ def import_model(root, xml=None, workspace=None):
                 inspection["parameter_sources"] = {"control.effort_limit": "model"}
         (destination / "inspection.json").write_text(json.dumps(inspection, indent=2, ensure_ascii=False))
         (destination / "model.json").write_text(json.dumps(model, indent=2, ensure_ascii=False))
-        return {"model": model, "inspection": inspection, "spec": make_spec(model, inspection)}
+        return {"model": model, "inspection": inspection, "spec": make_spec(model, inspection),
+                "import_input": {"root": str(root), "xml": entry.relative_to(root).as_posix()}}
     except BaseException:
         shutil.rmtree(destination)
         raise
@@ -329,7 +426,9 @@ def import_zip(file, workspace=None, xml=None):
                     shutil.copyfileobj(source, output)
         if xml:
             entry = _inside(extraction, extraction / xml)
-            return import_model(extraction, entry.relative_to(extraction), workspace)
+            result = import_model(extraction, entry.relative_to(extraction), workspace, _strict_root=True)
+            result["import_input"] = {"root": result["model"]["root"], "xml": result["model"]["xml"]}
+            return result
         # Prefer standalone robot files to scene wrappers and include fragments.
         candidates = []
         for path in extraction.rglob("*"):
@@ -346,7 +445,9 @@ def import_zip(file, workspace=None, xml=None):
                 continue
         if len(candidates) != 1:
             raise ModelError("ZIP 必须含唯一的机器人入口 XML/URDF；多个模型请填写包内入口路径")
-        return import_model(extraction, candidates[0].relative_to(extraction), workspace)
+        result = import_model(extraction, candidates[0].relative_to(extraction), workspace, _strict_root=True)
+        result["import_input"] = {"root": result["model"]["root"], "xml": result["model"]["xml"]}
+        return result
     except zipfile.BadZipFile as exc:
         raise ModelError("上传文件不是有效的 ZIP") from exc
     finally:
@@ -372,7 +473,6 @@ def make_spec(model, inspection=None):
         inspection = json.loads((Path(model["root"]).parent / "inspection.json").read_text())
     slug = re.sub(r"[^a-z0-9]+", "_", model["name"].lower()).strip("_")
     slug = slug if slug and slug[0].isalpha() else "robot_" + slug
-    slug += "_new"
     bindings = {"base_body": inspection["base_body"], "joints": [
         {"name": j["name"], "leg": j["leg"], "role": j["role"], "sign": -1 if j["role"] == "hip" else 1}
         for j in inspection["joints"]], "feet": [], "base_geoms": [], "leg_geoms": []}
@@ -398,7 +498,10 @@ def make_spec(model, inspection=None):
             continue
         base_bodies = inspection.get("base_bodies", [bindings["base_body"]])
         bindings["base_geoms" if geom["body"] in base_bodies else "leg_geoms"].append(geom["name"])
-    control = {"action_clip": {j["name"]: j["range"] for j in inspection["joints"]}}
+    # A new robot has no confirmed gains.  Explicit nulls also prevent the
+    # template's RI-4438 gains from appearing through the ordinary merge path.
+    control = {"stiffness": None, "damping": None,
+               "action_clip": {j["name"]: j["range"] for j in inspection["joints"]}}
     effort = {j["name"]: j["effort"] for j in model.get("conversion", {}).get("joints", []) if "effort" in j}
     if effort:
         control["effort_limit"] = effort
@@ -406,6 +509,8 @@ def make_spec(model, inspection=None):
             "bindings": bindings, "parameters": {"init_state": {"pos": inspection["initial_pos"], "rot": inspection["initial_rot"],
                            "default_joint": inspection["default_joint"]},
                            "control": control},
+            "motor_inertia": {"version": 1, "scopes": {"common": {
+                joint["name"]: {"rotor_inertia": None, "gear_ratio": 1} for joint in bindings["joints"]}}},
             "tasks": {"him": {"terrains": ["Flat", "Rough"], "parameters": {}}}, "confirmed": False}
 
 
@@ -436,7 +541,16 @@ def _validate_spec(spec):
         error(str(exc))
         return issues
     bindings = spec.get("bindings", {})
+    try:
+        check_mesh_budget(spec.get("model", {}).get("mesh_face_limit"), inspection.get("meshes", []))
+    except ModelError as exc:
+        error(str(exc))
     joints = bindings.get("joints", [])
+    try:
+        from .motor_inertia import validate as validate_motor_inertia
+        validate_motor_inertia(spec, bindings)
+    except ValueError as exc:
+        error(str(exc))
     if len(joints) != 12 or {j.get("name") for j in joints} != {j["name"] for j in inspection["joints"]}:
         error("动作映射必须恰好包含模型的 12 个不同关节")
     expected = {(leg, role) for leg in LEGS for role in ROLES}
@@ -479,6 +593,11 @@ def _validate_spec(spec):
         if not task.get("terrains") or set(task["terrains"]) - {"Flat", "Rough"}:
             error(f"{key} 需要选择 Flat 或 Rough")
         params = _merge(spec.get("parameters", {}), task.get("parameters", {}))
+        try:
+            from .terrain_parameters import validate as validate_terrain
+            validate_terrain(params.get("terrain", {}), f"{key}: terrain")
+        except ValueError as exc:
+            error(str(exc))
         initial = params.get("init_state", {})
         default_joint = initial.get("default_joint", {})
         for joint in inspection["joints"]:
@@ -493,6 +612,14 @@ def _validate_spec(spec):
         if len(rot) == 4 and abs(sum(v*v for v in rot) - 1) > 1e-4:
             error(f"{key}: 初始四元数必须为单位四元数（wxyz）")
         control = params.get("control", {})
+        reduction = control.get("hip_reduction", 1)
+        if (isinstance(reduction, bool) or not isinstance(reduction, (int, float))
+                or not math.isfinite(reduction) or not 0 < reduction <= 1):
+            error(f"{key}: hip_reduction 必须为 (0, 1] 内的有限数值")
+        scale = control.get("action_scale")
+        scales = scale.values() if isinstance(scale, dict) else ([] if scale is None else [scale])
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0 for v in scales):
+            error(f"{key}: action_scale 必须为有限正数或逐关节有限正数映射")
         for group in ("control", "observations"):
             delay = params.get(group, {})
             lo, hi = delay.get("delay_min_lag", 0), delay.get("delay_max_lag", 0)
@@ -505,7 +632,9 @@ def _validate_spec(spec):
             if values is None:
                 continue
             values = values.values() if isinstance(values, dict) else [values]
-            if any(not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in values):
+            if any((v is None and field not in ("armature", "friction", "passive_damping")) or
+                   (v is not None and (not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0))
+                   for v in values):
                 error(f"{key}: {field} 需要非负有限数值")
         env = params.get("environment", {})
         for field in ("num_envs", "env_spacing", "episode_length_s", "sim_dt"):

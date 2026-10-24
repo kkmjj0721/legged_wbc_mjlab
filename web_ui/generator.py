@@ -6,11 +6,13 @@ import hashlib
 import json
 import keyword
 import importlib
+import inspect
 from pathlib import Path
 import pprint
 import re
 
 from .templates_catalog import CONTRACT_FIELDS, LP_PRESETS, TEMPLATES, catalog
+from . import motor_inertia
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LEGS = ("FL", "FR", "RL", "RR")
@@ -62,6 +64,7 @@ def _validate(spec):
         raise ValueError("四条腿均须绑定 hip / thigh / calf 三个关节，且不得重复")
     if any(joint.get("sign") not in (-1, 1) for joint in joints):
         raise ValueError("各关节的镜像 sign 必须为 +1 或 -1")
+    motor_inertia.validate(spec, binding)
     feet = binding["feet"]
     if len(feet) != 4 or {foot["leg"] for foot in feet} != set(LEGS):
         raise ValueError("需要 FL / FR / RL / RR 四个足端绑定")
@@ -116,6 +119,10 @@ def _model_details(spec):
         if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name) < 0:
             raise ValueError(f"找不到碰撞 geom: {name}")
     for foot in bindings["feet"]:
+        foot_type = int(model.geom(foot["geom"]).type[0])
+        # Warp MULTICCD rejects positive margins for mesh/box contact pairs.
+        # The RI sphere-foot preset is only applicable to other foot shapes.
+        foot["margin"] = 0.0 if foot_type in (mujoco.mjtGeom.mjGEOM_MESH, mujoco.mjtGeom.mjGEOM_BOX) else 0.001
         if not foot.get("site"):
             foot["site"] = f"migration_{foot['leg'].lower()}_foot"
         if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, foot["site"]) < 0:
@@ -135,7 +142,7 @@ def _model_details(spec):
     return root, entry, bindings, limits, model
 
 
-def _parameters(spec, bindings, limits):
+def _parameters(spec, bindings, limits, *, allow_unconfigured_pd=False, motor_inertia_scope=None):
     import math
 
     templates = {item["key"]: item for item in catalog()}
@@ -160,6 +167,39 @@ def _parameters(spec, bindings, limits):
                     raise ValueError(f"{algorithm}: learning.{group} 包含未支持的训练配置字段")
         p = merge(defaults, spec.get("parameters", {}))
         p = merge(p, selected.get("parameters", {}))
+        from .terrain_parameters import validate as validate_terrain
+        validate_terrain(p.get("terrain", {}), f"{algorithm}: terrain")
+        p["_motor_inertia"] = motor_inertia.apply(
+            spec, algorithm if motor_inertia_scope is None else motor_inertia_scope, bindings, p["control"])
+        # Gains belong to the new robot, never to the source template.  Missing
+        # fields in older drafts are treated exactly like explicit nulls.
+        from .template_runtime import joint_value
+        supplied_control = merge(spec.get("parameters", {}).get("control", {}),
+                                 selected.get("parameters", {}).get("control", {}))
+        missing_pd = []
+        for field, test_reference in (("stiffness", 20.0), ("damping", 0.5)):
+            supplied = supplied_control.get(field)
+            values = {}
+            for joint in bindings["joints"]:
+                value = joint_value(supplied, joint)
+                if value is None:
+                    missing_pd.append({"joint": joint["name"], "field": field})
+                    if allow_unconfigured_pd:
+                        value = test_reference
+                values[joint["name"]] = value
+            p["control"][field] = values
+        if missing_pd and not allow_unconfigured_pd:
+            item = missing_pd[0]
+            raise ValueError(f"{algorithm}: {item['joint']} 的 PD 尚未配置（{item['field']}）；"
+                             "请先运行自动 PD 搜索并应用候选，或手动填写完整 PD。测试基准 20.0/0.5 不会自动写入任务。")
+        if allow_unconfigured_pd:
+            p["_pd_reference"] = {"baseline_used": bool(missing_pd),
+                                  "reference_only": bool(missing_pd),
+                                  "unconfigured": missing_pd,
+                                  "label": (("测试基准 20.0 / 0.5（未应用）" if len(missing_pd) == 2 * len(bindings["joints"])
+                                             else "测试对照（缺失项按 20.0 / 0.5 补全，未应用）")
+                                            if missing_pd else "已配置 PD"),
+                                  "kp": 20.0, "kd": 0.5}
         if algorithm == "him_lpacrl" and p.get("lpacrl", {}).get("height_scan") != defaults["lpacrl"]["height_scan"]:
             raise ValueError("LP-ACRL height_scan 为 phase47_v1 固定观测契约，不允许修改")
         p["control"]["action_clip"] = merge(limits, p["control"].get("action_clip", {}))
@@ -176,6 +216,10 @@ def _parameters(spec, bindings, limits):
                 if p["learning"][section].get(name) != defaults["learning"][section][name]:
                     raise ValueError(f"{algorithm}: {name} 为固定训练契约，不允许修改")
         control = p["control"]
+        reduction = control.get("hip_reduction", 1)
+        if (isinstance(reduction, bool) or not isinstance(reduction, (int, float))
+                or not math.isfinite(reduction) or not 0 < reduction <= 1):
+            raise ValueError(f"{algorithm}: hip_reduction 必须为 (0, 1] 内的有限数值")
         for joint in bindings["joints"]:
             name = joint["name"]
             for field in ("stiffness", "damping", "effort_limit", "action_scale", "armature", "friction", "passive_damping"):
@@ -183,7 +227,7 @@ def _parameters(spec, bindings, limits):
                 val = joint_value(control.get(field), joint)
                 if val is None and field in ("armature", "friction", "passive_damping"):
                     continue
-                if not isinstance(val, (int, float)) or not math.isfinite(val) or val < 0 or (field in ("effort_limit", "action_scale") and val == 0):
+                if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val) or val < 0 or (field in ("effort_limit", "action_scale") and val == 0):
                     raise ValueError(f"{algorithm}: {name} 的 {field} 必须为有效非负数（力矩和动作缩放须大于零）")
             lo, hi = control["action_clip"][name]
             angle = p["init_state"]["default_joint"][name]
@@ -201,6 +245,8 @@ def _parameters(spec, bindings, limits):
         if type(control.get("decimation")) is not int or control["decimation"] <= 0:
             raise ValueError("decimation 必须为正整数")
         environment = p["environment"]
+        from .simulation_config import validate_options
+        validate_options(environment.get("mujoco", {}))
         if type(environment["num_envs"]) is not int or environment["num_envs"] <= 0:
             raise ValueError("num_envs 必须为正整数")
         if any(not isinstance(environment[key], (int, float)) or not math.isfinite(environment[key]) or environment[key] <= 0
@@ -286,7 +332,8 @@ def _replace(text, slug, prefix):
     return re.sub(r"from config\.", "from src.config.", text)
 
 
-def _central_override(algorithm, p):
+def _central_config(algorithm, p):
+    """Materialize one selected algorithm, including its inherited defaults."""
     env_class, learning_class = {
         "ppo": ("RobotCfg", "RobotCfgPPO"), "him": ("RobotHimCfg", "RobotCFGHimPPO"),
         "him_symmetry": ("RobotHimCfg", "RobotCFGHimPPO"),
@@ -310,38 +357,43 @@ def _central_override(algorithm, p):
             return {k: restore(original.get(k), v) for k, v in value.items()}
         return value
 
-    def literal_for(cls, group, name, value):
-        old = getattr(getattr(cls, group, None), name, None)
-        return _literal(restore(old, value))
-
-    lines = ["\n# Effective migration defaults; each mutable value belongs to this task.",
-             "from copy import deepcopy as _migration_copy",
-             "def _migration_section(section):",
-             "    return type(section.__name__, (), {name: (_migration_section(value) if isinstance(value, type) else _migration_copy(value))",
-             "        for name in dir(section) if not name.startswith('_')",
-             "        for value in [getattr(section, name)] if isinstance(value, type) or not callable(value)})"]
-    for target in dict.fromkeys(groups.values()):
-        lines.append(f"{env_class}.{target} = _migration_section({env_class}.{target})")
-    for group in p["learning"]:
-        lines.append(f"{learning_class}.{group} = _migration_section({learning_class}.{group})")
-    for group, target in groups.items():
-        for name, value in p.get(group, {}).items():
-            if name in ("enabled", "action_clip", "action_scale", "sim_dt", "passive_damping", "friction"):
-                continue
-            if name == "ranges":
-                for field, scalar in value.items():
-                    old_ranges = getattr(getattr(original_env, target), "ranges", None)
-                    lines.append(f"{env_class}.{target}.ranges.{field} = {_literal(restore(getattr(old_ranges, field, None), scalar))}")
-            else:
-                lines.append(f"{env_class}.{target}.{name} = {literal_for(original_env, target, name, value)}")
+    overrides = {target: deepcopy(p[group]) for group, target in groups.items() if group in p}
     for group, values in p.get("lpacrl", {}).items():
-        for name, value in values.items():
-            lines.append(f"{env_class}.{group}.{name} = {literal_for(original_env, group, name, value)}")
+        overrides[group] = merge(overrides.get(group, {}), values)
     if algorithm == "him_lpacrl" and not p["curriculum"].get("enabled", True):
-        lines.extend([f"{env_class}.curriculum.method = 'uniform'", f"{env_class}.curriculum.uniform_mix = 0.0"])
-    for group, values in p["learning"].items():
-        for name, value in values.items():
-            lines.append(f"{learning_class}.{group}.{name} = {literal_for(original_learning, group, name, value)}")
+        overrides["curriculum"].update(method="uniform", uniform_mix=0.0)
+
+    def declaration(original, name, supplied, level=0, *, base=""):
+        indent = "    " * level
+        lines = [f"{indent}class {name}{base}:"]
+        names = {key for key in dir(original) if not key.startswith("_")
+                 and (inspect.isclass(getattr(original, key)) or not callable(getattr(original, key)))}
+        names.update(supplied)
+        for key in sorted(names):
+            old = getattr(original, key, None)
+            if inspect.isclass(old):
+                lines.extend(declaration(old, key, supplied.get(key, {}), level + 1))
+            else:
+                value = restore(old, supplied.get(key, old))
+                literal = _literal(value).splitlines()
+                assignment = f"{indent}    {key} = "
+                lines.append(assignment + literal[0])
+                lines.extend(" " * len(assignment) + part for part in literal[1:])
+        if len(lines) == 1:
+            lines.append(f"{indent}    pass")
+        return lines
+
+    from src.config.base.base_config import BaseConfig
+    base = "(BaseConfig)" if issubclass(original_env, BaseConfig) else ""
+    lines = ['"""Effective defaults for this selected algorithm; no other algorithm config is needed."""']
+    if base:
+        lines.append("from src.config.base.base_config import BaseConfig")
+    # LP constants are used directly by its task configuration.
+    for name in sorted(vars(original_module)):
+        if name.isupper():
+            lines.append(f"{name} = {_literal(getattr(original_module, name))}")
+    lines.extend(["", *declaration(original_env, env_class, overrides, base=base), "",
+                  *declaration(original_learning, learning_class, p["learning"])])
     return "\n".join(lines) + "\n"
 
 
@@ -403,11 +455,32 @@ def _symmetry_source(text, bindings, slug):
     return text
 
 
+def _manifest_spec(spec):
+    """Keep reproducible inputs and PD summaries without duplicate trajectories."""
+    saved = deepcopy(spec)
+    saved.pop("workflow", None)
+    for scope in saved.get("pd_analysis", {}).get("scopes", {}).values():
+        report = scope.get("response_report")
+        if not isinstance(report, dict):
+            continue
+        report.pop("videos", None)
+        report.pop("cleanup", None)
+        for candidate in report.get("candidates", []):
+            candidate.pop("joints", None)
+        report["trajectories_omitted"] = True
+    return saved
+
+
 def render(spec):
     """Return stable repo-relative source/resources; never write source paths."""
     spec = deepcopy(spec)
     _validate(spec)
     root, entry, bindings, limits, model = _model_details(spec)
+    from .models import check_mesh_budget, _dependencies
+    check_mesh_budget(spec["model"].get("mesh_face_limit"), [
+        {"name": model.mesh(i).name, "faces": int(model.mesh_facenum[i])}
+        for i in range(model.nmesh)
+    ])
     effective = _parameters(spec, bindings, limits)
     if "him_symmetry" in effective:
         _validate_symmetry(model, bindings, effective["him_symmetry"])
@@ -415,15 +488,14 @@ def render(spec):
     config_root = f"src/config/{slug}"
     asset_root = f"src/assets/robots/{slug}"
     files = {}
+    from .motor_curves import export_files as export_motor_curve_files
+    files.update(export_motor_curve_files(spec))
     model_hashes, template_hashes = {}, {}
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            raise ValueError(f"模型目录不支持符号链接: {path.relative_to(root)}")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix not in (".pyc", ".pyo"):
-            relative = path.relative_to(root).as_posix()
-            data = path.read_bytes()
-            files[f"{asset_root}/model/{relative}"] = data
-            model_hashes[relative] = _sha(data)
+    for path in _dependencies(root, entry):
+        relative = path.relative_to(root).as_posix()
+        data = path.read_bytes()
+        files[f"{asset_root}/model/{relative}"] = data
+        model_hashes[relative] = _sha(data)
     files[f"{asset_root}/__init__.py"] = f"from .{slug}_constants import get_{slug}_robot_cfg\n"
     first_algorithm = next(iter(effective))
     files[f"{asset_root}/{slug}_constants.py"] = (
@@ -437,7 +509,7 @@ def render(spec):
     files[f"{config_root}/migration_runtime.py"] = runtime
     template_hashes["web_ui/template_runtime.py"] = _sha(runtime)
     migration = (f"from pathlib import Path\nfrom copy import deepcopy\n"
-                 f"from .migration_runtime import create_robot_cfg, model_spec, adapt_env, adapt_runner\n\n"
+                 f"from .migration_runtime import create_robot_cfg, model_spec, adapt_env, adapt_runner, joint_value\n\n"
                  f"BINDINGS = {_literal(bindings)}\n\nPARAMETERS = {_literal(effective)}\n\n"
                  f"MODEL_XML = Path(__file__).resolve().parents[2] / 'assets' / 'robots' / {slug!r} / 'model' / {entry.relative_to(root).as_posix()!r}\n\n"
                  "def get_spec():\n"
@@ -450,13 +522,15 @@ def render(spec):
                  "def configure_env(cfg, algorithm, *, play=False):\n"
                  "    return adapt_env(cfg, MODEL_XML, BINDINGS, PARAMETERS[algorithm], play=play, spec_fn=get_spec)\n\n"
                  "def configure_runner(cfg, algorithm):\n"
-                 "    return adapt_runner(cfg, PARAMETERS[algorithm])\n")
+                 "    return adapt_runner(cfg, PARAMETERS[algorithm])\n\n"
+                 "def action_scales(algorithm):\n"
+                 "    import re\n"
+                 "    control = PARAMETERS[algorithm]['control']\n"
+                 "    return {re.escape(joint['name']): float(joint_value(control['action_scale'], joint)) *\n"
+                 "            (float(control.get('hip_reduction', 1)) if joint['role'] == 'hip' else 1)\n"
+                 "            for joint in BINDINGS['joints']}\n")
     files[f"{config_root}/migration.py"] = migration
     central = REPO_ROOT / "src/config/ri_4438"
-    for name in ("him_layouts.py", "numerics.py", "ri_4438_config.py"):
-        text = (central / name).read_text()
-        template_hashes[f"src/config/ri_4438/{name}"] = _sha(text)
-        files[f"{config_root}/{name.replace('ri_4438', slug)}"] = _replace(text, slug, prefix)
     task_ids, output_roots = [], [asset_root, config_root]
     for algorithm, p in effective.items():
         source_name = "ri_4438_config.py" if algorithm == "ppo" else (
@@ -464,7 +538,10 @@ def render(spec):
         target_name = f"{slug}_config.py" if algorithm == "ppo" else f"{slug}_{algorithm}_config.py"
         text = (central / source_name).read_text()
         template_hashes[f"src/config/ri_4438/{source_name}"] = _sha(text)
-        files[f"{config_root}/{target_name}"] = _replace(text, slug, prefix) + _central_override(algorithm, p)
+        if algorithm in ("him", "him_symmetry"):
+            base_text = (central / "ri_4438_config.py").read_text()
+            template_hashes["src/config/ri_4438/ri_4438_config.py"] = _sha(base_text)
+        files[f"{config_root}/{target_name}"] = _central_config(algorithm, p)
         source_package = f"ri_4438_{algorithm}"
         task_root = f"src/tasks/locomotion/{slug}_{algorithm}"
         output_roots.append(task_root)
@@ -476,6 +553,14 @@ def render(spec):
             template_hashes[path.relative_to(REPO_ROOT).as_posix()] = _sha(original)
             relative = path.relative_to(source).as_posix().replace("ri_4438", slug)
             text = _replace(original, slug, prefix)
+            if "base_action_scale = " in text:
+                text, replaced = re.subn(
+                    r"^(?P<indent>[ \t]+)base_action_scale = [^\n]+\n(?P=indent)scale = \{.*?\n(?P=indent)\}",
+                    lambda match: f"{match['indent']}scale = _migration_action_scales({algorithm!r})",
+                    text, flags=re.S | re.M)
+                if replaced != 1:
+                    raise ValueError(f"{path}: 无法定位模板动作缩放构造")
+                text += f"\nfrom src.config.{slug}.migration import action_scales as _migration_action_scales\n"
             if algorithm == "him_symmetry":
                 text = text.replace(f"src.config.{slug}.{slug}_him_config", f"src.config.{slug}.{slug}_him_symmetry_config")
             if relative == "config/env_cfgs.py":
@@ -516,16 +601,40 @@ def render(spec):
                 text, ids = _registration(slug, prefix, algorithm, spec["tasks"][algorithm]["terrains"])
                 task_ids.extend(ids)
             files[f"{task_root}/{relative}"] = text
+    # Copy shared observation/numerical contracts only when a selected task imports them.
+    for name in ("him_layouts", "numerics"):
+        module = f"src.config.{slug}.{name}"
+        if ((name == "him_layouts" and any(key != "ppo" for key in effective))
+                or any(module in value for path, value in files.items() if path.endswith(".py") and isinstance(value, str))):
+            text = (central / f"{name}.py").read_text()
+            template_hashes[f"src/config/ri_4438/{name}.py"] = _sha(text)
+            files[f"{config_root}/{name}.py"] = _replace(text, slug, prefix)
     for path, source in files.items():
         if path.endswith(".py"):
             ast.parse(source, filename=path)
     manifest = {
-        "version": 1, "robot": deepcopy(spec["robot"]), "spec": spec,
+        "version": 1, "robot": deepcopy(spec["robot"]), "spec": _manifest_spec(spec),
         "bindings": bindings, "effective_parameters": effective,
+        "motor_inertia": {algorithm: deepcopy(p["_motor_inertia"]) for algorithm, p in effective.items()},
         "model_hashes": model_hashes, "template_hashes": template_hashes,
         "task_ids": task_ids, "output_roots": output_roots,
         "files": {path: _sha(value) for path, value in sorted(files.items())},
         "symmetry_checked": "him_symmetry" in effective,
+        "output_layout": [
+            {"path": asset_root, "purpose": "机器人运行模型：入口 XML、被引用的网格和资源、机器人工厂"},
+            {"path": config_root, "purpose": "所选算法配置、共享运行适配与迁移清单",
+             "config_files": [f"{config_root}/{slug}_config.py" if key == "ppo" else
+                              f"{config_root}/{slug}_{key}_config.py" for key in effective]},
+            *({"path": f"src/tasks/locomotion/{slug}_{key}", "algorithm": key,
+               "config_file": f"{config_root}/{slug}_config.py" if key == "ppo" else f"{config_root}/{slug}_{key}_config.py",
+               "purpose": f"{TEMPLATES[key][0]} 任务注册、环境、奖励与训练 runner"} for key in effective),
+        ],
+        "training_outputs": [{"algorithm": key, "experiment_name": p["learning"]["runner"]["experiment_name"],
+                              "path_template": f"logs/rsl_rl/{p['learning']['runner']['experiment_name']}/<timestamp>[_<run_name>]/",
+                              "task_ids": [task for task in task_ids if task in [
+                                  prefix + TASK_SUFFIX[key] + "-" + terrain for terrain in spec["tasks"][key]["terrains"]]
+                                  or (key == "him_lpacrl" and task.startswith(prefix + TASK_SUFFIX[key] + "-Rough-"))]}
+                             for key, p in effective.items()],
     }
     files[f"{config_root}/migration_manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
     return {"files": files, "task_ids": task_ids, "manifest": manifest}

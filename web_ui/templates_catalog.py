@@ -1,9 +1,12 @@
 """Read the repository's current RI-4438 defaults for the migration form."""
 
 from copy import deepcopy
+from dataclasses import asdict, fields
 from functools import lru_cache
 import importlib
 import inspect
+
+from .terrain_parameters import field_metadata as terrain_field_metadata
 
 
 TEMPLATES = {
@@ -90,6 +93,7 @@ def _fields(values, prefix=""):
                 entry["description"] = "新模型的约束缓冲区保守初值，至少 1500；可按小规模仿真实际约束数调整。"
             if name.startswith("delay_") and name.endswith(("lag", "period")):
                 entry["unit"] = "仿真步" if path.startswith("control.") else "控制步"
+            entry.update(deepcopy(terrain_field_metadata(path)))
             result.append(entry)
     return result
 
@@ -132,12 +136,21 @@ def _catalog():
             "curriculum": {"enabled": True, **env_defaults.get("curriculum", {})},
         }
         defaults["control"].setdefault("friction", None)
+        defaults["environment"]["mujoco"] = {name: _plain(value) for name, value in asdict(live.sim.mujoco).items()
+                                             if name != "timestep"}
         defaults["control"].setdefault("passive_damping", None)
         if key != "him_lpacrl" and live.scene.terrain.terrain_generator is not None:
             generator = live.scene.terrain.terrain_generator
             defaults["terrain"] = {name: _plain(getattr(generator, name))
                                    for name in ("num_rows", "num_cols", "size", "border_width",
-                                                "curriculum", "difficulty_range") if hasattr(generator, name)}
+                                                "curriculum", "difficulty_range", "border_height") if hasattr(generator, name)}
+            defaults["terrain"]["sub_terrains"] = {
+                name: {field.name: _plain(getattr(sub, field.name))
+                       for field in fields(sub)
+                       if field.name not in ("size", "flat_patch_sampling")
+                       and _serializable(getattr(sub, field.name))}
+                for name, sub in generator.sub_terrains.items()
+            }
         if key == "him_lpacrl":
             defaults["lpacrl"] = {name: env_defaults[name] for name in
                                   ("compact", "behavior_monitor", "evaluation", "height_scan")}

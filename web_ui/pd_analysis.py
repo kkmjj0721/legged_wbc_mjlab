@@ -8,7 +8,7 @@ from copy import deepcopy
 import json
 import math
 
-from . import generator, models
+from . import generator, models, motor_inertia
 from .template_runtime import joint_value
 
 
@@ -28,8 +28,8 @@ JOINT_FIELDS = {"rotor_inertia", "gear_ratio", "continuous_torque", "velocity_li
 def _number(value, label, low, high, *, optional=False, strict_low=False):
     if optional and value is None:
         return None
-    if (type(value) not in (int, float) or not math.isfinite(value)
-            or value > high or value < low or (strict_low and value == low)):
+    if (type(value) not in (int, float) or value > high or value < low
+            or not math.isfinite(value) or (strict_low and value == low)):
         bracket = "(" if strict_low else "["
         raise ValueError(f"{label} 必须是 {bracket}{low}, {high}] 内的有限数值")
     return float(value)
@@ -67,17 +67,40 @@ def _settings(options, names):
             raise ValueError(f"{name} 的硬件参数包含未知字段或不是对象")
         values = {
             "rotor_inertia": _number(raw.get("rotor_inertia"), f"{name}.rotor_inertia", 0, 100, optional=True),
-            "gear_ratio": _number(raw.get("gear_ratio"), f"{name}.gear_ratio", 0, 10000,
-                                  optional=True, strict_low=True),
+            "gear_ratio": _number(1 if raw.get("gear_ratio") is None else raw["gear_ratio"],
+                                  f"{name}.gear_ratio", 0, 10000, strict_low=True),
             "continuous_torque": _number(raw.get("continuous_torque"), f"{name}.continuous_torque", 0, 1e6,
                                          optional=True, strict_low=True),
             "velocity_limit": _number(raw.get("velocity_limit"), f"{name}.velocity_limit", 0, 1e5,
                                       optional=True, strict_low=True),
         }
-        if (values["rotor_inertia"] is None) != (values["gear_ratio"] is None):
-            raise ValueError(f"{name} 的转子惯量和减速比必须同时填写或同时留空")
+        if values["rotor_inertia"] is not None and values["rotor_inertia"] * values["gear_ratio"]**2 > 1e10:
+            raise ValueError(f"{name} 的折算关节惯量必须位于 [0, 1e10] kg·m²")
         settings["joints"][name] = values
     return settings
+
+
+def effective_settings(spec, scope="common", options=None, names=None):
+    """Use canonical motor inputs in reports and ignore stale PD-only J/N copies."""
+    if options is not None and not isinstance(options, dict):
+        raise ValueError("PD 分析 options 必须是对象")
+    effective = deepcopy(options or {})
+    names = names if names is not None else [joint["name"] for joint in spec.get("bindings", {}).get("joints", [])]
+    supplied = effective.get("joints", {})
+    if not isinstance(supplied, dict) or set(supplied) - set(names):
+        raise ValueError("PD joints 必须是以已绑定关节名称为键的对象")
+    resolved = motor_inertia.resolve(spec, scope)
+    canonical = "motor_inertia" in spec
+    effective["joints"] = {}
+    for name in names:
+        raw = supplied.get(name, {})
+        if not isinstance(raw, dict):
+            raise ValueError(f"{name} 的硬件参数必须是对象")
+        values = resolved["joints"][name]
+        inherited = {field: values[field] for field in ("rotor_inertia", "gear_ratio")}
+        effective["joints"][name] = ({**deepcopy(raw), **inherited} if canonical
+                                    else {**inherited, **deepcopy(raw)})
+    return _settings(effective, names)
 
 
 def _parameters(spec, scope):
@@ -106,7 +129,8 @@ def _parameters(spec, scope):
     selected["tasks"] = {algorithm: deepcopy(tasks[algorithm])}
     if scope == "common":
         selected["tasks"][algorithm]["parameters"] = {}
-    parameters = generator._parameters(selected, bindings, limits)[algorithm]
+    parameters = generator._parameters(selected, bindings, limits, allow_unconfigured_pd=True,
+                                       motor_inertia_scope=scope)[algorithm]
     return algorithm, bindings, model, parameters
 
 
@@ -144,7 +168,19 @@ def analyze(spec: dict, scope="common", options=None) -> dict:
     import numpy as np
 
     algorithm, bindings, model, parameters = _parameters(spec, scope)
-    settings = _settings(options, [joint["name"] for joint in bindings["joints"]])
+    settings = effective_settings(spec, scope, options, [joint["name"] for joint in bindings["joints"]])
+    inertia_metadata = deepcopy(parameters["_motor_inertia"])
+    if "motor_inertia" not in spec:
+        # Old clients may submit an unsaved, PD-only override. Keep that input
+        # distinct from the values the generator can resolve from the draft.
+        for name, hardware in settings["joints"].items():
+            raw = inertia_metadata["joints"][name]
+            for field in ("rotor_inertia", "gear_ratio"):
+                if raw[field] != hardware[field]:
+                    raw[field] = hardware[field]
+                    raw["field_sources"][field] = "PD options（本次请求）"
+            raw["armature"] = (None if raw["rotor_inertia"] is None
+                                else raw["rotor_inertia"] * raw["gear_ratio"]**2)
     needs_symmetry = scope == "him_symmetry" or (scope == "common" and "him_symmetry" in spec["tasks"])
     grouping = settings["gain_grouping"]
     if grouping == "auto":
@@ -175,7 +211,8 @@ def analyze(spec: dict, scope="common", options=None) -> dict:
         armature = float(model.dof_armature[dof]) if armature is None else armature
         if hardware.get("rotor_inertia") is not None:
             armature = hardware["rotor_inertia"] * hardware["gear_ratio"] ** 2
-            armature_source = "转子惯量 × 减速比²（替换配置/XML）"
+            armature_source = ("电机转子惯量 × 总减速比²（自动用于训练与 PD）" if "motor_inertia" in spec
+                               else "旧草稿/PD 参数：转子惯量 × 总减速比²（替换配置/XML）")
         armature = _number(armature, f"{name}.armature", 0, 1e10)
         passive = joint_value(control.get("passive_damping"), binding)
         passive_source = "XML" if passive is None else "配置"
@@ -192,6 +229,7 @@ def analyze(spec: dict, scope="common", options=None) -> dict:
         row = {
             "name": name, "leg": binding["leg"], "role": binding["role"],
             "armature": armature, "armature_source": armature_source,
+            "rotor_inertia": hardware.get("rotor_inertia"), "gear_ratio": hardware.get("gear_ratio", 1),
             "passive_damping": passive, "passive_damping_source": passive_source,
             "action_scale": values["action_scale"] * (hip_reduction if binding["role"] == "hip" else 1),
             "effort_limit": values["effort_limit"], "initial": angle, "action_clip": clip,
@@ -330,12 +368,14 @@ def analyze(spec: dict, scope="common", options=None) -> dict:
     if control.get("delay_hold_prob", 0) > 0:
         warn("simulation_correlated_lag", "仿真保持概率用于保持当前 lag 数，数据仍每步更新；lag 在配置范围内随时间相关变化，不等同实机延迟。")
     warn("unvalidated_initial_gains", "结果是待验证的增益初值；未进行动态仿真、策略性能评估或实机标定。")
-    warn("unknown_torque_speed_envelope", "速度上限仅作为输入记录；缺少电压、温度与力矩—速度曲线，尚未检查完整执行器包络。")
+    warn("unknown_torque_speed_envelope", "本静态分析仅记录允许最高工作转速；响应测试将用它判断是否超速，不钳速、不生成训练限速。即使提供 T–N 曲线，也未验证温升或峰值持续时间等完整执行器能力。")
 
     result = {
         "version": 1, "scope": scope, "template": algorithm, "gain_grouping": grouping,
         "model": {key: spec["model"].get(key) for key in ("id", "name", "sha256")},
         "settings": settings, "timing": timing, "samples": samples,
+        "motor_inertia": inertia_metadata,
+        "pd_reference": deepcopy(parameters["_pd_reference"]),
         "joints": rows, "proposals": proposals, "warnings": warnings,
         "method_notes": [
             "当前范围：" + (f"公共参数，以 {algorithm} 模板为默认，不包含任务覆盖。" if scope == "common"
@@ -345,12 +385,15 @@ def analyze(spec: dict, scope="common", options=None) -> dict:
             "模型法：KP=Jmax·(2πf)²，KD=max(0, 2ζ·Jmax·2πf−被动阻尼)。电机法：KP=Iarm·(2πf)²，KD=2ζ·Iarm·2πf，不扣被动阻尼。",
             ("镜像成组：模型法取左右组内较大 Jmax，KD 取两侧需求最大值；电机法取组内较大 armature 设计共享增益。保持真实惯量/限矩不变，各侧频率与阻尼范围分别报告。这是满足共享增益契约的工程规则，不是论文中的独立整定算法。"
              if grouping == "mirror_pairs" else "逐关节设计：每个关节独立使用自身采样最大惯量和 armature。"),
-            "转子惯量与减速比同时提供时，以 N²·Jrotor 替换 armature，不叠加；候选应用同时携带该 armature。",
+            ("填写裸电机转子惯量后，按 N²·Jrotor 自动计算关节 armature，训练生成与 PD 分析/测试使用同一结果，无需应用 PD 候选；不会与原 armature 叠加。"
+             if "motor_inertia" in spec else
+             "旧草稿中保存的 PD 转子惯量与减速比也用于训练生成；本次请求单独提供且未保存的旧 options 仅用于本次分析/测试。以 N²·Jrotor 替换 armature，不叠加。")
+            + "N=|转子转速/关节转速|，未填按 1:1，真正直驱为 1，多级传动比相乘。裸惯量未知时保留现有配置或 XML 值，不反推裸惯量。",
             "频率与阻尼比范围均由完整模型的采样锁定惯量估算；电机法的负载响应通常不同于输入设计频率。",
             "控制律按 τ=clip[KP(qd−q)−KD·qdot]，目标速度与前馈力矩均为 0；qd=clip[q0+scale·action]，hip 缩放包含 hip_reduction。",
             "单位动作力矩 KP·scale 是目标角裁剪前的比例项增量；±幅值预算则先裁剪目标角，再计算两端比例力矩。",
             "力矩预算仅在 q=q0、qdot=0 比较 ±动作幅值的比例项，未计入重力负载、运动误差、阻尼力矩、摩擦或动力学随机化。动作幅值是本次检查输入，不表示策略输出恒限于 ±1。",
-            "连续力矩与速度均应填写关节输出端数据；KP/KD 按 Nm/rad、Nm·s/rad。实机接口若是电流/PWM 等量纲，必须先换算。",
+            "连续扭矩填关节侧额定持续值，只作静态预算比较；仿真固定限矩填实际控制允许值，填峰值时没有峰值持续时间或热降额模型。转速填关节允许最高工作值，不是额定转速。N 不自动换算扭矩或转速。KP/KD 按 Nm/rad、Nm·s/rad，电流/PWM 接口需另行换算。",
             "频率/阻尼目标属于设计假设。采样、相位滞后和静态力矩检查不能证明实机稳定性；应用只更新当前草稿。",
         ],
         "references": [

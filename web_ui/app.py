@@ -13,11 +13,12 @@ from urllib.parse import urlsplit
 
 
 def create_app(repo_root=None, workspace=None):
-    from flask import Flask, jsonify, render_template, request
+    from flask import Flask, jsonify, render_template, request, send_file
     from werkzeug.exceptions import HTTPException
 
     from . import generator, models, templates_catalog
     from .preview import PosePreview
+    from .studio_helper import register_studio
     from .validation import JobManager, check_conflicts, generate_transaction
 
     repository = Path(repo_root or Path(__file__).resolve().parents[1]).resolve()
@@ -30,6 +31,7 @@ def create_app(repo_root=None, workspace=None):
     app.config.update(MAX_CONTENT_LENGTH=512 * 1024 * 1024, JSON_AS_ASCII=False)
     app.json.ensure_ascii = False
     preview = PosePreview()
+    register_studio(app, preview)
     jobs = JobManager(repository, work)
     generation_lock = threading.Lock()
     app.extensions["migration"] = dict(preview=preview, jobs=jobs, workspace=work,
@@ -107,6 +109,43 @@ def create_app(repo_root=None, workspace=None):
                        source_format=model.get("source_format", "mjcf"),
                        conversion=model.get("conversion"))
 
+    @app.post("/api/motor-curves")
+    def upload_motor_curve():
+        from .motor_curves import store_image
+
+        if "file" not in request.files:
+            raise ValueError("请选择 T–N 曲线图片")
+        try:
+            voltage = float(request.form.get("voltage_v", ""))
+        except ValueError as exc:
+            raise ValueError("请填写该曲线对应的电压 V") from exc
+        asset = store_image(request.files["file"], work, voltage_v=voltage,
+                            label=request.form.get("label", ""))
+        return jsonify(asset=asset), 201
+
+    @app.get("/api/motor-curves/<asset_id>/image")
+    def motor_curve_image(asset_id):
+        from .motor_curves import image_path
+
+        if not re.fullmatch(r"[a-f0-9]{32}", asset_id):
+            raise ValueError("无效的电机图片 ID")
+        metadata = work / "motor-curves" / asset_id / "asset.json"
+        asset = json.loads(metadata.read_text(encoding="utf-8"))
+        return send_file(image_path(asset), mimetype=asset["mime"], conditional=True)
+
+    @app.get("/api/jobs/<job_id>/videos/<filename>")
+    def job_video(job_id, filename):
+        if (not re.fullmatch(r"[a-f0-9]{32}", job_id)
+                or not re.fullmatch(r"[a-zA-Z0-9_.-]+\.mp4", filename)):
+            raise ValueError("无效的测试视频路径")
+        path = work / "jobs" / job_id / "videos" / filename
+        for parent in (path, *path.parents):
+            if parent == work:
+                break
+            if parent.is_symlink():
+                raise ValueError("测试视频不接受符号链接")
+        return send_file(path, mimetype="video/mp4", conditional=True)
+
     def draft_path(draft_id):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", draft_id):
             raise ValueError("草稿 ID 格式无效")
@@ -162,6 +201,36 @@ def create_app(repo_root=None, workspace=None):
         body = payload()
         return jsonify(analyze(spec_from(body), scope=body.get("scope", "common"),
                                options=body.get("options")))
+
+    @app.post("/api/terrain/analyze")
+    def analyze_terrain():
+        from .terrain_analysis import analyze_terrain as analyze
+
+        body = payload()
+        build = body.get("build", False)
+        if not isinstance(build, bool):
+            raise ValueError("build 必须为布尔值")
+        return jsonify(analyze(spec_from(body), scope=body.get("scope", "common"),
+                               terrain=body.get("terrain", "Rough"),
+                               seed=body.get("seed", 42), build=build))
+
+    @app.post("/api/pd/test")
+    def test_pd():
+        from .pd_analysis import effective_settings
+
+        body = payload()
+        spec = deepcopy(spec_from(body))
+        scope = body.get("scope", "common")
+        if not isinstance(scope, str) or (scope != "common" and scope not in spec.get("tasks", {})):
+            raise ValueError("PD 测试范围必须为 common 或已选择的任务模板")
+        models.resolve_model(spec)
+        names = [joint["name"] for joint in spec.get("bindings", {}).get("joints", [])]
+        options = effective_settings(spec, scope, body.get("options"), names)
+        request_data = dict(spec=spec, scope=scope, options=options)
+        # Keep JSON and option errors synchronous; model compilation and all
+        # response experiments run in the cancellable, serialized subprocess.
+        json.dumps(request_data, allow_nan=False)
+        return jsonify(jobs.submit("pd_response", [], spec=request_data)), 202
 
     @app.post("/api/plan")
     def plan():

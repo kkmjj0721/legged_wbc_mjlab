@@ -106,7 +106,8 @@ def create_robot_cfg(model_xml, bindings, parameters, *, spec_fn=None):
         condim={foot_pattern: 3, ".*": 1},
         priority={foot_pattern: 1, ".*": 0},
         friction={foot_pattern: (0.6,)}, solref={foot_pattern: (0.02, 1.0)},
-        solimp={foot_pattern: (0.9, 0.95, 0.023)}, margin={foot_pattern: 0.001},
+        solimp={foot_pattern: (0.9, 0.95, 0.023)},
+        margin={re.escape(foot["geom"]): foot.get("margin", 0.001) for foot in bindings["feet"]},
     )
     return EntityCfg(
         spec_fn=spec_fn if spec_fn is not None else lambda: model_spec(model_xml, bindings),
@@ -171,6 +172,19 @@ def _assign(obj, values):
             setattr(obj, key, deepcopy(tuple(value) if isinstance(old, tuple) else value))
 
 
+def apply_terrain_parameters(generator, values):
+    """Preserve the concrete sub-terrain dataclasses while applying UI values."""
+    shared = {key: value for key, value in values.items()
+              if key != "sub_terrains" and hasattr(generator, key)}
+    _assign(generator, shared)
+    for name, overrides in values.get("sub_terrains", {}).items():
+        if name not in generator.sub_terrains:
+            raise ValueError(f"Unknown sub-terrain {name!r}")
+        _assign(generator.sub_terrains[name], overrides)
+    if sum(sub.proportion for sub in generator.sub_terrains.values()) <= 0:
+        raise ValueError("子地形权重总和必须大于 0")
+
+
 def adapt_env(cfg, model_xml, bindings, parameters, *, play=False, spec_fn=None):
     """Apply effective parameters to a fresh complete task configuration."""
     control = parameters["control"]
@@ -184,6 +198,8 @@ def adapt_env(cfg, model_xml, bindings, parameters, *, play=False, spec_fn=None)
     cfg.decimation = int(control.get("decimation", cfg.decimation))
     if "sim_dt" in env:
         cfg.sim.mujoco.timestep = float(env["sim_dt"])
+    for name, value in env.get("mujoco", {}).items():
+        setattr(cfg.sim.mujoco, name, tuple(value) if isinstance(value, list) else value)
     for field in ("nconmax", "njmax", "contact_sensor_maxmatch"):
         if field in env:
             setattr(cfg.sim, field, int(env[field]))
@@ -228,6 +244,13 @@ def adapt_env(cfg, model_xml, bindings, parameters, *, play=False, spec_fn=None)
                 _assign(command, {"resampling_time_range" if key == "resampling_time" else key: val})
     for name, values in parameters.get("rewards", {}).items():
         if name not in cfg.rewards:
+            # LP-ACRL omits this penalty for play and for training presets that
+            # explicitly disable the monitor (for example A0).
+            if name == "command_stall" and "lpacrl" in cfg.curriculum:
+                task_cfg = cfg.curriculum["lpacrl"].params.get("task_cfg")
+                monitor = getattr(task_cfg, "behavior_monitor", None)
+                if play or (monitor is not None and getattr(monitor, "enabled", None) is False):
+                    continue
             raise ValueError(f"Unknown reward term {name!r}")
         if "weight" in values:
             cfg.rewards[name].weight = float(values["weight"])
@@ -275,9 +298,7 @@ def adapt_env(cfg, model_xml, bindings, parameters, *, play=False, spec_fn=None)
     terrain = cfg.scene.terrain
     if terrain is not None and terrain.terrain_generator is not None:
         # LP uses its own map schema; that schema is applied in central config.
-        generator_values = {k: v for k, v in parameters.get("terrain", {}).items()
-                            if hasattr(terrain.terrain_generator, k)}
-        _assign(terrain.terrain_generator, generator_values)
+        apply_terrain_parameters(terrain.terrain_generator, parameters.get("terrain", {}))
     if not parameters.get("curriculum", {}).get("enabled", True):
         cfg.curriculum.pop("terrain_levels", None)
         cfg.curriculum.pop("command_vel", None)
