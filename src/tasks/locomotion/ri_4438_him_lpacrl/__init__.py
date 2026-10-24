@@ -14,8 +14,11 @@ latched four-foot pass event never reset physical state or HIM history.
 
 Random processes resample vx, vy and world heading together every U(2,10) s.
 Clipped .5 * wrapped heading error supplies policy wz.
-Whole-episode linear/angular tracking kernels retain their 2:1 score and
-failure-budget penalty; rewards, HIM, PPO and randomization stay unchanged.
+Current presets use command-dependent low-speed tracking scales, separate
+translation/yaw motion gates and sustained low-speed progress penalties on all
+terrains. Whole-episode tracking retains its 2:1 score and failure-budget penalty;
+HIM dimensions, PPO, robot control and randomization stay unchanged. Historical
+A0–A3 and saved snapshots retain the original reward/observation protocol.
 
 Common entry points: scripts.train / scripts.play. Rough-A0/A1/A2/A3 preserve
 the historical ablations, including fixed tasks and 25% forward-stair coverage.

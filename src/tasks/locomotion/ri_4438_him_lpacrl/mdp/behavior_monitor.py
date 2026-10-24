@@ -50,6 +50,33 @@ class BehaviorMonitor:
             setattr(self, name, value)
         if self.progress_ratio > 1:
             raise ValueError("Behavior progress_ratio must be in (0, 1]")
+        self.unified_motion = self._option("unified_motion", False)
+        if type(self.unified_motion) is not bool:
+            raise ValueError("Behavior unified_motion must be boolean")
+        self.low_speed_progress_ratio = self._option("low_speed_progress_ratio", None)
+        if self.low_speed_progress_ratio is not None:
+            if isinstance(self.low_speed_progress_ratio, bool):
+                raise ValueError("Behavior low_speed_progress_ratio must be in (0, 1]")
+            try:
+                self.low_speed_progress_ratio = float(self.low_speed_progress_ratio)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Behavior low_speed_progress_ratio must be in (0, 1]") from error
+            if (not math.isfinite(self.low_speed_progress_ratio)
+                    or not 0 < self.low_speed_progress_ratio <= 1):
+                raise ValueError("Behavior low_speed_progress_ratio must be in (0, 1]")
+        for name, default in (("low_speed_full_command", 0.2), ("low_speed_end_command", 0.5)):
+            value = self._option(name, default)
+            if isinstance(value, bool):
+                raise ValueError(f"Invalid behavior-monitor parameter {name}")
+            try:
+                value = float(value)
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"Invalid behavior-monitor parameter {name}") from error
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Invalid behavior-monitor parameter {name}")
+            setattr(self, name, value)
+        if self.low_speed_end_command <= self.low_speed_full_command:
+            raise ValueError("Low-speed progress transition must end above its full-strength speed")
         if self.termination_sustain_s < self.penalty_sustain_s:
             raise ValueError("Stall termination must wait at least as long as its penalty")
         changes = self._option("command_change_thresholds", (0.08, 0.08, 0.1))
@@ -80,7 +107,10 @@ class BehaviorMonitor:
                 "grace_remaining_steps", "_history_count", "_cursor",
             ):
                 setattr(self, name, torch.zeros(self.num_envs, dtype=torch.long, device=self.device))
-            for name in ("terminated", "linear_stalled", "yaw_stalled", "grace_active", "_seen"):
+            for name in (
+                "terminated", "linear_stalled", "yaw_stalled", "grace_active", "_seen",
+                "_previous_linear_active", "_previous_yaw_active",
+            ):
                 setattr(self, name, torch.zeros(self.num_envs, dtype=torch.bool, device=self.device))
             self._last_tick = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device)
             self._last_event_step = torch.full_like(self._last_tick, -1)
@@ -136,6 +166,13 @@ class BehaviorMonitor:
         linear_velocity = robot.root_link_lin_vel_b[ids, :2]
         angular_velocity = robot.root_link_ang_vel_b[ids, 2]
 
+        speed = command[:, :2].norm(dim=-1)
+        if self.unified_motion:
+            linear_active = speed > self.linear_command_threshold
+            yaw_active = command[:, 2].abs() > self.angular_command_threshold
+        else:
+            linear_active = speed >= self.linear_command_threshold
+            yaw_active = command[:, 2].abs() >= self.angular_command_threshold
         event_step = controller.command_event_step[ids]
         event = controller.command_event[ids] & (event_step != self._last_event_step[ids])
         delta = controller.command_event_delta[ids]
@@ -144,15 +181,17 @@ class BehaviorMonitor:
             | (controller.command_heading_delta[ids].abs() >= self.heading_change_threshold)
         )
         restart = significant | ~self._seen[ids]
+        if self.unified_motion:
+            # Low-speed starts can cross the shared motion gate while remaining
+            # below command-change thresholds; they still need startup grace.
+            restart |= ((linear_active & ~self._previous_linear_active[ids])
+                        | (yaw_active & ~self._previous_yaw_active[ids]))
         restarted_ids = ids[restart]
         self._clear_window(restarted_ids)
         self.grace_remaining_steps[restarted_ids] = self.grace_steps
         self.significant_events[ids] += significant.long()
         self._last_event_step[ids[event]] = event_step[event]
 
-        speed = command[:, :2].norm(dim=-1)
-        linear_active = speed >= self.linear_command_threshold
-        yaw_active = command[:, 2].abs() >= self.angular_command_threshold
         # Project each sample before smoothing: body axes may rotate during a
         # window, and averaging old body-frame vectors mixes different frames.
         projected = (linear_velocity * command[:, :2]).sum(-1) / speed.clamp_min(1e-6)
@@ -171,7 +210,16 @@ class BehaviorMonitor:
         self.grace_active[ids] = in_grace
         eligible = ~in_grace & (self._history_count[ids] >= self.window_steps)
         self.grace_remaining_steps[ids] = (self.grace_remaining_steps[ids] - 1).clamp_min(0)
-        linear_minimum = (self.progress_ratio * speed).clamp_min(self.linear_progress_floor)
+        linear_ratio = self.progress_ratio
+        if self.low_speed_progress_ratio is not None:
+            # Require useful signed translation at low commands on every terrain;
+            # smoothly retain the original allowance at higher speeds and in yaw.
+            blend = ((speed - self.low_speed_full_command)
+                     / (self.low_speed_end_command - self.low_speed_full_command)).clamp(0, 1)
+            blend = blend.square() * (3 - 2 * blend)
+            linear_ratio = (self.low_speed_progress_ratio
+                            + (self.progress_ratio - self.low_speed_progress_ratio) * blend)
+        linear_minimum = (linear_ratio * speed).clamp_min(self.linear_progress_floor)
         yaw_minimum = (self.progress_ratio * command[:, 2].abs()).clamp_min(self.angular_progress_floor)
         linear_bad = eligible & linear_active & (progress[:, 0] < linear_minimum)
         yaw_bad = eligible & yaw_active & (progress[:, 1] < yaw_minimum)
@@ -198,6 +246,8 @@ class BehaviorMonitor:
         self.cost_sum[ids] += self.cost[ids]
         self.max_linear_stall_steps[ids] = torch.maximum(self.max_linear_stall_steps[ids], self.linear_stall_run[ids])
         self.max_yaw_stall_steps[ids] = torch.maximum(self.max_yaw_stall_steps[ids], self.yaw_stall_run[ids])
+        self._previous_linear_active[ids] = linear_active
+        self._previous_yaw_active[ids] = yaw_active
         self._seen[ids] = True
         self._last_tick[ids] = tick
         return self

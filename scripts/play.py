@@ -48,6 +48,7 @@ def run_play(task_id: str, cfg: PlayConfig):
 
   env_cfg = load_env_cfg(task_id, play=True)
   agent_cfg = load_rl_cfg(task_id)
+  runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
   if cfg.deterministic:
     from src.envs.config import SimulationCfg
     if not isinstance(env_cfg.sim, SimulationCfg):
@@ -56,6 +57,37 @@ def run_play(task_id: str, cfg: PlayConfig):
 
   DUMMY_MODE = cfg.agent in {"zero", "random"}
   TRAINED_MODE = not DUMMY_MODE
+
+  log_dir: Path | None = None
+  resume_path: Path | None = None
+  if TRAINED_MODE:
+    log_root_path = (Path("logs") / "rsl_rl" / agent_cfg.experiment_name).resolve()
+    if cfg.checkpoint_file is not None:
+      resume_path = Path(cfg.checkpoint_file)
+      if not resume_path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
+      print(f"[INFO]: Loading checkpoint: {resume_path.name}")
+    else:
+      if cfg.wandb_run_path is None:
+        raise ValueError(
+          "`wandb_run_path` is required when `checkpoint_file` is not provided."
+        )
+      resume_path, was_cached = get_wandb_checkpoint_path(
+        log_root_path, Path(cfg.wandb_run_path)
+      )
+      # Extract run_id and checkpoint name from path for display.
+      run_id = resume_path.parent.name
+      checkpoint_name = resume_path.name
+      cached_str = "cached" if was_cached else "downloaded"
+      print(
+        f"[INFO]: Loading checkpoint: {checkpoint_name} (run: {run_id}, {cached_str})"
+      )
+    log_dir = resume_path.parent
+    # Restore task-specific inference semantics before constructing managers or
+    # applying the user's playback overrides.
+    prepare_env_cfg = getattr(runner_cls, "prepare_play_env_cfg", None)
+    if prepare_env_cfg is not None:
+      env_cfg = prepare_env_cfg(env_cfg, resume_path)
 
   # Disable terminations if requested (useful for viewing motions).
   if cfg.no_terminations:
@@ -88,32 +120,6 @@ def run_play(task_id: str, cfg: PlayConfig):
           "  --motion-file /path/to/motion.npz (local file)\n"
           "  --registry-name your-org/motions/motion-name (download from WandB)"
         )
-  log_dir: Path | None = None
-  resume_path: Path | None = None
-  if TRAINED_MODE:
-    log_root_path = (Path("logs") / "rsl_rl" / agent_cfg.experiment_name).resolve()
-    if cfg.checkpoint_file is not None:
-      resume_path = Path(cfg.checkpoint_file)
-      if not resume_path.exists():
-        raise FileNotFoundError(f"Checkpoint file not found: {resume_path}")
-      print(f"[INFO]: Loading checkpoint: {resume_path.name}")
-    else:
-      if cfg.wandb_run_path is None:
-        raise ValueError(
-          "`wandb_run_path` is required when `checkpoint_file` is not provided."
-        )
-      resume_path, was_cached = get_wandb_checkpoint_path(
-        log_root_path, Path(cfg.wandb_run_path)
-      )
-      # Extract run_id and checkpoint name from path for display.
-      run_id = resume_path.parent.name
-      checkpoint_name = resume_path.name
-      cached_str = "cached" if was_cached else "downloaded"
-      print(
-        f"[INFO]: Loading checkpoint: {checkpoint_name} (run: {run_id}, {cached_str})"
-      )
-    log_dir = resume_path.parent
-
   if cfg.num_envs is not None:
     env_cfg.scene.num_envs = cfg.num_envs
   if cfg.video_height is not None:
@@ -159,7 +165,6 @@ def run_play(task_id: str, cfg: PlayConfig):
 
       policy = PolicyRandom()
   else:
-    runner_cls = load_runner_cls(task_id) or MjlabOnPolicyRunner
     runner = runner_cls(env, asdict(agent_cfg), device=device)
     runner.load(
       str(resume_path), load_cfg={"actor": True}, strict=True, map_location=device

@@ -47,11 +47,23 @@ class LpacrlCfg:
     scan_size_m: tuple[float, float]
     scan_resolution_m: float
     behavior_monitor: SimpleNamespace | None = None
+    motion_tracking: SimpleNamespace | None = None
 
 
-def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | None = None) -> LpacrlCfg:
-    """Copy legacy defaults or select an explicit historical/Compact protocol."""
+def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | None = None,
+                   motion_tracking_enabled: bool | None = None) -> LpacrlCfg:
+    """Copy current defaults or select an explicit historical/Compact protocol.
+
+    Historical A0–A3 keep their scoring/observation contract. Explicitly
+    disabling motion_tracking also reconstructs pre-change current presets.
+    """
     env_cfg, ppo_cfg = Ri4438HimLpacrlCfg, Ri4438HimLpacrlCfgPPO
+    if type(env_cfg.motion_tracking.enabled) is not bool:
+        raise ValueError("motion_tracking.enabled must be boolean")
+    if motion_tracking_enabled is None:
+        motion_tracking_enabled = env_cfg.motion_tracking.enabled and experiment not in {"A0", "A1", "A2", "A3"}
+    if type(motion_tracking_enabled) is not bool:
+        raise ValueError("motion_tracking_enabled must be boolean")
     compact = experiment in {"Compact", "Compact-Coverage", "Compact-Uniform", "Compact-Rough"}
     if compact:
         if heading_command is True:
@@ -130,7 +142,18 @@ def make_lpacrl_cfg(*, heading_command: bool | None = None, experiment: str | No
         scan_size_m=tuple(env_cfg.height_scan.size_m),
         scan_resolution_m=env_cfg.height_scan.resolution_m,
         behavior_monitor=_copy_section(env_cfg.behavior_monitor),
+        motion_tracking=_copy_section(env_cfg.motion_tracking) if motion_tracking_enabled else None,
     )
+    if result.motion_tracking is not None:
+        motion = result.motion_tracking
+        motion.enabled = True
+        result.curriculum.score_kind = "speed_adaptive_linear_angular_failure_budget_v4"
+        monitor = result.behavior_monitor
+        monitor.enabled = True
+        monitor.unified_motion = True
+        for name in ("linear_command_threshold", "angular_command_threshold",
+                     "low_speed_progress_ratio", "low_speed_full_command", "low_speed_end_command"):
+            setattr(monitor, name, getattr(motion, name))
     if experiment is None:
         return result
     if compact:
@@ -258,6 +281,31 @@ class CurriculumSetup:
 
 
 def validate(cfg):
+    motion = getattr(cfg, "motion_tracking", None)
+    if motion is not None:
+        if type(motion.enabled) is not bool or not motion.enabled:
+            raise ValueError("Use motion_tracking=None to select the legacy motion protocol")
+        for name in ("linear_command_threshold", "angular_command_threshold", "low_speed_std",
+                     "low_speed_threshold", "high_speed_threshold", "low_speed_progress_ratio",
+                     "low_speed_full_command", "low_speed_end_command"):
+            value = getattr(motion, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"motion_tracking.{name} must be finite and positive")
+        if (motion.low_speed_threshold >= motion.high_speed_threshold
+                or motion.low_speed_full_command >= motion.low_speed_end_command
+                or motion.low_speed_progress_ratio > 1):
+            raise ValueError("Invalid motion tracking speed bounds or progress ratio")
+        monitor = cfg.behavior_monitor
+        if monitor is None or not monitor.enabled or not getattr(monitor, "unified_motion", False):
+            raise ValueError("Current motion protocol requires unified behavior monitoring")
+        for name in ("linear_command_threshold", "angular_command_threshold",
+                     "low_speed_progress_ratio", "low_speed_full_command", "low_speed_end_command"):
+            if getattr(monitor, name) != getattr(motion, name):
+                raise ValueError(f"Motion/reward/monitor parameter mismatch: {name}")
+        if cfg.curriculum.score_kind != "speed_adaptive_linear_angular_failure_budget_v4":
+            raise ValueError("Adaptive tracking requires its own teacher score identity")
+    elif getattr(cfg.curriculum, "score_kind", "linear_angular_tracking_failure_budget_v3") != "linear_angular_tracking_failure_budget_v3":
+        raise ValueError("Legacy motion tracking requires the legacy teacher score identity")
     positive_counts = {
         "replicas": cfg.geometry.replicas,
         "trials_per_task": cfg.evaluation.trials_per_task,
@@ -511,6 +559,9 @@ def build_curriculum(cfg: LpacrlCfg) -> CurriculumSetup:
         "map": terrains.manifest,
         "score": "whole_episode_tracking_2to1_failure_budget_admin_mean_v7",
     })
+    if getattr(cfg, "motion_tracking", None) is not None:
+        command_identity.append({"motion_tracking": cfg.motion_tracking,
+                                 "score_kind": cfg.curriculum.score_kind})
     if catalog.compact:
         command_identity.append({
             "compact_protocol": "body_commands_family_allocation_v1",

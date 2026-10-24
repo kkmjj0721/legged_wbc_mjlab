@@ -2,6 +2,7 @@
 # All rights reserved. SPDX-License-Identifier: BSD-3-Clause
 # Local HIM export adapter and LP-ACRL lifecycle additions.
 import inspect
+import json
 import os
 import tempfile
 import time
@@ -26,7 +27,7 @@ from rsl_rl.utils.numerics import TrainingNumericsGuard, tensor_items
 from rsl_rl.utils.wandb_log_writer import WandbLogWriter
 
 from ..mdp.curriculums import get_controller
-from ..mdp.task_catalog import fingerprint
+from ..mdp.task_catalog import fingerprint, plain
 
 
 def _single_file_onnx_kwargs() -> dict:
@@ -73,6 +74,32 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
     """HIM training with lightweight online tracking-progress curriculum."""
 
     env: RslRlVecEnvWrapper
+
+    @staticmethod
+    def prepare_play_env_cfg(env_cfg, checkpoint_path):
+        """Restore the saved inference protocol before the environment exists."""
+        from ..config.env_cfgs import build_env_cfg
+        from .evaluate import from_snapshot
+
+        checkpoint = torch.load(checkpoint_path, weights_only=False, map_location="cpu")
+        state = (checkpoint.get("infos") or {}).get("lpacrl")
+        snapshot = state.get("task_config") if state is not None else None
+        if snapshot is None:
+            # Older weight-only checkpoints still go through load's numerical
+            # and task/geometry checks; do not guess their training protocol.
+            return env_cfg
+        restored = build_env_cfg(from_snapshot(snapshot), mode="play")
+        fingerprints = restored.curriculum["lpacrl"].params["fingerprints"]
+        for key in ("task", "geometry"):
+            if state["fingerprints"][key] != fingerprints[key]:
+                raise ValueError(
+                    f"Checkpoint task_config does not reproduce its {key} fingerprint"
+                )
+        selected = env_cfg.curriculum["lpacrl"].params["fingerprints"]
+        if any(selected[key] != fingerprints[key] for key in ("task", "geometry")):
+            print("[INFO]: Selected LP-ACRL preset differs; playback uses the checkpoint's saved configuration")
+        print("[INFO]: Restored LP-ACRL playback task/terrain/robot/motion protocol from checkpoint")
+        return restored
 
     def __init__(self, env, train_cfg, log_dir=None, device="cpu"):
         from ..config.curriculum_cfg import finalize_fingerprints
@@ -257,6 +284,14 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                     for key, value in self._numerical_contract().items()
                 }
             )
+            motion = getattr(self.setup.cfg, "motion_tracking", None)
+            if motion is not None:
+                # Phase is precomputed by deployment, outside the ONNX graph.
+                metadata["him_motion_tracking"] = json.dumps(plain(motion), sort_keys=True)
+                metadata["him_phase_motion_rule"] = (
+                    "norm(vxy_cmd)>linear_command_threshold OR "
+                    "abs(wz_cmd)>angular_command_threshold"
+                )
             attach_metadata_to_onnx(temporary_path, metadata)
             onnx.checker.check_model(temporary_path)
             os.replace(temporary_path, os.path.join(path, filename))
@@ -533,8 +568,10 @@ class LPACRLRunner(MjlabOnPolicyRunner, RslRlHIMOnPolicyRunner):
                 for key in ("task", "geometry"):
                     if state["fingerprints"][key] != self.setup.fingerprints[key]:
                         raise ValueError(
-                            "Playback task differs; restore its terrain and command settings "
-                            "in ri_4438_him_lpacrl_config.py before playing this checkpoint"
+                            "Playback task/motion protocol differs; restore the saved "
+                            "task_config (or disable motion_tracking for legacy settings). "
+                            "Offline evaluation supports --protocol checkpoint; use "
+                            "--warm-start for training with the new protocol."
                         )
             # HIM estimator and normalizer are already contained in actor_state_dict.
             self.alg.get_policy().load_state_dict(

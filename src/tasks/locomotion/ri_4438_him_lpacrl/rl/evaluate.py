@@ -35,9 +35,11 @@ def from_snapshot(snapshot):
     Old evaluation-based LP state is deliberately not migrated. The saved
     configuration remains usable for standalone evaluation of policy weights.
     """
-    cfg = make_lpacrl_cfg()
+    # Missing fields in historical snapshots must mean the old protocol,
+    # including its curriculum score identity, rather than current defaults.
+    cfg = make_lpacrl_cfg(motion_tracking_enabled=False)
     missing = set(vars(cfg)) - set(snapshot)
-    if missing - {"behavior_monitor"} or set(snapshot) - set(vars(cfg)):
+    if missing - {"behavior_monitor", "motion_tracking"} or set(snapshot) - set(vars(cfg)):
         raise ValueError(
             "Unsupported checkpoint configuration; use --protocol current for a new common evaluation"
         )
@@ -48,6 +50,8 @@ def from_snapshot(snapshot):
     # their standalone evaluations the new training penalty or termination.
     monitor = snapshot.get("behavior_monitor")
     cfg.behavior_monitor = NS(**deepcopy(monitor)) if monitor is not None else None
+    motion = snapshot.get("motion_tracking")
+    cfg.motion_tracking = NS(**deepcopy(motion)) if motion is not None else None
     cfg.geometry.map_protocol = snapshot["geometry"].get("map_protocol", "legacy_v6")
     # Historical task/robot parameters remain usable with the current evaluator.
     # The evaluation fingerprint records this upgrade; teacher state is not loaded.

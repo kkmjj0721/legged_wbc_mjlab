@@ -16,6 +16,7 @@ from src.config.ri_4438.ri_4438_him_lpacrl_config import (
 )
 
 from .gait import gait_phase as _gait_phase
+from .motion import command_motion_mask
 
 if TYPE_CHECKING:
     from mjlab.envs import ManagerBasedRlEnv
@@ -74,6 +75,7 @@ def phase(
     period: float,
     command_name: str = "twist",
     command_threshold: float = 0.1,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     global_phase = _gait_phase(env, period)
 
@@ -84,9 +86,8 @@ def phase(
     command = env.command_manager.get_command(command_name)
     assert command is not None
 
-    moving = (
-        torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
-        > command_threshold
+    moving = command_motion_mask(
+        command, command_threshold, angular_command_threshold
     )
 
     return torch.where(

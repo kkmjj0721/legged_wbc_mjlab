@@ -326,6 +326,23 @@ class Ri4438HimLpacrlCfg:
             },
         }
 
+    class motion_tracking:
+        """Current all-terrain motion semantics; disable for the old protocol.
+
+        Translation thresholds/std use m/s; angular threshold uses rad/s.
+        These are training candidates, not calibrated hardware limits.
+        """
+
+        enabled = True
+        linear_command_threshold = 0.05
+        angular_command_threshold = 0.05
+        low_speed_std = 0.05
+        low_speed_threshold = 0.1
+        high_speed_threshold = 0.5
+        low_speed_progress_ratio = 0.7
+        low_speed_full_command = 0.2
+        low_speed_end_command = 0.5
+
     class behavior_monitor:
         # Legacy presets preserve their exact reward and termination contracts.
         enabled = False

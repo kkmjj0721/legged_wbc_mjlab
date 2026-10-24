@@ -191,6 +191,28 @@ def build_env_cfg(
     cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
     cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
 
+    motion = getattr(setup.cfg, "motion_tracking", None)
+    if motion is not None:
+        if motion.low_speed_std > cfg.rewards["track_linear_velocity"].params["std"]:
+            raise ValueError("Low-speed tracking std must not exceed the base tracking std")
+        cfg.rewards["track_linear_velocity"].params.update({
+            name: getattr(motion, name)
+            for name in ("low_speed_std", "low_speed_threshold", "high_speed_threshold")
+        })
+        # Every terrain and command family shares these units and boundary
+        # semantics. Keep lateral hip alignment's separate purpose unchanged.
+        for name in ("foot_gait", "feet_air_time", "feet_clearance", "foot_slip",
+                     "soft_landing", "stand_still"):
+            if name in cfg.rewards:
+                cfg.rewards[name].params.update(
+                    command_threshold=motion.linear_command_threshold,
+                    angular_command_threshold=motion.angular_command_threshold,
+                )
+        cfg.rewards["pose"].params.update(
+            walking_threshold=motion.linear_command_threshold,
+            angular_command_threshold=motion.angular_command_threshold,
+        )
+
     gait_offset = [0.0, 0.5, 0.5, 0.0]
 
     cfg.rewards["foot_gait"].params["offset"] = list(gait_offset)
@@ -198,7 +220,9 @@ def build_env_cfg(
     foot_gait = cfg.rewards["foot_gait"]
 
     air_time_params = cfg.rewards["feet_air_time"].params
-    for name in ("sensor_name", "command_name", "command_threshold"):
+    for name in ("sensor_name", "command_name", "command_threshold", "angular_command_threshold"):
+        if name not in foot_gait.params:
+            continue
         air_time_params[name] = foot_gait.params[name]
 
     for group_name in ("actor", "critic"):
@@ -206,6 +230,8 @@ def build_env_cfg(
         phase_params["period"] = foot_gait.params["period"]
         phase_params["command_name"] = foot_gait.params["command_name"]
         phase_params["command_threshold"] = foot_gait.params["command_threshold"]
+        if "angular_command_threshold" in foot_gait.params:
+            phase_params["angular_command_threshold"] = foot_gait.params["angular_command_threshold"]
 
     cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 

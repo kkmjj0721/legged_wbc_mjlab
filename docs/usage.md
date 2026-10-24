@@ -60,6 +60,8 @@ uv run --no-sync python -m scripts.play Ri-4438-HIM-Rough \
 
 LP-ACRL 回放使用对应任务 ID 和 `--viewer viser`。在 `Commands → Twist / Play` 面板选择地形、等级和出生朝向，点击 `Apply & reset` 后调整速度；默认手动站立。`Uniform tasks` 均匀采样任务，兼容模型还可使用 `Checkpoint teacher`；`Replay` 重复当前场景。
 
+LP-ACRL 的 `scripts.play` 会在创建环境前自动恢复检查点内的 `task_config`，使用保存的任务、地形、机器人及运动判定协议；旧模型缺少 `motion_tracking` 时使用原相位门限，无需修改中央配置。所选 LP-ACRL 任务 ID 确定 runner 入口，实际播放配置以快照为准，差异会打印提示；`--num-envs`、视频尺寸和 `--no-terminations` 等回放参数随后生效。缺少快照时沿用所选任务配置并执行原兼容性检查；快照与保存指纹不一致时明确拒绝。此恢复仅用于回放，训练切换协议仍须使用 `--warm-start`。
+
 ## HIM 对称实验与训练方案切换
 
 `Ri-4438-HIM-Symmetry-Rough` / `-Flat` 默认使用配对镜像增强 PPO，与普通 HIM 一样让 estimator 跟随 PPO 学习率。PPO 镜像增强、actor 镜像约束、critic 镜像约束和 estimator 镜像监督均默认开启；actor 约束系数为 `0.1`（按动作维度求平均），critic 约束系数为 `1.0`。真实 rollout 仍为每个环境 100 步，镜像增强后保存 200 条 transition。设置无对称增强的对照组时，应显式关闭全部对称功能。
@@ -118,7 +120,7 @@ Compact 保存 **v8** 课程状态、技能槽位及监测配置指纹。完整�
 
 三轴上限分别为 1.0，站立及原低速命令继续保留；vx/vy 的单位为 m/s，wz 为 rad/s。该上限按分量计算，不限制平面合速度为 1.0 m/s。新增预设沿用原 Rough 的全部 52 个出生条件、18/21/25/28 cm 踏面、5/8/10/12/16 cm 楼梯及四档起伏/上下坡地；地图为 7×13 连通地块与 16 m 外围平地，跨出生地块不重置，整图外缘才行政截断。
 
-原 Rough 的两类坡地 l0 几何均为平地；steady 中的平地技能和 sequence 从 `slope_outward_up/l0` 出生，保持原地图几何不变。序列运动中可以进入相邻复杂地形，并非整段限制在平地。最大回合仍为 20 秒，摔倒或整图出界仍会提前结束。低速奖励门限沿用旧配置，纯 0.1 m/s 下的步态/相位门控仍需作为后续独立实验检查。
+原 Rough 的两类坡地 l0 几何均为平地；steady 中的平地技能和 sequence 从 `slope_outward_up/l0` 出生，保持原地图几何不变。序列运动中可以进入相邻复杂地形，并非整段限制在平地。最大回合仍为 20 秒，摔倒或整图出界仍会提前结束。当前低速跟踪、运动门限与最低进展规则见下节，覆盖所有地形。
 
 ```bash
 uv run --no-sync python -m scripts.train Ri-4438-HIM-LPACRL-Rough-Compact-Rough \
@@ -127,6 +129,36 @@ uv run --no-sync python -m scripts.train Ri-4438-HIM-LPACRL-Rough-Compact-Rough 
 ```
 
 新预设为 230 个任务及 teacher 组，默认每组 8 次离线任务评估，共 1840 次。评估保留默认 `--protocol checkpoint` 以恢复新任务表；`--protocol current` 仍使用原 Rough 的 832 组。独立 deployment v2 序列保持现有定义，1.0 指令由新任务表覆盖。新旧 Compact 都使用 v8 状态，但任务和地图指纹不同，切换时使用 `--warm-start`，不能完整续训旧课程。1024 环境的四类槽位仍为 358/256/307/103；任务增多后每组样本减少，应结合课程日志检查实际样本数与基线年龄。
+
+### 低速跟踪与统一运动门限
+
+当前 LP-ACRL 的 Flat / Rough、Compact 系列及 Random-Uniform 使用同一 `motion_tracking` 配置，规则不按出生族或实际地形筛选：楼梯、粗糙地面、坡地和平地全部生效。A0–A3 保留历史配置。机器人 PD、限矩、随机化和任务表不因本规则改变；这些阈值是训练实验参数，尚未证明提高策略性能。
+
+| 内容 | 当前规则 |
+| --- | --- |
+| 站立 / 运动 | `norm(vx,vy) > 0.05 m/s` 或 `abs(wz) > 0.05 rad/s` 为运动；等于门限仍在站立死区 |
+| 使用相同门限的模块 | 步态、腾空、抬脚（若启用）、滑移、落地、站立惩罚、姿态的站立/行走选择，以及 actor/critic/estimator 相位观测 |
+| 平移跟踪误差尺度 σ | 指令合速度 ≤0.1 m/s 时为 0.05 m/s；在 0.1～0.5 m/s 间 smoothstep 插值；≥0.5 m/s 恢复原 0.5 m/s。尺度只取决于指令，零平移与纯转向下也使用低速尺度 |
+| 平移最低进展 | 指令合速度 ≤0.2 m/s 时要求沿指令方向达到 70%；0.2～0.5 m/s 平滑回到原 20%；保留 0.02 m/s 下限 |
+| 转向最低进展 | 保留原 20% 及 0.02 rad/s 下限，仅激活门限统一为独立的 0.05 rad/s |
+| 惩罚时序 | 0.8 s 启动/切换宽限、0.3 s 平滑、持续不足 0.4 s 后处罚；默认不启用停滞终止。由站立进入平移或转向也重新获得宽限，包含小幅及对角启动 |
+
+因此指令 vx=0.1、实际 vx=0.021 m/s 时，线速度核从约 0.9753 降到 0.0824；角速度正确且完整存活时，teacher 的 2:1 跟踪分约从 0.9836 降到 0.3883。过宽限并持续不足后，平移停滞代价约为 0.7；零指令不触发进展惩罚。此处是公式/机制结果，不是性能提升结论。teacher 仍不重复计入停滞扣分，物理失败的完整回合预算折扣保持。
+
+新评分身份为 `speed_adaptive_linear_angular_failure_budget_v4`，课程结构仍按预设使用 v7 / v8。任务、奖励、环境和课程指纹已经改变；旧模型进入新规则须使用 `--warm-start`，不能完整续训旧 teacher 基线。`--protocol checkpoint` 离线评估及 `scripts.play` 回放会按保存快照恢复旧规则，缺少新字段的旧模型不会静默套用新门限；回放仍校验恢复结果与检查点保存的任务/地图指纹。
+
+新参数位于 [中央配置](../src/config/ri_4438/ri_4438_him_lpacrl_config.py) 的 `motion_tracking`。需要原规则对照时，将该节 `enabled=False`；程序化构造也可使用 `make_lpacrl_cfg(..., motion_tracking_enabled=False)`，同时恢复原门限、跟踪核和进展配置。与新规则的对照应固定初始模型、种子、环境数、更新预算及评估协议。
+
+ONNX 接口仍为 282 维历史输入到 12 维动作，但相位由部署端在图外计算。新导出文件写入 `him_motion_tracking` 和 `him_phase_motion_rule` 元数据；使用新模型时，部署侧相位必须采用相同的独立平移/转向门限。本次没有修改实机部署程序。
+
+例如使用已下载的 Compact-Rough 模型初始化新的全地形训练：
+
+```bash
+uv run --no-sync python -m scripts.train Ri-4438-HIM-LPACRL-Rough-Compact-Rough \
+  --env.scene.num-envs 1024 --agent.max-iterations 1000 --agent.seed 42 \
+  --warm-start logs/rsl_rl/ri_4438_him_lpacrl/2026-10-24_10-43-18/model_1200.pt \
+  --agent.run-name compact_rough_low_speed_v4
+```
 
 ### 原任务协议与训练诊断
 

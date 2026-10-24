@@ -71,6 +71,12 @@ class LPState:
         # num_tasks is retained as an API alias; its dimension now counts groups.
         self.num_tasks = self.num_groups = num_tasks
         self.cfg, self.fingerprints = cfg, dict(fingerprints or {})
+        # Keep legacy snapshots on v3 while current adaptive rewards establish
+        # fresh LP baselines with their own score semantics.
+        self.SCORE_KIND = getattr(cfg, "score_kind", type(self).SCORE_KIND)
+        if self.SCORE_KIND not in {type(self).SCORE_KIND,
+                                  "speed_adaptive_linear_angular_failure_budget_v4"}:
+            raise ValueError("Unsupported teacher score kind")
         self.group_families = tuple(group_families) if group_families is not None else None
         self.version = self.COMPACT_VERSION if self.group_families is not None else self.VERSION
         if self.group_families is not None:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import torch
@@ -13,6 +14,7 @@ from mjlab.utils.lab_api.math import quat_apply_inverse, quat_apply_yaw
 from mjlab.utils.lab_api.string import resolve_matching_names_values
 
 from .gait import gait_phase as _gait_phase
+from .motion import command_motion_mask
 
 if TYPE_CHECKING:
     from mjlab.envs import ManagerBasedRlEnv
@@ -25,14 +27,43 @@ def track_linear_velocity(
     std: float,
     command_name: str,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    low_speed_std: float | None = None,
+    low_speed_threshold: float = 0.1,
+    high_speed_threshold: float = 0.5,
 ) -> torch.Tensor:
-    """Track horizontal velocity in the body frame."""
+    """Track body-frame XY velocity with an optional command-dependent scale.
+
+    The low-speed scale applies to every terrain and also zero translation.
+    Smoothstep restores ``std`` between the two command-speed thresholds. The
+    scale depends only on commanded translation, so tracking errors cannot earn
+    a wider tolerance. Omitting ``low_speed_std`` preserves the original kernel.
+    """
     asset: Entity = env.scene[asset_cfg.name]
     command = env.command_manager.get_command(command_name)
     assert command is not None, f"Command '{command_name}' not found."
     actual = asset.data.root_link_lin_vel_b
     xy_error = torch.square(command[:, :2] - actual[:, :2]).sum(dim=1)
-    return torch.exp(-xy_error / std**2)
+    if low_speed_std is None:
+        return torch.exp(-xy_error / std**2)
+    if not (
+        math.isfinite(std)
+        and math.isfinite(low_speed_std)
+        and 0.0 < low_speed_std <= std
+        and math.isfinite(low_speed_threshold)
+        and math.isfinite(high_speed_threshold)
+        and 0.0 <= low_speed_threshold < high_speed_threshold
+    ):
+        raise ValueError(
+            "Require finite 0 < low_speed_std <= std and "
+            "0 <= low_speed_threshold < high_speed_threshold."
+        )
+    speed = torch.linalg.norm(command[:, :2], dim=1)
+    blend = (
+        (speed - low_speed_threshold) / (high_speed_threshold - low_speed_threshold)
+    ).clamp(0.0, 1.0)
+    blend = blend.square() * (3.0 - 2.0 * blend)
+    scale = low_speed_std + (std - low_speed_std) * blend
+    return torch.exp(-xy_error / scale.square())
 
 
 def lin_vel_z(
@@ -107,6 +138,7 @@ def feet_gait(
     command_threshold: float,
     command_name: str,
     sensor_name: str,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Match foot contacts to a fixed-period gait, using contact time directly."""
     sensor: ContactSensor = env.scene[sensor_name]
@@ -117,9 +149,8 @@ def feet_gait(
     reward = (desired == contact).float().mean(dim=1)
     command = env.command_manager.get_command(command_name)
     if command is not None:
-        active = (
-            torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
-            > command_threshold
+        active = command_motion_mask(
+            command, command_threshold, angular_command_threshold
         )
         reward *= active
     return reward
@@ -131,6 +162,7 @@ def feet_air_time(
     gait_name: str = "foot_gait",
     command_name: str | None = None,
     command_threshold: float = 0.1,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Reward each foot's ongoing support/air duration independently.
 
@@ -207,13 +239,9 @@ def feet_air_time(
         command = env.command_manager.get_command(command_name)
         assert command is not None, f"Command '{command_name}' not found."
 
-        command_magnitude = (
-            torch.linalg.norm(command[:, :2], dim=1)
-            + torch.abs(command[:, 2])
-        )
-        reward *= (command_magnitude > command_threshold).to(
-            reward.dtype
-        )
+        reward *= command_motion_mask(
+            command, command_threshold, angular_command_threshold
+        ).to(reward.dtype)
 
     return reward
 
@@ -234,6 +262,7 @@ def feet_clearance(
     stumble_weight: float = 0.1,
     stumble_ratio: float = 5.0,
     stumble_force_threshold: float = 1.0,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Track a terrain-relative swing arc and penalize feet striking step risers.
 
@@ -349,9 +378,8 @@ def feet_clearance(
         cost = cost + stumble_weight * stumble.to(cost.dtype)
 
     if command is not None:
-        active = (
-            torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
-            > command_threshold
+        active = command_motion_mask(
+            command, command_threshold, angular_command_threshold
         )
         cost = torch.where(active, cost, 0.0)
     return cost
@@ -362,6 +390,7 @@ def stand_still(
     command_name: str,
     command_threshold: float = 0.1,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
     default = asset.data.default_joint_pos
@@ -372,9 +401,8 @@ def stand_still(
     cost = torch.square(error).sum(dim=1)
     command = env.command_manager.get_command(command_name)
     if command is not None:
-        cost *= (
-            torch.linalg.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
-            <= command_threshold
+        cost *= ~command_motion_mask(
+            command, command_threshold, angular_command_threshold
         )
     return cost
 
@@ -433,6 +461,7 @@ class variable_posture:
         scan_sensor_name="terrain_scan",
         terrain_radius=0.35,
         terrain_height_std=(0.01, 0.04),
+        angular_command_threshold=None,
     ):
         lo, hi = terrain_height_std
         if not (
@@ -447,7 +476,13 @@ class variable_posture:
         asset = env.scene[asset_cfg.name]
         command = env.command_manager.get_command(command_name)
         speed = torch.linalg.norm(command[:, :2], dim=1) + command[:, 2].abs()
-        mode = (speed >= walking_threshold).long() + (speed >= running_threshold).long()
+        if angular_command_threshold is None:
+            mode = (speed >= walking_threshold).long() + (speed >= running_threshold).long()
+        else:
+            moving = command_motion_mask(
+                command, walking_threshold, angular_command_threshold
+            )
+            mode = moving.long() + (moving & (speed >= running_threshold)).long()
 
         # 仅统计附近有效地面；越靠近范围边缘，权重越小。
         scan = env.scene[scan_sensor_name].data
@@ -524,16 +559,16 @@ def feet_slip(
     command_name: str,
     command_threshold: float = 0.01,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Penalize foot sliding (xy velocity while in contact)."""
     asset: Entity = env.scene[asset_cfg.name]
     contact_sensor: ContactSensor = env.scene[sensor_name]
     command = env.command_manager.get_command(command_name)
     assert command is not None
-    linear_norm = torch.norm(command[:, :2], dim=1)
-    angular_norm = torch.abs(command[:, 2])
-    total_command = linear_norm + angular_norm
-    active = (total_command > command_threshold).float()
+    active = command_motion_mask(
+        command, command_threshold, angular_command_threshold
+    ).float()
     assert contact_sensor.data.found is not None
     in_contact = (contact_sensor.data.found > 0).float()  # [B, N]
     foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
@@ -553,6 +588,7 @@ def soft_landing(
     sensor_name: str,
     command_name: str | None = None,
     command_threshold: float = 0.05,
+    angular_command_threshold: float | None = None,
 ) -> torch.Tensor:
     """Penalize high impact forces at landing to encourage soft footfalls."""
     contact_sensor: ContactSensor = env.scene[sensor_name]
@@ -569,10 +605,9 @@ def soft_landing(
     if command_name is not None:
         command = env.command_manager.get_command(command_name)
         if command is not None:
-            linear_norm = torch.norm(command[:, :2], dim=1)
-            angular_norm = torch.abs(command[:, 2])
-            total_command = linear_norm + angular_norm
-            active = (total_command > command_threshold).float()
+            active = command_motion_mask(
+                command, command_threshold, angular_command_threshold
+            ).float()
             cost = cost * active
     return cost
 

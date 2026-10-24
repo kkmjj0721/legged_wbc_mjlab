@@ -12,7 +12,7 @@
 - **平地与复杂地形**：提供 Flat / Rough 任务，支持动力学随机化与地形课程。
 - **训练管理**：单 GPU / 多 GPU 训练、检查点续训、TensorBoard 日志；Symmetry 与 LP-ACRL 支持 warm-start 权重初始化。
 - **策略验证**：本地或浏览器回放、视频录制、RI-4438 模型分析与离线评估、ONNX 策略导出。
-- **机器人迁移工作台**：本地 Web 导入 MJCF XML 或 URDF 和资源；URDF 自动转换为项目风格 XML，可查看转换报告与源码，配置参数、检查站姿并生成四类独立任务。使用方式见 [迁移工作台](docs/robot_migration_web.md)。
+- **机器人迁移工作台**：本地 Web 导入 MJCF XML 或 URDF 和资源；URDF 自动转换为项目风格 XML。按 13 步逐项确认并保存草稿，支持空白 PD 搜索、电压 T–N 曲线、本地 URDF Studio 预览、响应视频和四类独立任务生成，完成后自动清理暂存。使用方式见 [迁移工作台](docs/robot_migration_web.md)。
 
 ## 快速开始
 

@@ -173,6 +173,8 @@ python3 tools/uv_auto_sync.py --extra web --skip-torch -- --no-install-package t
 
 启动 `uv run --no-sync python -m scripts.robot_migration_web --port 5003`，打开 <http://127.0.0.1:5003>。模型和参数配置详见 [迁移工作台](robot_migration_web.md)。
 
+`web` 可选依赖包含 Flask、Pillow、imageio 和 imageio-ffmpeg，用于本地服务、曲线图片校验及响应视频编码；沿用已安装的 MuJoCo 进行 CPU 测试与渲染。本地 URDF Studio 的编译资源随仓库提供，日常使用无需 Node.js 或联网。仅修改预览组件源码时，按 [组件说明](../web_ui/studio/README.md) 重建。
+
 ## 总结
 
 按照上述步骤完成后，您已经准备好在虚拟环境中运行相关程序。若遇到问题，请参考各组件的官方文档或检查依赖安装是否正确。
